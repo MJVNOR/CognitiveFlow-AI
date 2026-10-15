@@ -39,6 +39,9 @@ String? apiToken;
 String? apiRole; // student|instructor (lo dice /auth/login y /auth/me)
 String? apiUserId;
 
+/// Notifica a GoRouter cuando cambia el estado de auth (login/logout).
+final authRefresh = ValueNotifier<int>(0);
+
 Map<String, String> _headers([bool json = false]) => {
       if (apiToken != null) 'Authorization': 'Bearer $apiToken',
       if (json) 'Content-Type': 'application/json',
@@ -65,6 +68,7 @@ Future<void> _persistAuth(String token, String userId, String role) async {
   apiToken = token;
   apiUserId = userId;
   apiRole = role;
+  authRefresh.value++;
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('apiToken', token);
   await prefs.setString('apiUserId', userId);
@@ -82,6 +86,7 @@ Future<void> _clearAuth() async {
   apiToken = null;
   apiUserId = null;
   apiRole = null;
+  authRefresh.value++;
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove('apiToken');
   await prefs.remove('apiUserId');
@@ -94,8 +99,9 @@ Future<void> main() async {
   runApp(const CognitiveFlowApp());
 }
 
-final _router = GoRouter(
+final router = GoRouter(
   initialLocation: '/academy',
+  refreshListenable: authRefresh,
   redirect: (context, state) {
     final logged = apiToken != null;
     final loggingIn = state.matchedLocation == '/login';
@@ -127,6 +133,13 @@ final _router = GoRouter(
             };
           },
         ),
+        GoRoute(
+          path: '/labs/:labId/posttest/:sid',
+          builder: (c, s) => PosttestPage(
+            labId: s.pathParameters['labId']!,
+            sessionId: s.pathParameters['sid']!,
+          ),
+        ),
         GoRoute(path: '/progress', builder: (c, s) => const ProgressPage()),
         GoRoute(path: '/instructor', builder: (c, s) => const InstructorPage()),
         GoRoute(
@@ -152,7 +165,7 @@ class CognitiveFlowApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo, brightness: Brightness.dark),
         useMaterial3: true,
       ),
-      routerConfig: _router,
+      routerConfig: router,
     );
   }
 }
@@ -181,7 +194,7 @@ class _LoginState extends State<LoginPage> {
         (body['user_id'] ?? userId.text.trim()) as String,
         (body['role'] ?? 'student') as String,
       );
-      if (mounted) _router.go('/academy');
+      if (mounted) router.go('/academy');
     } catch (e) {
       setState(() => status = 'Error: $e');
     }
@@ -231,7 +244,7 @@ class Shell extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        void go(int i) => _router.go(_shellTabs[i]);
+        void go(int i) => router.go(_shellTabs[i]);
         final rail = NavigationRail(
           selectedIndex: _index,
           onDestinationSelected: go,
@@ -252,7 +265,7 @@ class Shell extends StatelessWidget {
                   icon: const Icon(Icons.logout),
                   onPressed: () async {
                     await _clearAuth();
-                    _router.go('/login');
+                    router.go('/login');
                   },
                 ),
               ),
@@ -269,7 +282,7 @@ class Shell extends StatelessWidget {
                   icon: const Icon(Icons.logout),
                   onPressed: () async {
                     await _clearAuth();
-                    _router.go('/login');
+                    router.go('/login');
                   },
                 ),
             ],
@@ -383,7 +396,7 @@ class _LabsState extends State<LabsPage> {
                 title: Text(l['title']),
                 subtitle: Text(l['lab_type']),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => _router.go(
+                onTap: () => router.go(
                   '/labs/${l['id']}',
                   extra: {'lab_type': l['lab_type'], 'title': l['title']},
                 ),
@@ -715,61 +728,76 @@ class _LabDetailState extends State<LabDetailPage> {
   Widget build(BuildContext context) {
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
+    final controls = [
+      const Text('Predice el efecto de la complejidad y justifica por qué'),
+      const SizedBox(height: 12),
+      AccessibleCurveChart(train: train, val: val, label: 'Curvas de pérdida'),
+      if (curve?['simulated'] == true)
+        const Text(Strings.simulated, style: TextStyle(fontSize: 12)),
+      Slider(
+        value: complexity, min: 1, max: 10, divisions: 9,
+        label: 'Complejidad ${complexity.round()}',
+        onChanged: (v) => setState(() => complexity = v),
+        onChangeEnd: (_) => _loadCurve(),
+      ),
+      Slider(
+        value: noise, min: 0, max: 50, divisions: 10,
+        label: 'Ruido ${noise.round()}%',
+        onChanged: (v) => setState(() => noise = v),
+        onChangeEnd: (_) => _loadCurve(),
+      ),
+      TextField(
+        controller: hypo,
+        maxLines: 3,
+        decoration: const InputDecoration(
+          labelText: 'Hipótesis / justificación (obligatoria)',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 12),
+      FilledButton(onPressed: _send, child: const Text(Strings.sendAttempt)),
+    ];
+    final result = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ResultPanel(
+          evalResult: evalResult,
+          socraticQ: socraticQ,
+          intervention: intervention,
+          onNext: _next,
+        ),
+        TextButton(
+          onPressed: sessionId == null
+              ? null
+              : () => router.go('/labs/${widget.labId}/posttest/$sessionId'),
+          child: const Text(Strings.goPosttestNoAI),
+        ),
+        StatusText(status),
+      ],
+    );
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text('Predice el efecto de la complejidad y justifica por qué'),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 180,
-            child: CustomPaint(painter: CurvePainter(train, val)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth >= 900) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: ListView(padding: const EdgeInsets.all(16), children: controls)),
+                    SizedBox(
+                      width: 380,
+                      child: ListView(padding: const EdgeInsets.all(16), children: [result]),
+                    ),
+                  ],
+                );
+              }
+              return ListView(padding: const EdgeInsets.all(16), children: [...controls, result]);
+            },
           ),
-          if (curve?['simulated'] == true)
-            const Text('Curvas sintéticas (simulación)', style: TextStyle(fontSize: 12)),
-          Slider(
-            value: complexity, min: 1, max: 10, divisions: 9,
-            label: 'Complejidad ${complexity.round()}',
-            onChanged: (v) => setState(() => complexity = v),
-            onChangeEnd: (_) => _loadCurve(),
-          ),
-          Slider(
-            value: noise, min: 0, max: 50, divisions: 10,
-            label: 'Ruido ${noise.round()}%',
-            onChanged: (v) => setState(() => noise = v),
-            onChangeEnd: (_) => _loadCurve(),
-          ),
-          TextField(
-            controller: hypo,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Hipótesis / justificación (obligatoria)',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: _send, child: const Text('Enviar intento')),
-          ResultPanel(
-            evalResult: evalResult,
-            socraticQ: socraticQ,
-            intervention: intervention,
-            onNext: _next,
-          ),
-          TextButton(
-            onPressed: sessionId == null ? null : () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PosttestPage(labId: widget.labId, sessionId: sessionId!),
-              ),
-            ),
-            child: const Text('Ir al postest (sin ayuda de IA)'),
-          ),
-          if (status.isNotEmpty) Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(status),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -845,43 +873,45 @@ class _PosttestState extends State<PosttestPage> {
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
     return Scaffold(
       appBar: AppBar(title: const Text('Postest (sin ayuda)')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text('Variante nueva. Sin pistas ni tutor hasta entregar.'),
-          const SizedBox(height: 12),
-          SizedBox(height: 180, child: CustomPaint(painter: CurvePainter(train, val))),
-          Slider(
-            value: complexity, min: 1, max: 10, divisions: 9,
-            label: 'Complejidad ${complexity.round()}',
-            onChanged: sent ? null : (v) => setState(() => complexity = v),
-            onChangeEnd: sent ? null : (_) => _loadCurve(),
-          ),
-          TextField(
-            controller: answer, maxLines: 3, enabled: !sent,
-            decoration: const InputDecoration(
-              labelText: 'Tu diagnóstico y justificación',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (!sent) FilledButton(onPressed: _sendPosttest, child: const Text('Entregar postest')),
-          if (sent && !done) ...[
-            TextField(
-              controller: reflection, maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Reflexión: ¿qué aprendiste?',
-                border: OutlineInputBorder(),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              const Text('Variante nueva. Sin pistas ni tutor hasta entregar.'),
+              const SizedBox(height: 12),
+              AccessibleCurveChart(train: train, val: val, label: 'Curvas del postest'),
+              Slider(
+                value: complexity, min: 1, max: 10, divisions: 9,
+                label: 'Complejidad ${complexity.round()}',
+                onChanged: sent ? null : (v) => setState(() => complexity = v),
+                onChangeEnd: sent ? null : (_) => _loadCurve(),
               ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: _sendReflection, child: const Text('Enviar reflexión y cerrar')),
-          ],
-          if (status.isNotEmpty) Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(status),
+              TextField(
+                controller: answer, maxLines: 3, enabled: !sent,
+                decoration: const InputDecoration(
+                  labelText: 'Tu diagnóstico y justificación',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (!sent) FilledButton(onPressed: _sendPosttest, child: const Text(Strings.deliverPosttest)),
+              if (sent && !done) ...[
+                TextField(
+                  controller: reflection, maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Reflexión: ¿qué aprendiste?',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(onPressed: _sendReflection, child: const Text('Enviar reflexión y cerrar')),
+              ],
+              StatusText(status),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1020,49 +1050,8 @@ class AccessibleCurveChart extends StatelessWidget {
 }
 
 // E5: instructor revisa intentos con rúbrica propia (0-4 por criterio).
-class StudentSessionsPage extends StatefulWidget {
-  final String studentId;
-  final String name;
-  const StudentSessionsPage({super.key, required this.studentId, required this.name});
-  @override
-  State<StudentSessionsPage> createState() => _StudentSessionsState();
-}
-
-class _StudentSessionsState extends State<StudentSessionsPage> {
-  late final _future = fetchJson('/instructor/students/${widget.studentId}/sessions');
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.name)),
-      body: FutureBuilder<List<dynamic>>(
-        future: _future,
-        builder: (c, s) {
-          if (s.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (s.hasError) return Center(child: Text('Error: ${s.error}'));
-          final sessions = s.data!;
-          if (sessions.isEmpty) return const Center(child: Text('Sin sesiones'));
-          return ListView(
-            children: [
-              for (final se in sessions)
-                ListTile(
-                  title: Text('${se['lab_template_id']} · ${se['status']}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => SessionReviewPage(sessionId: se['id']),
-                    ),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
+// ponytail: StudentSessionsPage eliminada; el diálogo de InstructorPage va
+// directo a /instructor/session/:sid (una pantalla menos, mismo flujo).
 
 const reviewCriteria = ['exactitud', 'evidencia', 'causal', 'alternativas', 'metacognicion'];
 
@@ -1099,7 +1088,11 @@ class _ReviewState extends State<SessionReviewPage> {
           if (s.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (s.hasError) return Center(child: Text('Error: ${s.error}'));
+          if (s.hasError) {
+            return Center(
+              child: Semantics(liveRegion: true, child: Text('Error: ${s.error}')),
+            );
+          }
           final attempts = s.data!;
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -1110,7 +1103,7 @@ class _ReviewState extends State<SessionReviewPage> {
                   answer: '${a['answer']}',
                   onSave: (scores, notes) => _send(a['id'], scores, notes),
                 ),
-              if (status.isNotEmpty) Text(status),
+              StatusText(status),
             ],
           );
         },
@@ -1280,66 +1273,88 @@ class _MonitorState extends State<MonitorLabPage> {
     final ref = (sel['ref'] as List?)?.cast<num>() ?? [];
     final cur = (sel['cur'] as List?)?.cast<num>() ?? [];
     final series = (dist?['series'] as List?)?.cast<num>() ?? [];
+    final controls = [
+      Text(posttestMode
+          ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
+          : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.'),
+      DropdownButton<String>(
+        value: feature,
+        items: const [
+          DropdownMenuItem(value: 'temp', child: Text('temp')),
+          DropdownMenuItem(value: 'pressure', child: Text('pressure')),
+          DropdownMenuItem(value: 'vibration', child: Text('vibration')),
+        ],
+        onChanged: (v) => setState(() => feature = v ?? feature),
+      ),
+      AccessibleHistChart(ref: ref, cur: cur, label: 'Distribución $feature'),
+      AccessibleCurveChart(train: series, val: const [], label: 'Serie temporal'),
+      Slider(
+        value: changepoint, min: 0, max: 179, divisions: 179,
+        label: 'Cambio en t=${changepoint.round()}',
+        onChanged: (v) => setState(() => changepoint = v),
+      ),
+      TextField(
+        controller: answer, maxLines: 3,
+        decoration: const InputDecoration(
+          labelText: 'Hipótesis de deriva y decisión',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 12),
+      FilledButton(
+        onPressed: _send,
+        child: Text(posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+      ),
+    ];
+    final result = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!posttestMode)
+          TextButton(
+            onPressed: sessionId == null
+                ? null
+                : () => setState(() {
+                      posttestMode = true;
+                      evalResult = null;
+                      intervention = null;
+                      socraticQ = '';
+                      _load();
+                    }),
+            child: const Text(Strings.goPosttest),
+          ),
+        if (!posttestMode)
+          ResultPanel(
+            evalResult: evalResult,
+            socraticQ: socraticQ,
+            intervention: intervention,
+            onNext: _next,
+          ),
+        StatusText(status),
+      ],
+    );
     return Scaffold(
       appBar: AppBar(title: Text(posttestMode ? '${widget.title} (postest)' : widget.title)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(posttestMode
-              ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
-              : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.'),
-          DropdownButton<String>(
-            value: feature,
-            items: const [
-              DropdownMenuItem(value: 'temp', child: Text('temp')),
-              DropdownMenuItem(value: 'pressure', child: Text('pressure')),
-              DropdownMenuItem(value: 'vibration', child: Text('vibration')),
-            ],
-            onChanged: (v) => setState(() => feature = v ?? feature),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth >= 900) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: ListView(padding: const EdgeInsets.all(16), children: controls)),
+                    SizedBox(
+                      width: 380,
+                      child: ListView(padding: const EdgeInsets.all(16), children: [result]),
+                    ),
+                  ],
+                );
+              }
+              return ListView(padding: const EdgeInsets.all(16), children: [...controls, result]);
+            },
           ),
-          SizedBox(height: 120, child: CustomPaint(painter: HistPainter(ref, cur))),
-          const Text('Azul=referencia, naranja=actual', style: TextStyle(fontSize: 12)),
-          SizedBox(height: 120, child: CustomPaint(painter: CurvePainter(series, const []))),
-          Slider(
-            value: changepoint, min: 0, max: 179, divisions: 179,
-            label: 'Cambio en t=${changepoint.round()}',
-            onChanged: (v) => setState(() => changepoint = v),
-          ),
-          TextField(
-            controller: answer, maxLines: 3,
-            decoration: const InputDecoration(
-              labelText: 'Hipótesis de deriva y decisión',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: _send,
-            child: Text(posttestMode ? 'Entregar postest' : 'Enviar intento'),
-          ),
-          if (!posttestMode)
-            TextButton(
-              onPressed: sessionId == null
-                  ? null
-                  : () => setState(() {
-                        posttestMode = true;
-                        evalResult = null;
-                        intervention = null;
-                        socraticQ = '';
-                        _load();
-                      }),
-              child: const Text('Ir al postest (sin ayuda)'),
-            ),
-          if (!posttestMode)
-            ResultPanel(
-              evalResult: evalResult,
-              socraticQ: socraticQ,
-              intervention: intervention,
-              onNext: _next,
-            ),
-          if (status.isNotEmpty)
-            Padding(padding: const EdgeInsets.only(top: 8), child: Text(status)),
-        ],
+        ),
       ),
     );
   }
@@ -1348,7 +1363,9 @@ class _MonitorState extends State<MonitorLabPage> {
 class HistPainter extends CustomPainter {
   final List<num> ref;
   final List<num> cur;
-  HistPainter(this.ref, this.cur);
+  final Color refColor;
+  final Color curColor;
+  HistPainter(this.ref, this.cur, {required this.refColor, required this.curColor});
   @override
   void paint(Canvas canvas, Size size) {
     if (ref.isEmpty) return;
@@ -1359,16 +1376,85 @@ class HistPainter extends CustomPainter {
       final h2 = size.height * (i < cur.length ? cur[i].toDouble() : 0) / maxV;
       canvas.drawRect(
         Rect.fromLTWH(i * bw + 1, size.height - h1, bw / 2 - 1, h1),
-        Paint()..color = Colors.blue,
+        Paint()..color = refColor,
       );
       canvas.drawRect(
         Rect.fromLTWH(i * bw + bw / 2, size.height - h2, bw / 2 - 1, h2),
-        Paint()..color = Colors.orange,
+        Paint()..color = curColor,
       );
     }
   }
   @override
-  bool shouldRepaint(covariant HistPainter old) => old.ref != ref || old.cur != cur;
+  bool shouldRepaint(covariant HistPainter old) =>
+      old.ref != ref || old.cur != cur || old.refColor != refColor || old.curColor != curColor;
+}
+
+/// Histograma referencia vs actual con alternativa textual y leyenda por
+/// posición (izquierda/derecha), no por color.
+class AccessibleHistChart extends StatelessWidget {
+  final List<num> ref;
+  final List<num> cur;
+  final String label;
+  const AccessibleHistChart({super.key, required this.ref, required this.cur, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          label: '$label. ${ref.length} barras. Referencia suma '
+              '${ref.fold<num>(0, (a, b) => a + b).toStringAsFixed(2)}, '
+              'actual ${cur.fold<num>(0, (a, b) => a + b).toStringAsFixed(2)}.',
+          child: SizedBox(
+            height: 120,
+            child: CustomPaint(painter: HistPainter(ref, cur, refColor: cs.primary, curColor: cs.tertiary)),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 16,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 12, height: 12, color: cs.primary),
+              const SizedBox(width: 6),
+              const Text(Strings.legendRef, style: TextStyle(fontSize: 12)),
+            ]),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 12, height: 12, color: cs.tertiary),
+              const SizedBox(width: 6),
+              const Text(Strings.legendCur, style: TextStyle(fontSize: 12)),
+            ]),
+          ],
+        ),
+        ExpansionTile(
+          title: const Text(Strings.chartDataTable, style: TextStyle(fontSize: 13)),
+          tilePadding: EdgeInsets.zero,
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('bin')),
+                  DataColumn(label: Text('referencia')),
+                  DataColumn(label: Text('actual')),
+                ],
+                rows: [
+                  for (var i = 0; i < ref.length; i++)
+                    DataRow(cells: [
+                      DataCell(Text('$i')),
+                      DataCell(Text(ref[i].toStringAsFixed(3))),
+                      DataCell(Text(i < cur.length ? cur[i].toStringAsFixed(3) : '—')),
+                    ]),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class ProgressPage extends StatelessWidget {  const ProgressPage({super.key});
@@ -1394,7 +1480,14 @@ class _InstructorState extends State<InstructorPage> {
         if (s.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (s.hasError) return Center(child: Text('Sin conexión API: ${s.error}'));
+        if (s.hasError) {
+          return Center(
+            child: Semantics(
+              liveRegion: true,
+              child: Text('${Strings.noApi}: ${s.error}'),
+            ),
+          );
+        }
         final students = s.data!;
         return ListView(
           children: [
@@ -1409,12 +1502,34 @@ class _InstructorState extends State<InstructorPage> {
               ListTile(
                 title: Text(st['display_name']),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => StudentSessionsPage(
-                      studentId: st['id'],
-                      name: st['display_name'],
+                onTap: () => showDialog(
+                  context: context,
+                  builder: (d) => AlertDialog(
+                    title: Text(st['display_name']),
+                    content: FutureBuilder<List<dynamic>>(
+                      future: fetchJson('/instructor/students/${st['id']}/sessions'),
+                      builder: (c2, s2) {
+                        if (!s2.hasData) return const LinearProgressIndicator();
+                        final sessions = s2.data!;
+                        if (sessions.isEmpty) return const Text('Sin sesiones');
+                        return SizedBox(
+                          width: 320,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (final se in sessions)
+                                ListTile(
+                                  dense: true,
+                                  title: Text('${se['lab_template_id']} · ${se['status']}'),
+                                  onTap: () {
+                                    Navigator.pop(d);
+                                    router.go('/instructor/session/${se['id']}');
+                                  },
+                                ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
