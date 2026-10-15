@@ -1,0 +1,40 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.uv/
+
+# SQLite
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Env / secretos
+.env
+*.pem
+*.key
+
+# Flutter / Dart
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+*.iml
+
+# OS / editores
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# Logs / temp
+*.log
+.pytest_cache/
+
+# Proyecto separado con su propio repo (MCP server, no parte de cognitiveflow)
+Google-Scholar-MCP-Server/
+
+# Config local de opencode (puede contener secrets de MCP en este equipo)
+opencode.json

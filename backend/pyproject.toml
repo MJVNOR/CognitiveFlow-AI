@@ -1,0 +1,22 @@
+[project]
+name = "cognitiveflow-backend"
+version = "0.1.0"
+description = "CognitiveFlow AI backend - FastAPI + SQLite"
+requires-python = "==3.12.*"
+dependencies = [
+    "google-genai>=2.31.0",
+]
+
+[dependency-groups]
+dev = [
+    "alembic>=1.20.0",
+    "fastapi>=0.143.1",
+    "httpx>=0.28.1",
+    "pytest>=8",
+    "pytest-asyncio>=1.4.0",
+    "sqlalchemy>=2.1.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
