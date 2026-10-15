@@ -49,6 +49,8 @@ flutter analyze --no-pub; flutter test; flutter build web
 ```
 
 - `flutter run -d chrome` no funciona en este equipo: usar `web-server`.
+- **REGLA: todo texto visible es seleccionable** (`SelectionArea` global en
+  `MaterialApp.router.builder`). No usar `Text` fuera de ella.
 - `genui 0.10.4` fijado en `pubspec.lock`; builders usan `BoundString` +
   `CatalogItemContext`; `Surface` se obtiene con `controller.contextFor(id)`.
 - Backend sin `CORSMiddleware` ⇒ el login web falla (preflight `OPTIONS` 404).

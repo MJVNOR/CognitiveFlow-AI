@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:marionette_flutter/marionette_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'genui/tutor_surface.dart';
@@ -95,7 +97,11 @@ Future<void> _clearAuth() async {
 }
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  if (kDebugMode) {
+    MarionetteBinding.ensureInitialized();
+  } else {
+    WidgetsFlutterBinding.ensureInitialized();
+  }
   await _restoreAuth();
   runApp(const CognitiveFlowApp());
 }
@@ -167,6 +173,8 @@ class CognitiveFlowApp extends StatelessWidget {
         useMaterial3: true,
       ),
       routerConfig: router,
+      // REGLA: todo texto visible es seleccionable (copiar evidencias, pegar en justificaciones).
+      builder: (context, child) => SelectionArea(child: child!),
     );
   }
 }
