@@ -62,6 +62,20 @@ class _TutorSurfaceState extends State<TutorSurface> {
   }
 
   @override
+  void didUpdateWidget(covariant TutorSurface old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.intervention, widget.intervention)) {
+      _transport.addMessage(core.A2uiMessage.fromJson({
+        'version': 'v0.9',
+        'updateComponents': {
+          'surfaceId': tutorSurfaceId,
+          'components': [interventionToComponent(widget.intervention)],
+        },
+      }));
+    }
+  }
+
+  @override
   void dispose() {
     _sub.cancel();
     _transport.dispose();

@@ -212,7 +212,7 @@ class _LoginState extends State<LoginPage> {
             child: Column(
               children: [
                 const Text(Strings.loginHint),
-                TextField(controller: userId, decoration: const InputDecoration(labelText: Strings.loginUserId)),
+                TextField(controller: userId, decoration: const InputDecoration(labelText: Strings.loginUserId), onSubmitted: (_) => _login()),
                 const SizedBox(height: 12),
                 FilledButton(onPressed: _login, child: const Text(Strings.loginEnter)),
                 StatusText(status),
@@ -504,6 +504,10 @@ class _DataLabState extends State<DataLabPage> {
 
   Future<void> _send() async {
     if (sessionId == null) return;
+    if (justification.text.trim().isEmpty) {
+      setState(() => status = 'La justificación es obligatoria');
+      return;
+    }
     try {
       final path = posttestMode ? 'posttest' : 'attempts';
       final a = await postJson('/sessions/$sessionId/$path', {
@@ -543,11 +547,13 @@ class _DataLabState extends State<DataLabPage> {
   }
 
   final scrollCtrl = ScrollController();
+  final hCtrl = ScrollController();
 
   @override
   void dispose() {
     justification.dispose();
     scrollCtrl.dispose();
+    hCtrl.dispose();
     super.dispose();
   }
 
@@ -568,10 +574,10 @@ class _DataLabState extends State<DataLabPage> {
               const SizedBox(height: 8),
               const Text(Strings.scrollHint, style: TextStyle(fontSize: 12)),
               Scrollbar(
-                controller: scrollCtrl,
+                controller: hCtrl,
                 thumbVisibility: true,
                 child: SingleChildScrollView(
-                  controller: scrollCtrl,
+                  controller: hCtrl,
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
                     showCheckboxColumn: true,
@@ -595,7 +601,7 @@ class _DataLabState extends State<DataLabPage> {
             controller: justification,
             maxLines: 3,
             decoration: const InputDecoration(
-              labelText: 'Justificación y plan de limpieza',
+              labelText: 'Justificación y plan de limpieza *',
               border: OutlineInputBorder(),
             ),
           ),
@@ -685,6 +691,10 @@ class _LabDetailState extends State<LabDetailPage> {
 
   Future<void> _send() async {
     if (sessionId == null) return;
+    if (hypo.text.trim().isEmpty) {
+      setState(() => status = 'La hipótesis es obligatoria');
+      return;
+    }
     try {
       final a = await postJson('/sessions/$sessionId/attempts', {
         'complexity': complexity.round(),
@@ -782,13 +792,13 @@ class _LabDetailState extends State<LabDetailPage> {
           constraints: const BoxConstraints(maxWidth: 1100),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (constraints.maxWidth >= 900) {
+              if (constraints.maxWidth >= 1024) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(child: ListView(padding: const EdgeInsets.all(16), children: controls)),
                     SizedBox(
-                      width: 380,
+                      width: (constraints.maxWidth * 0.35).clamp(320.0, 420.0),
                       child: ListView(padding: const EdgeInsets.all(16), children: [result]),
                     ),
                   ],
@@ -840,6 +850,10 @@ class _PosttestState extends State<PosttestPage> {
   }
 
   Future<void> _sendPosttest() async {
+    if (answer.text.trim().isEmpty) {
+      setState(() => status = 'El diagnóstico es obligatorio');
+      return;
+    }
     try {
       await postJson('/sessions/${widget.sessionId}/posttest', {
         'complexity': complexity.round(),
@@ -888,10 +902,16 @@ class _PosttestState extends State<PosttestPage> {
                 onChanged: sent ? null : (v) => setState(() => complexity = v),
                 onChangeEnd: sent ? null : (_) => _loadCurve(),
               ),
+              Slider(
+                value: noise, min: 0, max: 50, divisions: 10,
+                label: 'Ruido ${noise.round()}%',
+                onChanged: sent ? null : (v) => setState(() => noise = v),
+                onChangeEnd: sent ? null : (_) => _loadCurve(),
+              ),
               TextField(
                 controller: answer, maxLines: 3, enabled: !sent,
                 decoration: const InputDecoration(
-                  labelText: 'Tu diagnóstico y justificación',
+                  labelText: 'Tu diagnóstico y justificación *',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -1228,6 +1248,10 @@ class _MonitorState extends State<MonitorLabPage> {
 
   Future<void> _send() async {
     if (sessionId == null) return;
+    if (answer.text.trim().isEmpty) {
+      setState(() => status = 'La hipótesis es obligatoria');
+      return;
+    }
     try {
       final path = posttestMode ? 'posttest' : 'attempts';
       final a = await postJson('/sessions/$sessionId/$path', {
@@ -1277,14 +1301,19 @@ class _MonitorState extends State<MonitorLabPage> {
       Text(posttestMode
           ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
           : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.'),
-      DropdownButton<String>(
-        value: feature,
-        items: const [
-          DropdownMenuItem(value: 'temp', child: Text('temp')),
-          DropdownMenuItem(value: 'pressure', child: Text('pressure')),
-          DropdownMenuItem(value: 'vibration', child: Text('vibration')),
-        ],
-        onChanged: (v) => setState(() => feature = v ?? feature),
+      Semantics(
+        label: '¿Qué feature deriva?',
+        child: DropdownButton<String>(
+          value: feats.containsKey(feature) ? feature : (feats.keys.firstOrNull as String? ?? feature),
+          hint: const Text('¿Qué feature deriva?'),
+          items: [
+            for (final k in feats.keys.cast<String>())
+              DropdownMenuItem(value: k, child: Text(k)),
+            if (feats.isEmpty)
+              DropdownMenuItem(value: feature, child: Text(feature)),
+          ],
+          onChanged: (v) => setState(() => feature = v ?? feature),
+        ),
       ),
       AccessibleHistChart(ref: ref, cur: cur, label: 'Distribución $feature'),
       AccessibleCurveChart(train: series, val: const [], label: 'Serie temporal'),
@@ -1296,7 +1325,7 @@ class _MonitorState extends State<MonitorLabPage> {
       TextField(
         controller: answer, maxLines: 3,
         decoration: const InputDecoration(
-          labelText: 'Hipótesis de deriva y decisión',
+          labelText: 'Hipótesis de deriva y decisión *',
           border: OutlineInputBorder(),
         ),
       ),
@@ -1339,13 +1368,13 @@ class _MonitorState extends State<MonitorLabPage> {
           constraints: const BoxConstraints(maxWidth: 1100),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (constraints.maxWidth >= 900) {
+              if (constraints.maxWidth >= 1024) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(child: ListView(padding: const EdgeInsets.all(16), children: controls)),
                     SizedBox(
-                      width: 380,
+                      width: (constraints.maxWidth * 0.35).clamp(320.0, 420.0),
                       child: ListView(padding: const EdgeInsets.all(16), children: [result]),
                     ),
                   ],
@@ -1506,35 +1535,51 @@ class _InstructorState extends State<InstructorPage> {
                   context: context,
                   builder: (d) => AlertDialog(
                     title: Text(st['display_name']),
-                    content: FutureBuilder<List<dynamic>>(
-                      future: fetchJson('/instructor/students/${st['id']}/sessions'),
-                      builder: (c2, s2) {
-                        if (!s2.hasData) return const LinearProgressIndicator();
-                        final sessions = s2.data!;
-                        if (sessions.isEmpty) return const Text('Sin sesiones');
-                        return SizedBox(
-                          width: 320,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              for (final se in sessions)
-                                ListTile(
-                                  dense: true,
-                                  title: Text('${se['lab_template_id']} · ${se['status']}'),
-                                  onTap: () {
-                                    Navigator.pop(d);
-                                    router.go('/instructor/session/${se['id']}');
-                                  },
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                    content: _SessionsDialog(studentId: '${st['id']}'),
                   ),
                 ),
               ),
           ],
+        );
+      },
+    );
+  }
+}
+
+// ponytail: future hoisted to dialog state so rebuilds don't refetch.
+class _SessionsDialog extends StatefulWidget {
+  final String studentId;
+  const _SessionsDialog({required this.studentId});
+  @override
+  State<_SessionsDialog> createState() => _SessionsDialogState();
+}
+
+class _SessionsDialogState extends State<_SessionsDialog> {
+  late final _future = fetchJson('/instructor/students/${widget.studentId}/sessions');
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<dynamic>>(
+      future: _future,
+      builder: (c2, s2) {
+        if (!s2.hasData) return const LinearProgressIndicator();
+        final sessions = s2.data!;
+        if (sessions.isEmpty) return const Text('Sin sesiones');
+        return SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final se in sessions)
+                ListTile(
+                  dense: true,
+                  title: Text('${se['lab_template_id']} · ${se['status']}'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    router.go('/instructor/session/${se['id']}');
+                  },
+                ),
+            ],
+          ),
         );
       },
     );
