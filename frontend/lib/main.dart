@@ -121,9 +121,9 @@ final router = GoRouter(
     return null;
   },
   routes: [
-    GoRoute(path: '/login', builder: (c, s) => const LoginPage()),
+    GoRoute(path: '/login', builder: (c, s) => const SelectionArea(child: LoginPage())),
     ShellRoute(
-      builder: (c, s, child) => Shell(location: s.matchedLocation, child: child),
+      builder: (c, s, child) => SelectionArea(child: Shell(location: s.matchedLocation, child: child)),
       routes: [
         GoRoute(path: '/academy', builder: (c, s) => const AcademyPage()),
         GoRoute(path: '/labs', builder: (c, s) => const LabsPage()),
@@ -173,11 +173,13 @@ class CognitiveFlowApp extends StatelessWidget {
         useMaterial3: true,
       ),
       routerConfig: router,
-      // REGLA: todo texto visible es seleccionable (copiar evidencias, pegar en justificaciones).
-      builder: (context, child) => SelectionArea(child: child!),
     );
   }
 }
+
+// REGLA: todo texto visible es seleccionable. SelectionArea va DENTRO de las
+// rutas (bajo el Overlay del Navigator); en MaterialApp.builder revienta
+// (No Overlay widget found) porque corre por encima del Navigator.
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
