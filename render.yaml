@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: cognitiveflow-api
+    runtime: python
+    buildCommand: "cd backend && pip install uv && uv sync"
+    startCommand: "cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:///./data/cognitiveflow.db
+      - key: EVALUATOR_MODE
+        value: mock
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: JEV_API_KEY
+        sync: false
+      - key: JEV_BASE_URL
+        value: https://jev-api.org
+      - key: CORS_ORIGINS
+        value: https://cognitiveflow-web.onrender.com
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: DEMO_MODE
+        value: "true"
+    disk:
+      name: cognitiveflow-data
+      mountPath: /opt/render/project/src/backend/data
+      sizeGB: 1
