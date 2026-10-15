@@ -74,6 +74,27 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_models_mirror_without_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert client.get("/v1/models").json() == {"data": []}
+
+
+def test_models_mirror_mocked(monkeypatch):
+    import httpx
+
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"models": [{"name": "models/gemini-3.8-flash"}]}
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResp())
+    assert client.get("/v1/models").json() == {"data": [{"id": "gemini-3.8-flash"}]}
+
+
 def test_login_and_me():
     me = client.get("/auth/me", headers=H_S1).json()
     assert me == {"user_id": "s1", "role": "student", "display_name": "s1"}

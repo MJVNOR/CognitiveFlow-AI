@@ -43,6 +43,27 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/v1/models")
+def list_models():
+    # Espejo solo-lectura del catálogo Gemini (0 tokens): silencia sondeos OpenAI-style.
+    import httpx
+
+    key = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    if not key:
+        return {"data": []}
+    try:
+        r = httpx.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": key},
+            timeout=20,
+        )
+        r.raise_for_status()
+        return {"data": [{"id": m.get("name", "").replace("models/", "")}
+                         for m in r.json().get("models", [])]}
+    except Exception:
+        return {"data": []}
+
+
 @app.get("/modules")
 def list_modules(db: Session = Depends(get_db)):
     rows = db.query(models.Module).order_by(models.Module.order_index).all()

@@ -658,11 +658,11 @@ Si el tiempo aprieta, mantener **un único ML Experiment Lab perfectamente funci
 
 ### Épica A — Infraestructura
 
-- [x] A1 Monorepo + README + `.gitignore` + `frontend/` + `backend/` + push inicial a `github.com/MJVNOR/CognitiveFlow-AI` (falta `AGENTS.md`).
+- [x] A1 Monorepo + README + `AGENTS.md` + `.gitignore` + `frontend/` + `backend/` + push inicial a `github.com/MJVNOR/CognitiveFlow-AI`.
 - [x] A2 Configurar Python 3.12 con `uv` y pytest (falta `ruff`).
 - [x] A3 Configurar Flutter Web 3.47.7, `flutter analyze` + `flutter test` en verde (rutas con `NavigationBar`; falta `go_router`).
 - [ ] A4 Definir `.env.example`, error handler y logs sin secretos.
-- [ ] A5 Integrar GitHub Actions para Flutter analyze/test y pytest.
+- [x] A5 CI en GitHub Actions (`pytest` + `flutter analyze/test`) + `render.yaml` Blueprint y `docs/deployment.md`.
 
 ### Épica B — Datos
 
