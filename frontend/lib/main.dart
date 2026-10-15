@@ -574,6 +574,12 @@ class _DataLabState extends State<DataLabPage> {
                   : 'Marca las filas con anomalías y justifica tu plan de limpieza.'),
               const SizedBox(height: 8),
               const Text(Strings.scrollHint, style: TextStyle(fontSize: 12)),
+              if (columns.isEmpty && status.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (columns.isNotEmpty)
               Scrollbar(
                 controller: hCtrl,
                 thumbVisibility: true,
@@ -956,6 +962,7 @@ class CurvePainter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (train.isEmpty && val.isEmpty) return const SizedBox.shrink();
     return LineChart(
       LineChartData(
         minY: 0,
@@ -1392,6 +1399,7 @@ class HistPainter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (ref.isEmpty) return const SizedBox.shrink();
     final maxV = [...ref, ...cur].fold<double>(1, (a, b) => a > b.toDouble() ? a : b.toDouble());
     return BarChart(
       BarChartData(
