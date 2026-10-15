@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -940,59 +941,51 @@ class _PosttestState extends State<PosttestPage> {
 /// Curva de entrenamiento (continua) vs validación (discontinua).
 /// Colores desde el tema — nunca hard-coded — para modo claro/oscuro y
 /// diferenciación por estilo además de color (WCAG 1.4.1).
-class CurvePainter extends CustomPainter {
+class CurvePainter extends StatelessWidget {
   final List<num> train;
   final List<num> val;
   final Color trainColor;
   final Color valColor;
-  CurvePainter(this.train, this.val, {required this.trainColor, required this.valColor});
+  const CurvePainter(this.train, this.val,
+      {super.key, required this.trainColor, required this.valColor});
 
-  Path _pathFor(List<num> ys, Size size) {
-    final p = Path();
-    for (var i = 0; i < ys.length; i++) {
-      final x = size.width * i / (ys.length - 1);
-      final y = size.height - (ys[i].toDouble().clamp(0, 1) * size.height);
-      if (i == 0) {
-        p.moveTo(x, y);
-      } else {
-        p.lineTo(x, y);
-      }
-    }
-    return p;
-  }
-
-  // Convierte un path en discontinuo (dash 6/4) para la serie de validación.
-  Path _dashed(Path src) {
-    final out = Path();
-    for (final m in src.computeMetrics()) {
-      var d = 0.0;
-      while (d < m.length) {
-        out.addPath(m.extractPath(d, d + 6), Offset.zero);
-        d += 10;
-      }
-    }
-    return out;
-  }
+  List<FlSpot> _spots(List<num> ys) => [
+        for (var i = 0; i < ys.length; i++)
+          FlSpot(i.toDouble(), ys[i].toDouble().clamp(0, 1)),
+      ];
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (train.isEmpty) return;
-    canvas.drawPath(
-      _pathFor(train, size),
-      Paint()..color = trainColor..strokeWidth = 2..style = PaintingStyle.stroke,
+  Widget build(BuildContext context) {
+    return LineChart(
+      LineChartData(
+        minY: 0,
+        maxY: 1,
+        gridData: const FlGridData(show: false),
+        titlesData: const FlTitlesData(show: false),
+        borderData: FlBorderData(show: false),
+        lineTouchData: const LineTouchData(enabled: false),
+        lineBarsData: [
+          if (train.isNotEmpty)
+            LineChartBarData(
+              spots: _spots(train),
+              isCurved: false,
+              color: trainColor,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+            ),
+          if (val.isNotEmpty)
+            LineChartBarData(
+              spots: _spots(val),
+              isCurved: false,
+              color: valColor,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+              dashArray: [6, 4],
+            ),
+        ],
+      ),
     );
-    if (val.isNotEmpty) {
-      canvas.drawPath(
-        _dashed(_pathFor(val, size)),
-        Paint()..color = valColor..strokeWidth = 2..style = PaintingStyle.stroke,
-      );
-    }
   }
-
-  @override
-  bool shouldRepaint(covariant CurvePainter old) =>
-      old.train != train || old.val != val ||
-      old.trainColor != trainColor || old.valColor != valColor;
 }
 
 /// Gráfico de curvas con alternativa textual (WCAG 1.1.1) y leyenda sin
@@ -1021,7 +1014,7 @@ class AccessibleCurveChart extends StatelessWidget {
           label: '$label. Entrenamiento: ${_summary(train)}. Validación: ${_summary(val)}.',
           child: SizedBox(
             height: 180,
-            child: CustomPaint(painter: CurvePainter(train, val, trainColor: cs.primary, valColor: cs.tertiary)),
+            child: CurvePainter(train, val, trainColor: cs.primary, valColor: cs.tertiary),
           ),
         ),
         const SizedBox(height: 4),
@@ -1389,33 +1382,42 @@ class _MonitorState extends State<MonitorLabPage> {
   }
 }
 
-class HistPainter extends CustomPainter {
+class HistPainter extends StatelessWidget {
   final List<num> ref;
   final List<num> cur;
   final Color refColor;
   final Color curColor;
-  HistPainter(this.ref, this.cur, {required this.refColor, required this.curColor});
+  const HistPainter(this.ref, this.cur,
+      {super.key, required this.refColor, required this.curColor});
+
   @override
-  void paint(Canvas canvas, Size size) {
-    if (ref.isEmpty) return;
-    final maxV = [...ref, ...cur].reduce((a, b) => a > b ? a : b).toDouble();
-    final bw = size.width / ref.length;
-    for (var i = 0; i < ref.length; i++) {
-      final h1 = size.height * ref[i].toDouble() / maxV;
-      final h2 = size.height * (i < cur.length ? cur[i].toDouble() : 0) / maxV;
-      canvas.drawRect(
-        Rect.fromLTWH(i * bw + 1, size.height - h1, bw / 2 - 1, h1),
-        Paint()..color = refColor,
-      );
-      canvas.drawRect(
-        Rect.fromLTWH(i * bw + bw / 2, size.height - h2, bw / 2 - 1, h2),
-        Paint()..color = curColor,
-      );
-    }
+  Widget build(BuildContext context) {
+    final maxV = [...ref, ...cur].fold<double>(1, (a, b) => a > b.toDouble() ? a : b.toDouble());
+    return BarChart(
+      BarChartData(
+        alignment: BarChartAlignment.spaceAround,
+        maxY: maxV,
+        gridData: const FlGridData(show: false),
+        titlesData: const FlTitlesData(show: false),
+        borderData: FlBorderData(show: false),
+        barTouchData: BarTouchData(enabled: false),
+        barGroups: [
+          for (var i = 0; i < ref.length; i++)
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(toY: ref[i].toDouble(), color: refColor, width: 6),
+                BarChartRodData(
+                  toY: i < cur.length ? cur[i].toDouble() : 0,
+                  color: curColor,
+                  width: 6,
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
   }
-  @override
-  bool shouldRepaint(covariant HistPainter old) =>
-      old.ref != ref || old.cur != cur || old.refColor != refColor || old.curColor != curColor;
 }
 
 /// Histograma referencia vs actual con alternativa textual y leyenda por
@@ -1438,7 +1440,7 @@ class AccessibleHistChart extends StatelessWidget {
               'actual ${cur.fold<num>(0, (a, b) => a + b).toStringAsFixed(2)}.',
           child: SizedBox(
             height: 120,
-            child: CustomPaint(painter: HistPainter(ref, cur, refColor: cs.primary, curColor: cs.tertiary)),
+            child: HistPainter(ref, cur, refColor: cs.primary, curColor: cs.tertiary),
           ),
         ),
         const SizedBox(height: 4),
