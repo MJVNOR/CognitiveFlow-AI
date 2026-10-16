@@ -470,7 +470,7 @@ def test_posttest_locks_session():
         json={"complexity": 6, "noise_pct": 20, "answer_text": "postest"},
         headers=H_S1,
     ).json()
-    assert pt["seed"] == 99  # variante distinta a práctica (seed 1)
+    assert pt["seed"] >= 100  # variante nueva por sesión, distinta de práctica (seed 1)
     # Tutor e intervenciones bloqueados durante/tras postest
     assert client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).status_code == 403
     assert (
@@ -486,7 +486,7 @@ def test_posttest_locks_session():
     )
     # Reflexión cierra sin inflar logros
     r = client.post(f"/sessions/{sid}/reflection", json={"text": "aprendí X"}, headers=H_S1).json()
-    assert r == {"status": "done"}
+    assert r["status"] == "done"
 
 
 def test_reflection_only_after_posttest():
@@ -644,6 +644,84 @@ def test_jev_live_opt_in():
         {"complexity": 7},
     )
     assert r["status"] in ("evaluated", "pending")
+
+
+# PR-05 P4: variante nueva, progreso baseline→postest, matriz, resumen honesto
+def _full_ml_session(text="Hay overfit porque la validación sube con complejidad 7; "
+                           "los datos generalizan mal y propongo regularizar; reviso mi hipótesis"):
+    sid = _ml_session()
+    aid = _attempt(sid, text)
+    _eval_on(sid, aid)
+    return sid
+
+
+def test_posttest_variant_new_and_idempotent_begin():
+    sid = _ml_session()
+    b1 = client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1).json()
+    assert b1["status"] == "begin" and b1["seed"] >= 100
+    assert 6 <= b1["complexity"] <= 9  # el servidor fija la variante, no el cliente
+    b2 = client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1).json()
+    assert b2["seed"] == b1["seed"] and b2["complexity"] == b1["complexity"]
+    sid2 = _ml_session()
+    other = client.post(f"/sessions/{sid2}/posttest", json={"answer_text": ""},
+                        headers=H_S1).json()
+    assert isinstance(other["seed"], int)  # determinista por sesión
+
+
+def test_posttest_submit_autoevaluates_and_locks():
+    import json
+
+    sid = _ml_session()
+    r = client.post(f"/sessions/{sid}/posttest",
+        json={"complexity": 1, "answer_text": "diagnóstico con curvas"}, headers=H_S1).json()
+    assert r["status"] == "submitted" and r["eval_status"] in ("evaluated", "pending")
+    # la variante del servidor manda, no el complexity=1 del cliente
+    att = TestingSession().query(models.LabAttempt).filter_by(id=r["id"]).first()
+    assert json.loads(att.input_state_json)["seed"] == r["seed"] >= 100
+    assert TestingSession().query(models.EvaluationResult).filter_by(
+        attempt_id=r["id"]).count() == 1
+    assert client.post(f"/sessions/{sid}/posttest",
+        json={"answer_text": "otro"}, headers=H_S1).status_code == 403
+
+
+def test_progress_baseline_vs_posttest():
+    sid = _full_ml_session()
+    p = client.get("/me/progress", headers=H_S1).json()
+    ml = next(x for x in p if x["lab_template_id"] == "lab-ml")
+    assert ml["attempts"] == 1 and ml["baseline"]["exactitud"] == 4
+    assert ml["posttest"] is None and ml["status"] == "active"
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": "postest"}, headers=H_S1)
+    ml2 = next(x for x in client.get("/me/progress", headers=H_S1).json()
+               if x["lab_template_id"] == "lab-ml")
+    assert ml2["posttest"] is not None and ml2["status"] == "posttest"
+
+
+def test_matrix_instructor_only_and_shaped():
+    _full_ml_session()
+    m = client.get("/instructor/matrix", headers=H_I1).json()
+    assert len(m) == 4 and all(s["student"].startswith("STU-") for s in m)
+    assert "lab-ml" in m[0]["labs"] and "baseline" in m[0]["labs"]["lab-ml"]
+    assert client.get("/instructor/matrix", headers=H_S1).status_code == 403
+
+
+def test_reflection_summary_honest():
+    sid = _full_ml_session()  # baseline fuerte
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": "no sé"}, headers=H_S1)
+    r = client.post(f"/sessions/{sid}/reflection", json={"text": "aprendí"}, headers=H_S1).json()
+    assert r["status"] == "done"
+    # postest peor que baseline → sin mejora inventada, con desafío real
+    assert r["summary"]["mejora"] is None and r["summary"]["desafio"] is not None
+
+    sid2 = _ml_session()
+    aid2 = _attempt(sid2, "no sé")
+    _eval_on(sid2, aid2)
+    client.post(f"/sessions/{sid2}/posttest",
+        json={"answer_text": "Hay overfit porque validación sube; evidencia en curvas; "
+                             "causa memorización; alternativo regularizar; reviso hipótesis"},
+        headers=H_S1)
+    r2 = client.post(f"/sessions/{sid2}/reflection", json={"text": "mejoré"},
+                     headers=H_S1).json()
+    assert r2["summary"]["mejora"] is not None
 
 
 # PR-04 P3.4/P3.6: 6 estrategias, sin bucles, prompt con guarda

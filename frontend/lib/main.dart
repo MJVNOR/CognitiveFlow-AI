@@ -937,12 +937,49 @@ class LabSession {
   }
 
   Future<void> reflect(String text) async {
-    await postJson('/sessions/$sessionId/reflection', {'text': text});
+    final r = await postJson('/sessions/$sessionId/reflection', {'text': text});
+    reflectionSummary = (r['summary'] as Map?)?.map((k, v) => MapEntry('$k', v));
     done = true;
   }
+
+  // P4.1: el servidor fija la variante del postest; el cliente la aplica.
+  Map<String, dynamic>? posttestVariant;
+  Map<String, dynamic>? reflectionSummary;
+
+  Future<bool> beginPosttest() async {
+    try {
+      final r = await postJson('/sessions/$sessionId/posttest', {'answer_text': ''});
+      posttestVariant = r;
+      return true;
+    } catch (e) {
+      status = 'No se pudo iniciar el postest: $e';
+      return false;
+    }
+  }
+
+  int variantSeed(int fallback) => (posttestVariant?['seed'] as num?)?.toInt() ?? fallback;
 }
 
 const labStepLabels = ['Explorar', 'Evaluar', 'Intervenir', 'Postest'];
+
+// P4.1: entrada al postest con variante del servidor (igual en los 3 labs).
+// beginPosttest es idempotente: doble toque no duplica nada.
+Future<void> enterPosttest(LabSession lab, void Function(void Function()) setState,
+    Future<void> Function() reload,
+    [void Function()? onVariant]) async {
+  if (await lab.beginPosttest()) {
+    setState(() {
+      lab.posttestMode = true;
+      lab.evalResult = null;
+      lab.intervention = null;
+      lab.socraticQ = '';
+      onVariant?.call();
+    });
+    await reload();
+  } else {
+    setState(() {});
+  }
+}
 
 /// Pasos del lab (misma cabecera en los 3 labs: así se blendean).
 class LabSteps extends StatelessWidget {
@@ -1206,6 +1243,29 @@ class _PosttestReflectionState extends State<PosttestReflection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Sesión cerrada. Gracias por tu reflexión.'),
+        // P4.5: pico-fin honesto desde deltas reales; sin halago automático.
+        if (widget.lab.reflectionSummary != null)
+          Builder(builder: (context) {
+            final s = widget.lab.reflectionSummary!;
+            final mejora = s['mejora'];
+            final desafio = s['desafio'];
+            if (mejora == null && desafio == null) {
+              return const Text(
+                  'Aún sin evidencias comparables; sigue practicando.',
+                  style: TextStyle(fontSize: 13));
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (mejora != null)
+                  Text('Mejora observada: ${criterionLabel('$mejora')} ✓',
+                      style: const TextStyle(fontSize: 13)),
+                if (desafio != null)
+                  Text('Siguiente desafío: ${criterionLabel('$desafio')}',
+                      style: const TextStyle(fontSize: 13)),
+              ],
+            );
+          }),
         const SizedBox(height: 8),
         NextLabButton(widget.labId),
       ],
@@ -1223,6 +1283,27 @@ const criterionLabels = {
 };
 
 String criterionLabel(String id) => criterionLabels[id] ?? id;
+
+// P4.2: línea base→postest desde mapas {criterio: score}; null si no comparable.
+String? progressLine(Map? base, Map? post) {
+  double? avg(Map? m) {
+    if (m == null || m.isEmpty) return null;
+    var t = 0.0;
+    for (final v in m.values) {
+      t += (v as num).toDouble();
+    }
+    return t / m.length;
+  }
+
+  final b = avg(base);
+  final p = avg(post);
+  String f(double v) => v.toStringAsFixed(1);
+  if (b == null && p == null) return null;
+  if (b == null) return 'Postest ${f(p!)} (sin base)';
+  if (p == null) return 'Base ${f(b)} (sin postest)';
+  final d = p - b;
+  return 'Base ${f(b)} → Postest ${f(p)} (${d >= 0 ? '+' : ''}${f(d)})';
+}
 
 /// Panel compartido: evaluación + socrática + siguiente intervención GenUI.
 /// Siempre visible tras el primer envío, con estados (nunca vacío silencioso).
@@ -1462,7 +1543,7 @@ class _DataLabState extends State<DataLabPage> {
   final flagged = <int>{};
   final justification = TextEditingController();
 
-  int get seed => lab.posttestMode ? 99 : 1;
+  int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
   @override
   void initState() {
@@ -1648,13 +1729,7 @@ class _DataLabState extends State<DataLabPage> {
               key: const ValueKey('go_posttest'),
               onPressed: lab.sessionId == null
                   ? null
-                  : () => setState(() {
-                        lab.posttestMode = true;
-                        lab.evalResult = null;
-                        lab.intervention = null;
-                        lab.socraticQ = '';
-                        _loadTable();
-                      }),
+                  : () => enterPosttest(lab, setState, _loadTable),
               child: const Text(Strings.goPosttest),
             ),
           if (!lab.posttestMode)
@@ -1694,7 +1769,7 @@ class _LabDetailState extends State<LabDetailPage> {
   final hypo = TextEditingController();
   Map<String, dynamic>? curve;
 
-  int get seed => lab.posttestMode ? 99 : 1;
+  int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
   @override
   void initState() {
@@ -1795,6 +1870,8 @@ class _LabDetailState extends State<LabDetailPage> {
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
     final sent = lab.posttestSent;
+    // P4.1: variante fijada por el servidor; en postest no se toca.
+    final locked = sent || lab.posttestMode;
     final cs = Theme.of(context).colorScheme;
     final experimentAccent =
         lab.posttestMode ? null : cs.secondary;
@@ -1844,6 +1921,7 @@ class _LabDetailState extends State<LabDetailPage> {
             label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida',
           ),
           const SizedBox(height: 12),
+          // P4.1: variante fijada por el servidor; en postest no se toca.
           ParamSlider(
             label: 'Complejidad del modelo',
             value: '${complexity.round()} / 10',
@@ -1852,8 +1930,8 @@ class _LabDetailState extends State<LabDetailPage> {
             min: 1,
             max: 10,
             divisions: 9,
-            onChanged: sent ? null : (v) => setState(() => complexity = v),
-            onChangeEnd: sent
+            onChanged: locked ? null : (v) => setState(() => complexity = v),
+            onChangeEnd: locked
                 ? null
                 : (_) {
                     _loadCurve();
@@ -1868,8 +1946,8 @@ class _LabDetailState extends State<LabDetailPage> {
             min: 0,
             max: 50,
             divisions: 10,
-            onChanged: sent ? null : (v) => setState(() => noise = v),
-            onChangeEnd: sent
+            onChanged: locked ? null : (v) => setState(() => noise = v),
+            onChangeEnd: locked
                 ? null
                 : (_) {
                     _loadCurve();
@@ -1927,12 +2005,12 @@ class _LabDetailState extends State<LabDetailPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => setState(() {
-                      lab.posttestMode = true;
-                      lab.evalResult = null;
-                      lab.intervention = null;
-                      lab.socraticQ = '';
-                      _loadCurve();
+                : () => enterPosttest(lab, setState, _loadCurve, () {
+                      final v = lab.posttestVariant;
+                      if (v != null) {
+                        complexity = (v['complexity'] as num).toDouble();
+                        noise = (v['noise_pct'] as num).toDouble();
+                      }
                     }),
             child: const Text(Strings.goPosttestNoAI),
           ),
@@ -2316,7 +2394,7 @@ class _MonitorState extends State<MonitorLabPage> {
   final answer = TextEditingController();
   Map<String, dynamic>? dist;
 
-  int get seed => lab.posttestMode ? 99 : 1;
+  int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
   @override
   void initState() {
@@ -2473,13 +2551,7 @@ class _MonitorState extends State<MonitorLabPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => setState(() {
-                      lab.posttestMode = true;
-                      lab.evalResult = null;
-                      lab.intervention = null;
-                      lab.socraticQ = '';
-                      _load();
-                    }),
+                : () => enterPosttest(lab, setState, _load),
             child: const Text(Strings.goPosttest),
           ),
         if (!lab.posttestMode)
@@ -2649,8 +2721,9 @@ class ProgressPage extends StatefulWidget {
 }
 
 class _ProgressState extends State<ProgressPage> {
-  // ponytail: mismo Future.wait que Academia; sin endpoint nuevo.
-  late final _future = Future.wait([fetchLabs(), fetchMap('/me/lab-status')]);
+  // ponytail: mismo Future.wait que Academia + GET /me/progress medido.
+  late final _future =
+      Future.wait([fetchLabs(), fetchMap('/me/lab-status'), fetchMap('/me/progress')]);
 
   @override
   Widget build(BuildContext context) {
@@ -2670,6 +2743,9 @@ class _ProgressState extends State<ProgressPage> {
         }
         final labs = s.data![0] as List<Lab>;
         final statusMap = s.data![1] as Map;
+        final prog = {
+          for (final p in (s.data![2] as List)) (p['lab_template_id'] as String): p as Map
+        };
         final done =
             [for (final l in labs) if (statusMap[l.id] == 'done') l].length;
         return ListView(
@@ -2687,7 +2763,7 @@ class _ProgressState extends State<ProgressPage> {
             const SizedBox(height: 16),
             for (final l in labs)
               Card(
-                child: ListTile(
+                child: ExpansionTile(
                   leading: Icon(
                     switch (statusMap[l.id]) {
                       'done' => Icons.check_circle,
@@ -2698,12 +2774,47 @@ class _ProgressState extends State<ProgressPage> {
                   ),
                   title: AutoSizeText(l.title,
                       maxLines: 1, minFontSize: 12),
-                  subtitle: Text(labStatusLabel(statusMap[l.id] as String?)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.go(
-                    '/labs/${l.id}',
-                    extra: {'lab_type': l.labType, 'title': l.title},
-                  ),
+                  subtitle: Text([
+                    labStatusLabel(statusMap[l.id] as String?),
+                    progressLine((prog[l.id]?['baseline']) as Map?,
+                            (prog[l.id]?['posttest']) as Map?) ??
+                        'Sin evidencias comparables',
+                  ].join(' · ')),
+                  children: [
+                    if ((prog[l.id]?['baseline'] as Map?)?.isNotEmpty == true ||
+                        (prog[l.id]?['posttest'] as Map?)?.isNotEmpty == true)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final cid in {
+                              ...((prog[l.id]?['baseline'] as Map?)?.keys ?? []),
+                              ...((prog[l.id]?['posttest'] as Map?)?.keys ?? []),
+                            })
+                              Chip(
+                                label: Text(
+                                    '${criterionLabel('$cid')}: '
+                                    '${(prog[l.id]?['baseline'] as Map?)?[cid] ?? '—'}'
+                                    '→${(prog[l.id]?['posttest'] as Map?)?[cid] ?? '—'}',
+                                    style: const TextStyle(fontSize: 12)),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ListTile(
+                      dense: true,
+                      trailing: const Icon(Icons.chevron_right),
+                      title: const Text('Abrir laboratorio',
+                          style: TextStyle(fontSize: 13)),
+                      onTap: () => context.go(
+                        '/labs/${l.id}',
+                        extra: {'lab_type': l.labType, 'title': l.title},
+                      ),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -2720,10 +2831,11 @@ class InstructorPage extends StatefulWidget {
 }
 
 class _InstructorState extends State<InstructorPage> {
-  late final _future = fetchStudents();
+  late final _future =
+      Future.wait([fetchStudents(), fetchLabs(), fetchMap('/instructor/matrix')]);
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Student>>(
+    return FutureBuilder<List<dynamic>>(
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
@@ -2737,7 +2849,13 @@ class _InstructorState extends State<InstructorPage> {
             ),
           );
         }
-        final students = s.data!;
+        final students = s.data![0] as List<Student>;
+        final labTitles = {
+          for (final l in (s.data![1] as List<Lab>)) l.id: l.title
+        };
+        final matrix = {
+          for (final m in (s.data![2] as List)) (m['student_id'] as String): m as Map
+        };
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -2756,6 +2874,13 @@ class _InstructorState extends State<InstructorPage> {
                   title: AutoSizeText(st.displayName,
                       maxLines: 1, minFontSize: 12),
                   children: [
+                    if (matrix[st.id] != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: _MatrixCard(
+                            labTitles: labTitles,
+                            labs: (matrix[st.id]!['labs'] as Map).cast<String, Map>()),
+                      ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: _SessionsDialog(studentId: st.id),
@@ -2766,6 +2891,41 @@ class _InstructorState extends State<InstructorPage> {
           ],
         );
       },
+    );
+  }
+}
+
+// P4.4: matriz por alumno — baseline→postest por lab, sin promediar personas.
+class _MatrixCard extends StatelessWidget {
+  final Map<String, String> labTitles;
+  final Map<String, Map> labs;
+  const _MatrixCard({required this.labTitles, required this.labs});
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final e in labs.entries)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Expanded(
+                    child: Text(labTitles[e.key] ?? e.key,
+                        style: const TextStyle(fontSize: 13))),
+                Text(
+                    progressLine(e.value['baseline'] as Map?,
+                            e.value['posttest'] as Map?) ??
+                        'Sin evidencias',
+                    style: const TextStyle(fontSize: 12)),
+                if (e.value['pending_review'] == true) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.mark_email_unread_outlined, size: 16),
+                ],
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

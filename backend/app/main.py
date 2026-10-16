@@ -380,11 +380,15 @@ def evaluate(session_id: str, body: EvaluateIn, user=Depends(current_user),
         from fastapi import HTTPException
 
         raise HTTPException(404, "attempt not found")
+    s = db.query(models.LearningSession).filter_by(id=session_id).first()
+    return _evaluate_attempt(db, s, attempt)
+
+
+def _evaluate_attempt(db: Session, session, attempt) -> dict:
     state = json.loads(attempt.input_state_json)
-    lab = db.query(models.LearningSession).filter_by(id=session_id).first()
     lab_type = ""
-    if lab:
-        tpl = db.query(models.LabTemplate).filter_by(id=lab.lab_template_id).first()
+    if session:
+        tpl = db.query(models.LabTemplate).filter_by(id=session.lab_template_id).first()
         lab_type = tpl.lab_type if tpl else ""
     if lab_type == "data_detective":
         # ponytail: Jev solo en ML por ahora; datos y monitoreo con mock determinista
@@ -500,41 +504,115 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
 
 
 class PosttestIn(BaseModel):
-    complexity: int = 5
+    complexity: int = 5  # ignorados: la variante la fija el servidor (P4.1)
     noise_pct: int = 20
     answer_text: str = ""
 
 
-POSTTEST_SEED = 99  # variante equivalente, distinta del seed de práctica (1)
+def _posttest_variant(session_id: str) -> dict:
+    """P4.1: variante equivalente pero nueva por sesión (determinista)."""
+    import hashlib
+
+    h = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
+    return {"seed": 100 + h % 800, "complexity": 6 + h % 4,
+            "noise_pct": 15 + (h % 3) * 10}
+
+
+def _posttest_attempt(db: Session, session_id: str):
+    for a in db.query(models.LabAttempt).filter_by(session_id=session_id).all():
+        try:
+            kind = json.loads(a.input_state_json).get("kind", "")
+        except Exception:
+            kind = ""
+        if kind == "posttest":
+            return a
+    return None
 
 
 @app.post("/sessions/{session_id}/posttest")
 def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
              db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
-    if s.status != "active":
+    if s.status == "done":
         from fastapi import HTTPException
 
-        raise HTTPException(403, "postest ya iniciado o sesión terminada")
-    s.status = "posttest"
+        raise HTTPException(403, "sesión terminada")
+    variant = _posttest_variant(session_id)
+    if s.status == "active":
+        s.status = "posttest"
+        db.commit()
+    if not body.answer_text.strip():
+        return {"status": "begin", **variant}
+    if _posttest_attempt(db, session_id):
+        from fastapi import HTTPException
+
+        raise HTTPException(403, "postest ya entregado")
     aid = uuid.uuid4().hex[:8]
-    db.add(
-        models.LabAttempt(
-            id=aid,
-            session_id=session_id,
-            input_state_json=json.dumps(
-                {
-                    "complexity": body.complexity,
-                    "noise_pct": body.noise_pct,
-                    "seed": POSTTEST_SEED,
-                    "kind": "posttest",
-                }
-            ),
-            answer_text=body.answer_text,
-        )
-    )
+    attempt = models.LabAttempt(
+        id=aid, session_id=session_id,
+        input_state_json=json.dumps({"complexity": variant["complexity"],
+                                     "noise_pct": variant["noise_pct"],
+                                     "seed": variant["seed"], "kind": "posttest"}),
+        answer_text=body.answer_text)
+    db.add(attempt)
     db.commit()
-    return {"id": aid, "seed": POSTTEST_SEED}
+    # P4.2: el postest se evalúa y guarda (comparación honesta), pero no se muestra
+    result = _evaluate_attempt(db, s, attempt)
+    return {"status": "submitted", "id": aid, **variant, "eval_status": result["status"]}
+
+
+def _eval_map(db: Session, attempt_id: str) -> dict | None:
+    """Última evaluación del intento como {criterion: score}; None si no evaluado."""
+    ev = (db.query(models.EvaluationResult).filter_by(attempt_id=attempt_id)
+          .order_by(models.EvaluationResult.id.desc()).first())
+    if not ev or ev.status != "evaluated":
+        return None
+    try:
+        crits = json.loads(ev.normalized_scores_json).get("criteria", [])
+    except Exception:
+        return None
+    return {c.get("id"): c.get("score", 0) for c in crits if c.get("id")}
+
+
+def _lab_progress(db: Session, student_id: str, lab_template_id: str) -> dict:
+    """P4.2: baseline (primer intento práctica) vs postest, por criterio."""
+    sessions = db.query(models.LearningSession).filter_by(
+        student_id=student_id, lab_template_id=lab_template_id).all()
+    if not sessions:
+        return {"status": None, "attempts": 0, "baseline": None, "posttest": None,
+                "reviewed": False}
+    s = sessions[-1]
+    practice = [a for a in _practice_attempts(db, s.id)]
+    baseline = _eval_map(db, practice[0].id) if practice else None
+    pt = _posttest_attempt(db, s.id)
+    posttest = _eval_map(db, pt.id) if pt else None
+    aids = [a.id for a in practice] + ([pt.id] if pt else [])
+    reviewed = bool(aids and db.query(models.InstructorReview).filter(
+        models.InstructorReview.attempt_id.in_(aids)).first())
+    pending_review = bool(aids and not reviewed and (baseline or posttest))
+    return {"status": s.status, "attempts": len(practice), "baseline": baseline,
+            "posttest": posttest, "reviewed": reviewed, "pending_review": pending_review}
+
+
+@app.get("/me/progress")
+def my_progress(user=Depends(current_user), db: Session = Depends(get_db)):
+    # P4.2/P4.3: dominio demostrado (baseline vs postest), no clics ni tiempo.
+    labs = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
+    return [{"lab_template_id": l.id, "title": l.title,
+             **_lab_progress(db, user.id, l.id)} for l in labs]
+
+
+@app.get("/instructor/matrix")
+def instructor_matrix(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    # P4.4: matriz alumnos × labs con baseline/postest; códigos, nunca nombres aquí.
+    users = db.query(models.User).filter(models.User.role == "student").all()
+    labs = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
+    code = {}
+    def anon(uid: str) -> str:
+        return code.setdefault(uid, f"STU-{len(code)+1:02d}")
+
+    return [{"student": anon(u.id), "student_id": u.id,
+             "labs": {l.id: _lab_progress(db, u.id, l.id) for l in labs}} for u in users]
 
 
 class ReflectionIn(BaseModel):
@@ -552,4 +630,12 @@ def reflection(session_id: str, body: ReflectionIn, user=Depends(current_user),
     s.status = "done"
     db.add(models.Reflection(id=uuid.uuid4().hex[:8], session_id=session_id, text=body.text))
     db.commit()
-    return {"status": "done"}
+    # P4.5: pico-fin honesto desde deltas baseline→postest; sin halago automático.
+    prog = _lab_progress(db, s.student_id, s.lab_template_id)
+    base, post = prog["baseline"] or {}, prog["posttest"] or {}
+    deltas = {k: post.get(k, 0) - base.get(k, 0) for k in base if k in post}
+    mejora = max(deltas, key=deltas.get) if deltas and max(deltas.values()) > 0 else None
+    desafio = min(deltas, key=deltas.get) if deltas else None
+    if desafio is None and post:
+        desafio = min(post, key=post.get)
+    return {"status": "done", "summary": {"mejora": mejora, "desafio": desafio}}
