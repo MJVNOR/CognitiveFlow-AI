@@ -3315,7 +3315,6 @@ class _SessionsDialogState extends State<_SessionsDialog> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   onTap: () {
-                    Navigator.pop(context);
                     context.go('/instructor/session/${se.id}');
                   },
                 ),
