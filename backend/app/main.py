@@ -203,8 +203,62 @@ def create_session(body: SessionIn, user=Depends(current_user), db: Session = De
 @app.get("/sessions/{session_id}")
 def get_session(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
+    attempts = _practice_attempts(db, session_id)
     return {"id": s.id, "student_id": s.student_id, "lab_template_id": s.lab_template_id,
-            "status": s.status}
+            "status": s.status, "phase": _phase(db, s), "attempt_count": len(attempts)}
+
+
+MAX_REVISIONS = 6  # P3.5: tope de ciclos evaluar→intervenir por sesión; luego postest
+
+
+def _practice_attempts(db: Session, session_id: str) -> list:
+    # ponytail: O(n) scan; 4 alumnos, sesiones cortas
+    out = []
+    for a in db.query(models.LabAttempt).filter_by(session_id=session_id).all():
+        try:
+            kind = json.loads(a.input_state_json).get("kind", "")
+        except Exception:
+            kind = ""
+        if kind != "posttest":
+            out.append(a)
+    return out
+
+
+def _phase(db: Session, session) -> str:
+    """P3.2: fase derivada de datos persistidos — recuperable tras recarga sin tabla extra."""
+    if session.status == "done":
+        return "cierre"
+    if session.status == "posttest":
+        return "postest"
+    attempts = _practice_attempts(db, session.id)
+    if not attempts:
+        return "prediccion"
+    evs = [e for a in attempts
+           for e in db.query(models.EvaluationResult).filter_by(attempt_id=a.id).all()]
+    if not evs:
+        return "justificacion"
+    if not any(e.status == "evaluated" for e in evs):
+        return "evaluacion"
+    nev = db.query(models.UiEvent).filter_by(session_id=session.id).count()
+    if len(attempts) > 1:
+        return "revision"
+    return "intervencion" if nev else "evaluacion"
+
+
+@app.get("/sessions/{session_id}/tutor-history")
+def tutor_history(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
+    # P3.3: preguntas del tutor por sesión (orden de inserción); ownership primero.
+    session_for(user, db, session_id)
+    out = []
+    for e in db.query(models.UiEvent).filter_by(
+            session_id=session_id, widget_type="SocraticQuestionCard").all():
+        try:
+            p = json.loads(e.payload_json)
+        except Exception:
+            continue
+        if "question" in p:
+            out.append({"question": p["question"], "provider": p.get("provider", "?")})
+    return out
 
 
 @app.get("/labs/{lab_id}/curve")
@@ -378,7 +432,7 @@ def _lab_type(db: Session, session_id: str) -> str:
 
 
 @app.post("/sessions/{session_id}/socratic")
-def socratic(session_id: str, body: SocraticIn, user=Depends(current_user),
+async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user),
              db: Session = Depends(get_db)):
     _require_active(session_for(user, db, session_id))
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
@@ -398,11 +452,18 @@ def socratic(session_id: str, body: SocraticIn, user=Depends(current_user),
         for c in json.loads(ev.normalized_scores_json).get("criteria", []):
             if c.get("score", 0) <= 2:
                 weak.append(c["id"])
-    return socratic_question(attempt.answer_text, weak, _lab_type(db, session_id))
+    q = await socratic_question(attempt.answer_text, weak, _lab_type(db, session_id))
+    # P3.3: la pregunta queda en ui_events → historial por sesión sin tabla nueva
+    db.add(models.UiEvent(id=uuid.uuid4().hex[:8], session_id=session_id,
+                          widget_type="SocraticQuestionCard", event_type="hintRequested",
+                          payload_json=json.dumps({"question": q["question"],
+                                                   "provider": q.get("provider", "?")})))
+    db.commit()
+    return q
 
 
 @app.post("/sessions/{session_id}/next-intervention")
-def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_user),
+async def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_user),
                       db: Session = Depends(get_db)):
     # ponytail: intervenciones no persistidas aún; deuda explícita (audit trail F5)
     _require_active(session_for(user, db, session_id))
@@ -412,6 +473,9 @@ def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_us
         from fastapi import HTTPException
 
         raise HTTPException(404, "attempt not found")
+    if len(_practice_attempts(db, session_id)) > MAX_REVISIONS:
+        return await safe_intervention(
+            f"Límite de {MAX_REVISIONS} revisiones alcanzado; ve al postest")
     ev = (
         db.query(models.EvaluationResult)
         .filter_by(attempt_id=attempt.id)
@@ -419,7 +483,7 @@ def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_us
         .first()
     )
     eval_result = json.loads(ev.normalized_scores_json) if ev else None
-    intervention = select_intervention(
+    intervention = await select_intervention(
         attempt.answer_text, json.loads(attempt.input_state_json), eval_result,
         _lab_type(db, session_id),
     )
@@ -428,7 +492,7 @@ def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_us
         {"widget_type": spec.get("type"), "widget_parameters": spec.get("parameters", {})}
     )
     if errors or intervention["widget_type"] not in CATALOG:
-        return safe_intervention(f"ui_spec inválida: {errors}")
+        return await safe_intervention(f"ui_spec inválida: {errors}")
     # P1.1: contrato versionado — el cliente valida tipo, versión y eventos.
     intervention["schema_version"] = SCHEMA_VERSION
     intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])

@@ -62,4 +62,53 @@ void main() {
         findsOneWidget);
     expect(find.textContaining('exactitud ·'), findsNothing);
   });
+
+  testWidgets('historial del tutor colapsable con proveedor', (tester) async {
+    final lab = LabSession()
+      ..evalResult = {
+        'evaluator': 'mock',
+        'status': 'evaluated',
+        'criteria': [
+          {'id': 'exactitud', 'score': 2},
+        ],
+      }
+      ..tutorHistory = [
+        {'question': '¿Qué curva?', 'provider': 'mock'},
+        {'question': '¿Y el ruido?', 'provider': 'gemini'},
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Preguntas del tutor (2)'), findsOneWidget);
+    expect(find.text('¿Qué curva?'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tutor_history')));
+    await tester.pump();
+    expect(find.text('¿Qué curva?'), findsOneWidget);
+    expect(find.text('¿Y el ruido?'), findsOneWidget);
+  });
+
+  testWidgets('sin historial no hay panel', (tester) async {
+    final lab = LabSession()
+      ..evalResult = {
+        'evaluator': 'mock',
+        'status': 'evaluated',
+        'criteria': [
+          {'id': 'exactitud', 'score': 2},
+        ],
+      };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('tutor_history')), findsNothing);
+  });
 }

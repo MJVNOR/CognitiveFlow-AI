@@ -874,6 +874,8 @@ class LabSession {
   bool posttestMode = false;
   bool posttestSent = false;
   bool done = false;
+  // P3.3: historial de preguntas del tutor por sesión (GET tutor-history).
+  List<Map<String, dynamic>> tutorHistory = [];
 
   /// 0 explorar, 1 evaluar, 2 intervenir, 3 postest.
   int get step => (posttestMode || posttestSent || done)
@@ -918,6 +920,10 @@ class LabSession {
     } catch (e) {
       evalError = 'Evaluado ✓, pero la pregunta no llegó: $e';
     }
+    try {
+      final h = await fetchJson('/sessions/$sessionId/tutor-history');
+      tutorHistory = h.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {}
   }
 
   Future<void> next() async {
@@ -1357,6 +1363,27 @@ class ResultPanel extends StatelessWidget {
               ],
             ),
           ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
+        ],
+        if (lab.tutorHistory.isNotEmpty)
+          ExpansionTile(
+            key: const ValueKey('tutor_history'),
+            title: Text(
+                'Preguntas del tutor (${lab.tutorHistory.length})'),
+            children: [
+              for (final h in lab.tutorHistory)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                      h['provider'] == 'gemini'
+                          ? Icons.smart_toy_outlined
+                          : Icons.help_outline,
+                      size: 16),
+                  title: Text('${h['question']}',
+                      style: const TextStyle(fontSize: 13)),
+                ),
+            ],
+          ),
+        if (lab.socraticQ.isNotEmpty || lab.tutorHistory.isNotEmpty) ...[
           FilledButton.tonal(
             key: const ValueKey('next_activity'),
             onPressed: lab.nextBusy ? null : onNext,

@@ -67,17 +67,17 @@ def _avg(criteria: list[dict]) -> float:
     return sum(c.get("score", 0) for c in criteria) / len(criteria)
 
 
-def select_intervention(answer_text: str, input_state: dict, eval_result: dict | None,
+async def select_intervention(answer_text: str, input_state: dict, eval_result: dict | None,
                         lab_type: str = "ml_experiment") -> dict:
-    """Reglas §9: débil→evidencia, sólida→transferencia, ambigua→aclarar."""
+    """P3.4: 6 estrategias sobre el mismo catálogo."""
     complexity = int(input_state.get("complexity", 5))
     noise = int(input_state.get("noise_pct", 20))
     data_lab = lab_type == "data_detective" or bool(input_state.get("flags"))
     monitor_lab = lab_type == "model_monitoring"
     lab_hint = "model_monitoring" if monitor_lab else ("data_detective" if data_lab else "ml_experiment")
 
-    if not eval_result or eval_result.get("status") != "evaluated":
-        q = socratic_question(answer_text, ["sin evaluación"])["question"]
+    if eval_result is None:
+        q = (await socratic_question(answer_text, ["sin evaluación"]))["question"]
         spec = {
             "type": FALLBACK_WIDGET,
             "version": 1,
@@ -97,12 +97,37 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
             "give_direct_answer": False,
         }
 
+    if eval_result.get("status") != "evaluated":
+        q = (await socratic_question(answer_text, ["evaluación pendiente"]))["question"]
+        spec = {
+            "type": FALLBACK_WIDGET,
+            "version": 1,
+            "learning_objective": "Esperar revisión humana",
+            "title": "Revisión humana en curso",
+            "parameters": {},
+            "reasoning_prompt": q,
+            "requires_justification": False,
+        }
+        return {
+            "strategy": "human_review",
+            "reason": "Evaluación pendiente o fallida; un instructor revisará el intento",
+            "widget_type": FALLBACK_WIDGET,
+            "widget_parameters": spec,
+            "socratic_question": q,
+            "difficulty_delta": 0,
+            "give_direct_answer": False,
+        }
+
     criteria = eval_result.get("criteria", [])
     weak = [c["id"] for c in criteria if c.get("score", 0) <= 2]
     avg = _avg(criteria)
+    # ponytail: mixta = acierta algo y falla algo → contrastar, no repetir evidencia
+    mixed = bool(criteria) and min(c.get("score", 0) for c in criteria) <= 1 and max(
+        c.get("score", 0) for c in criteria) >= 3
+    strategy = "contrast_example" if mixed else "request_evidence"
 
     if avg <= 2:
-        q = socratic_question(answer_text, weak, lab_hint)["question"]
+        q = (await socratic_question(answer_text, weak, lab_hint))["question"]
         if monitor_lab:
             spec = {
                 "type": "DriftDistributionExplorer",
@@ -114,7 +139,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
                 "requires_justification": True,
             }
             return {
-                "strategy": "request_evidence",
+                "strategy": strategy,
                 "reason": f"Promedio {avg:.1f}: falta identificar deriva con evidencia",
                 "widget_type": "DriftDistributionExplorer",
                 "widget_parameters": spec,
@@ -133,7 +158,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
                 "requires_justification": True,
             }
             return {
-                "strategy": "request_evidence",
+                "strategy": strategy,
                 "reason": f"Promedio {avg:.1f}: faltan anomalías por detectar o justificar",
                 "widget_type": "DataTableExplorer",
                 "widget_parameters": spec,
@@ -154,7 +179,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
             "requires_justification": True,
         }
         return {
-            "strategy": "request_evidence",
+            "strategy": strategy,
             "reason": f"Promedio {avg:.1f}: la justificación no usa evidencia suficiente",
             "widget_type": "EvidenceComparison",
             "widget_parameters": spec,
@@ -163,7 +188,9 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
             "give_direct_answer": False,
         }
 
-    q = socratic_question(answer_text, [], lab_hint)["question"]
+    q = (await socratic_question(answer_text, [], lab_hint))["question"]
+    # ponytail: sólida→más dificultad, media→alternativa; mismo widget, distinta estrategia
+    strong_strategy = "increase_difficulty" if avg >= 3.5 else "explore_alternative"
     if monitor_lab:
         spec = {
             "type": "HypothesisEditor",
@@ -175,7 +202,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
             "requires_justification": True,
         }
         return {
-            "strategy": "transfer",
+            "strategy": strong_strategy,
             "reason": f"Promedio {avg:.1f}: deriva bien diagnosticada, se decide acción",
             "widget_type": "HypothesisEditor",
             "widget_parameters": spec,
@@ -194,7 +221,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
             "requires_justification": True,
         }
         return {
-            "strategy": "transfer",
+            "strategy": strong_strategy,
             "reason": f"Promedio {avg:.1f}: buena detección, se transfiere a tabla nueva",
             "widget_type": "HypothesisEditor",
             "widget_parameters": spec,
@@ -214,7 +241,7 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
         "requires_justification": True,
     }
     return {
-        "strategy": "transfer",
+        "strategy": strong_strategy,
         "reason": f"Promedio {avg:.1f}: razonamiento suficiente, se aumenta dificultad",
         "widget_type": "HypothesisEditor",
         "widget_parameters": spec,
@@ -224,8 +251,8 @@ def select_intervention(answer_text: str, input_state: dict, eval_result: dict |
     }
 
 
-def safe_intervention(fallback_reason: str) -> dict:
-    q = socratic_question("", ["fallback"])["question"]
+async def safe_intervention(fallback_reason: str) -> dict:
+    q = (await socratic_question("", ["fallback"]))["question"]
     return {
         "strategy": "clarify",
         "reason": fallback_reason,

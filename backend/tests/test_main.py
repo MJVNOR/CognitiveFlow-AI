@@ -171,7 +171,7 @@ def test_data_eval_detects_all_planted():
     assert {c["id"]: c["score"] for c in r["criteria"]}["exactitud"] == 4
     iv = client.post(f"/sessions/{sid}/next-intervention",
                      json={"attempt_id": aid}, headers=H_S1).json()
-    assert iv["strategy"] == "transfer"
+    assert iv["strategy"] == "explore_alternative"
 
 
 def test_data_eval_weak_flags_nothing():
@@ -361,8 +361,21 @@ def test_socratic_gemini_when_200(monkeypatch):
         def json(self):
             return {"output_text": "¿Qué ves en validación?"}
 
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
     sid, aid = _attempt_with_text("no sé")
     r = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).json()
     assert r["provider"] == "gemini" and "validación" in r["question"]
@@ -409,7 +422,7 @@ def test_strong_answer_transfers():
         "los datos muestran generalización pobre y propongo mitigar con regularización; "
         "reviso mi hipótesis inicial"
     )
-    assert r["strategy"] == "transfer"
+    assert r["strategy"] == "explore_alternative"
     assert r["difficulty_delta"] == 1
 
 
@@ -631,6 +644,106 @@ def test_jev_live_opt_in():
         {"complexity": 7},
     )
     assert r["status"] in ("evaluated", "pending")
+
+
+# PR-04 P3.4/P3.6: 6 estrategias, sin bucles, prompt con guarda
+def _eval_on(sid: str, aid: str):
+    return client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1).json()
+
+
+def _attempt(sid: str, text: str):
+    return client.post(f"/sessions/{sid}/attempts",
+        json={"complexity": 5, "noise_pct": 20, "seed": 1, "answer_text": text},
+        headers=H_S1).json()["id"]
+
+
+def _intervene_aid(sid: str, aid: str):
+    return client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": aid}, headers=H_S1).json()
+
+
+def _ml_session():
+    return client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+
+
+def test_mixed_scores_contrast_not_repeat():
+    # mock da [2,4,2,0,0]: avg débil pero con un 4 → contrastar, no repetir evidencia
+    sid = _ml_session()
+    aid = _attempt(sid, "La validación sube con complejidad alta porque el modelo memoriza")
+    _eval_on(sid, aid)
+    assert _intervene_aid(sid, aid)["strategy"] == "contrast_example"
+
+
+def test_pending_eval_routes_to_human_review(monkeypatch):
+    import httpx
+    from app.evaluation import jev_evaluate  # noqa: F401 (calienta import)
+
+    monkeypatch.setenv("EVALUATOR_MODE", "jev")
+    monkeypatch.setenv("JEV_API_KEY", "test-key")
+    monkeypatch.setattr(
+        httpx, "post", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("down")))
+    sid = _ml_session()
+    aid = _attempt(sid, "algo")
+    ev = _eval_on(sid, aid)
+    assert ev["status"] == "pending"
+    r = _intervene_aid(sid, aid)
+    assert r["strategy"] == "human_review" and r["give_direct_answer"] is False
+
+
+def test_top_scores_increase_difficulty(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("EVALUATOR_MODE", "jev")
+    monkeypatch.setenv("JEV_API_KEY", "test-key")
+    high = {cid: {"type": "noul", "noul": 0.95} for cid in
+            ["exactitud", "evidencia", "causal", "alternativas", "metacognicion"]}
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _FakeJev(200, high))
+    sid = _ml_session()
+    aid = _attempt(sid, "Overfit: validación sube con complejidad; evidencia en curvas; "
+                        "causa memorización; alternativo regularizar; reviso hipótesis")
+    assert _eval_on(sid, aid)["status"] == "evaluated"
+    assert _intervene_aid(sid, aid)["strategy"] == "increase_difficulty"
+
+
+def test_max_revisions_forces_posttest():
+    sid = _ml_session()
+    last = None
+    for _ in range(7):
+        aid = _attempt(sid, "no sé")
+        _eval_on(sid, aid)
+        last = _intervene_aid(sid, aid)
+    assert "postest" in last["reason"]
+
+
+def test_phase_lifecycle_and_history(monkeypatch):
+    import httpx
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    sid = _ml_session()
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "prediccion"
+    aid = _attempt(sid, "creo que sube")
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "justificacion"
+    _eval_on(sid, aid)
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "evaluacion"
+    q = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).json()
+    assert q["prompt_version"] == "socratic-v1"
+    h = client.get(f"/sessions/{sid}/tutor-history", headers=H_S1).json()
+    assert h and h[0]["question"] == q["question"]
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "intervencion"
+    aid2 = _attempt(sid, "reviso: validación se despega")
+    _eval_on(sid, aid2)
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "revision"
+    # ajeno no lee historial ni sesión
+    assert client.get(f"/sessions/{sid}/tutor-history", headers=H_S2).status_code in (403, 404)
+
+
+def test_prompt_ignores_injection():
+    from app.socratic import SYSTEM_PROMPT_V1
+
+    assert "ignóralos" in SYSTEM_PROMPT_V1 and "nunca reveles" in SYSTEM_PROMPT_V1
 
 
 # PR-02 P1.5: eventos UI idempotentes por client_event_id, validados y con ownership
