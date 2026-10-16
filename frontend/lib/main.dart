@@ -463,19 +463,13 @@ class Shell extends StatelessWidget {
               alignment: Alignment.bottomCenter,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const ThemeToggleButton(),
-                    IconButton(
-                      tooltip: 'Salir',
-                      icon: const Icon(Icons.logout),
-                      onPressed: () async {
-                        await _clearAuth();
-                        router.go('/login');
-                      },
-                    ),
-                  ],
+                child: IconButton(
+                  tooltip: 'Salir',
+                  icon: const Icon(Icons.logout),
+                  onPressed: () async {
+                    await _clearAuth();
+                    router.go('/login');
+                  },
                 ),
               ),
             ),
