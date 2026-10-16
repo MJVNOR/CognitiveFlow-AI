@@ -662,6 +662,33 @@ def test_jev_live_opt_in():
     assert r["status"] in ("evaluated", "pending")
 
 
+# PR-07 P5: intervenciones data/monitor llevan parámetros reales
+def test_data_intervention_carries_n_rows():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-data"}, headers=H_S1
+    ).json()["id"]
+    aid = client.post(f"/sessions/{sid}/attempts",
+        json={"seed": 1, "flags": [], "answer_text": "todo bien"}, headers=H_S1).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1)
+    iv = client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": aid}, headers=H_S1).json()
+    assert iv["widget_type"] == "DataTableExplorer"
+    assert iv["widget_parameters"]["parameters"]["n_rows"] == 30
+
+
+def test_monitor_intervention_carries_features():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-monitor"},
+        headers=H_S1).json()["id"]
+    aid = client.post(f"/sessions/{sid}/attempts",
+        json={"seed": 1, "extra": {}, "answer_text": "todo igual"}, headers=H_S1).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1)
+    iv = client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": aid}, headers=H_S1).json()
+    assert iv["widget_type"] == "DriftDistributionExplorer"
+    assert iv["widget_parameters"]["parameters"]["features"] == ["temp", "pressure", "vibration"]
+
+
 # PR-06: feedback compuesto (fortaleza → brecha, con o sin Gemini)
 def test_feedback_mock_structured():
     import asyncio

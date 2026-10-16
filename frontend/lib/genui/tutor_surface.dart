@@ -34,8 +34,16 @@ Map<String, Object?> interventionToComponent(Map intervention) {
   final props = switch (type) {
     'EvidenceComparison' => {'title': title, 'evidence': question},
     'HypothesisEditor' => {'title': title, 'hypothesis': question},
-    'DataTableExplorer' => {'title': title, 'hint': question},
-    'DriftDistributionExplorer' => {'title': title, 'hint': question},
+    'DataTableExplorer' => {
+        'title': title,
+        'hint': question,
+        if (params['n_rows'] is num) 'n_rows': params['n_rows'],
+      },
+    'DriftDistributionExplorer' => {
+        'title': title,
+        'hint': question,
+        if (params['features'] is List) 'features': params['features'],
+      },
     'LearningCurveSimulator' => {
         'title': title,
         'question': question,

@@ -42,8 +42,7 @@ void main() {
   }
 
   // PR-02 P1.5: los widgets emiten eventos hacia el backend.
-  testWidgets('EvidenceComparison emite selección y argumento', (tester) async {
-    final got = <List>[];
+  testWidgets('EvidenceComparison emite selección y argumento', (tester) async {    final got = <List>[];
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -154,5 +153,83 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Actividad no disponible'), findsOneWidget);
     expect(find.text('hola'), findsOneWidget);
+  });
+
+  // PR-07 P5: exploradores emiten selección y justificación.
+  testWidgets('DataTableExplorer valida filas y emite hallazgo', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'DataTableExplorer',
+              'widget_parameters': {
+                'title': 'T',
+                'parameters': {'n_rows': 30},
+              },
+              'socratic_question': '¿Qué filas?',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('dte_flags')), '999');
+    await tester.pump();
+    expect(find.textContaining('Ids 0..29'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('dte_flags')), '3, 7');
+    await tester.enterText(
+        find.byKey(const ValueKey('dte_argument')), 'duplicado y outlier');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dte_send')));
+    await tester.pump();
+    expect(
+        got.any((g) =>
+            g[0] == 'DataTableExplorer' &&
+            g[1] == 'evidenceSelected' &&
+            (g[2] as Map)['flags'].join(',') == '3,7'),
+        isTrue);
+    expect(got.any((g) => g[1] == 'argumentSubmitted'), isTrue);
+  });
+
+  testWidgets('DriftDistributionExplorer emite feature y diagnóstico',
+      (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'DriftDistributionExplorer',
+              'widget_parameters': {
+                'title': 'T',
+                'parameters': {
+                  'features': ['temp', 'pressure']
+                },
+              },
+              'socratic_question': '¿Qué cambió?',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dde_feat_temp')));
+    await tester.pump();
+    await tester.enterText(
+        find.byKey(const ValueKey('dde_argument')), 'deriva en temp');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dde_send')));
+    await tester.pump();
+    expect(
+        got.any((g) =>
+            g[0] == 'DriftDistributionExplorer' &&
+            g[1] == 'evidenceSelected' &&
+            (g[2] as Map)['feature'] == 'temp'),
+        isTrue);
+    expect(got.any((g) => g[1] == 'argumentSubmitted'), isTrue);
   });
 }

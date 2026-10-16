@@ -133,12 +133,18 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
     if avg <= 2:
         q = (await socratic_question(answer_text, weak, lab_hint))["question"]
         if monitor_lab:
+            from app.labs_monitor import generate as _genmon
+
+            try:
+                feats = list(_genmon(int(input_state.get("seed", 1)))["features"])
+            except Exception:
+                feats = []
             spec = {
                 "type": "DriftDistributionExplorer",
                 "version": 1,
                 "learning_objective": "Comparar referencia vs actual",
                 "title": "¿Qué cambió?",
-                "parameters": {},
+                "parameters": {"features": feats},
                 "reasoning_prompt": q,
                 "requires_justification": True,
             }
@@ -152,12 +158,18 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
                 "give_direct_answer": False,
             }
         if data_lab:
+            from app.labs_data import generate as _gendata
+
+            try:
+                n_rows = len(_gendata(int(input_state.get("seed", 1)))["rows"])
+            except Exception:
+                n_rows = 30
             spec = {
                 "type": "DataTableExplorer",
                 "version": 1,
                 "learning_objective": "Distinguir error de outlier real",
                 "title": "Revisa las filas marcadas",
-                "parameters": {},
+                "parameters": {"n_rows": n_rows},
                 "reasoning_prompt": q,
                 "requires_justification": True,
             }
