@@ -12,7 +12,6 @@ import httpx
 
 RUBRIC_VERSION = "ml-overfitting-v1"
 DATA_RUBRIC_VERSION = "data-cleaning-v1"
-JEV_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CognitiveFlow/0.1"}
 JEV_MODEL_DEFAULT = "jev-latest"  # default del proveedor; override con JEV_MODEL
 
 
@@ -116,7 +115,7 @@ def jev_evaluate(answer_text: str, input_state: dict) -> dict:
         },
     }
     url = f"{_jev_base()}/v1/systemone"
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", **JEV_UA}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     # ponytail: sin sleep entre reintentos; el endpoint es síncrono y bloquea el worker.
     last = "error desconocido"
     start = time.monotonic()

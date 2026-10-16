@@ -1,5 +1,5 @@
 """F2-F3: política determinista de intervención + UI planner con catálogo cerrado."""
-from app.socratic import socratic_question
+from app.socratic import MOCK_QUESTION, socratic_question
 
 # Catálogo permitido (§7 del plan). Solo estos widget_type pueden salir del backend.
 CATALOG = {
@@ -268,7 +268,8 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
 
 
 async def safe_intervention(fallback_reason: str) -> dict:
-    q = (await socratic_question("", ["fallback"]))["question"]
+    # ponytail: fallback estático — el path de error no depende del LLM que falló
+    q = MOCK_QUESTION
     return {
         "strategy": "clarify",
         "reason": fallback_reason,

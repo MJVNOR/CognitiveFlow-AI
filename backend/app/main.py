@@ -1,11 +1,16 @@
+import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.db import ensure_columns, get_db
@@ -50,8 +55,6 @@ def health():
 @app.get("/v1/models")
 def list_models():
     # Espejo solo-lectura del catálogo Gemini (0 tokens): silencia sondeos OpenAI-style.
-    import httpx
-
     key = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
     if not key:
         return {"data": []}
@@ -170,18 +173,12 @@ def _login_allowed(ip: str) -> bool:
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     # Demo piloto: user_id de seed (s1-s4, i1). Sin passwords (ver app/auth.py).
     if not _login_allowed(request.client.host if request.client else "?"):
-        from fastapi import HTTPException
-
         raise HTTPException(429, "demasiados intentos, espera un minuto")
     user = db.query(models.User).filter_by(id=body.user_id, active=1).first()
     if not user:
-        from fastapi import HTTPException
-
         raise HTTPException(401, "usuario desconocido")
     return {"token": new_token(db, user.id), "role": user.role, "user_id": user.id}
 
-
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer_opt = HTTPBearer(auto_error=False)
 
@@ -197,21 +194,13 @@ def logout(creds: HTTPAuthorizationCredentials | None = Depends(_bearer_opt),
 @app.get("/instructor/backup")
 def instructor_backup(user=Depends(require_instructor)):
     # P7.2: descarga del sqlite para backup externo (solo instructor).
-    from fastapi.responses import FileResponse
-
     url = os.getenv("DATABASE_URL", "sqlite:///./cognitiveflow.db")
     if not url.startswith("sqlite://"):
-        from fastapi import HTTPException
-
         raise HTTPException(404, "backup solo para sqlite en archivo")
-    import re
-
     path = re.sub(r"^/([A-Za-z]:/)", r"\1", url[len("sqlite://"):])
     if path.startswith("/./"):
         path = path[1:]
     if not path or not os.path.isfile(path):
-        from fastapi import HTTPException
-
         raise HTTPException(404, "sin archivo de respaldo")
     return FileResponse(path, filename="cognitiveflow-backup.db")
 
@@ -238,14 +227,10 @@ def create_review(attempt_id: str, body: ReviewIn, user=Depends(require_instruct
                  db: Session = Depends(get_db)):
     attempt = db.query(models.LabAttempt).filter_by(id=attempt_id).first()
     if not attempt:
-        from fastapi import HTTPException
-
         raise HTTPException(404, "attempt not found")
     # ponytail: append-only; jamás modifica evaluation_results
     for cid, score in body.rubric_scores.items():
         if not isinstance(score, int) or not 0 <= score <= 4:
-            from fastapi import HTTPException
-
             raise HTTPException(422, f"score inválido en {cid}: 0-4")
     rid = uuid.uuid4().hex[:8]
     db.add(models.InstructorReview(id=rid, attempt_id=attempt_id, instructor_id=user.id,
@@ -330,17 +315,17 @@ def get_session(session_id: str, user=Depends(current_user), db: Session = Depen
 MAX_REVISIONS = 6  # P3.5: tope de ciclos evaluar→intervenir por sesión; luego postest
 
 
+def _kind(attempt) -> str:
+    try:
+        return json.loads(attempt.input_state_json).get("kind", "")
+    except Exception:
+        return ""
+
+
 def _practice_attempts(db: Session, session_id: str) -> list:
     # ponytail: O(n) scan; 4 alumnos, sesiones cortas
-    out = []
-    for a in db.query(models.LabAttempt).filter_by(session_id=session_id).all():
-        try:
-            kind = json.loads(a.input_state_json).get("kind", "")
-        except Exception:
-            kind = ""
-        if kind != "posttest":
-            out.append(a)
-    return out
+    return [a for a in db.query(models.LabAttempt).filter_by(session_id=session_id).all()
+            if _kind(a) != "posttest"]
 
 
 def _phase(db: Session, session) -> str:
@@ -408,16 +393,10 @@ def record_event(session_id: str, body: EventIn, user=Depends(current_user),
     # P1.5: canal bidireccional — ownership primero, nunca score/cliente como verdad.
     session_for(user, db, session_id)
     if body.widget_type not in CATALOG:
-        from fastapi import HTTPException
-
         raise HTTPException(422, f"widget_type desconocido: {body.widget_type}")
     if body.event_type not in ALLOWED_EVENTS:
-        from fastapi import HTTPException
-
         raise HTTPException(422, f"event_type desconocido: {body.event_type}")
     if body.event_type not in ALLOWED_BY_WIDGET.get(body.widget_type, []):
-        from fastapi import HTTPException
-
         raise HTTPException(422, f"{body.event_type} no permitido en {body.widget_type}")
     # ponytail: dedup por PK (client_event_id) — reintento seguro, un solo registro
     existing = db.query(models.UiEvent).filter_by(id=body.client_event_id).first()
@@ -496,8 +475,6 @@ def evaluate(session_id: str, body: EvaluateIn, user=Depends(current_user),
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
-        from fastapi import HTTPException
-
         raise HTTPException(404, "attempt not found")
     s = db.query(models.LearningSession).filter_by(id=session_id).first()
     return _evaluate_attempt(db, s, attempt)
@@ -541,8 +518,6 @@ class SocraticIn(BaseModel):
 
 def _require_active(session) -> None:
     if session.status != "active":
-        from fastapi import HTTPException
-
         raise HTTPException(403, "sesión bloqueada: postest en curso o terminada")
 
 
@@ -561,8 +536,6 @@ async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user)
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
-        from fastapi import HTTPException
-
         raise HTTPException(404, "attempt not found")
     ev = (
         db.query(models.EvaluationResult)
@@ -599,8 +572,6 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
-        from fastapi import HTTPException
-
         raise HTTPException(404, "attempt not found")
     if len(_practice_attempts(db, session_id)) > MAX_REVISIONS:
         limited = await safe_intervention(
@@ -650,8 +621,6 @@ class PosttestIn(BaseModel):
 
 def _posttest_variant(session_id: str) -> dict:
     """P4.1: variante equivalente pero nueva por sesión (determinista)."""
-    import hashlib
-
     h = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
     return {"seed": 100 + h % 800, "complexity": 6 + h % 4,
             "noise_pct": 15 + (h % 3) * 10}
@@ -659,11 +628,7 @@ def _posttest_variant(session_id: str) -> dict:
 
 def _posttest_attempt(db: Session, session_id: str):
     for a in db.query(models.LabAttempt).filter_by(session_id=session_id).all():
-        try:
-            kind = json.loads(a.input_state_json).get("kind", "")
-        except Exception:
-            kind = ""
-        if kind == "posttest":
+        if _kind(a) == "posttest":
             return a
     return None
 
@@ -673,8 +638,6 @@ def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
              db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
     if s.status == "done":
-        from fastapi import HTTPException
-
         raise HTTPException(403, "sesión terminada")
     variant = _posttest_variant(session_id)
     if s.status == "active":
@@ -683,8 +646,6 @@ def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
     if not body.answer_text.strip():
         return {"status": "begin", **variant}
     if _posttest_attempt(db, session_id):
-        from fastapi import HTTPException
-
         raise HTTPException(403, "postest ya entregado")
     aid = uuid.uuid4().hex[:8]
     attempt = models.LabAttempt(
@@ -721,7 +682,7 @@ def _lab_progress(db: Session, student_id: str, lab_template_id: str) -> dict:
         return {"status": None, "attempts": 0, "baseline": None, "posttest": None,
                 "reviewed": False}
     s = sessions[-1]
-    practice = [a for a in _practice_attempts(db, s.id)]
+    practice = _practice_attempts(db, s.id)
     baseline = _eval_map(db, practice[0].id) if practice else None
     pt = _posttest_attempt(db, s.id)
     posttest = _eval_map(db, pt.id) if pt else None
@@ -763,8 +724,6 @@ def reflection(session_id: str, body: ReflectionIn, user=Depends(current_user),
                db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
     if s.status != "posttest":
-        from fastapi import HTTPException
-
         raise HTTPException(403, "reflexión solo tras el postest")
     s.status = "done"
     db.add(models.Reflection(id=uuid.uuid4().hex[:8], session_id=session_id, text=body.text))

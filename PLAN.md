@@ -55,7 +55,7 @@ flowchart TD
 
 ### P0 — Integridad técnica y preservación (primero)
 
-- [x] **P0.1 Auditoría reproducible:** inventario de archivos existentes, rutas, versiones, endpoints, tests y deuda técnica; evidencia en `docs/current-state.md`. ✅ 2026-10-16, rama `pr-01-baseline-security` (`9dbb85b`).
+- [x] **P0.1 Auditoría reproducible:** inventario de archivos existentes, rutas, versiones, endpoints, tests y deuda técnica; evidencia: commits rama `pr-01-baseline-security` (`9dbb85b`) + checkboxes de este PLAN.
 - [x] **P0.2 Línea base:** ejecutar app y API, test y analyze; registrar resultados, sin modificar aún lógica de negocio. ✅ pytest 30 passed, analyze limpio, flutter test 20 passed.
 - [x] **P0.3 Credenciales:** preparar `.env.example` y configuración tipada para Gemini y Jev, jamás keys en Flutter/commits/logs. Diferenciar proveedor Google AI Studio de Vertex AI según la credencial disponible. ✅ `GOOGLE_API_KEY` + comentarios añadidos; `.env`/`*.db` ignorados.
 - [x] **P0.4 Seguridad mínima:** validar roles y ownership de sesiones y revisiones en backend; aislar borradores por `userId/sessionId/labId/phase`; revisar almacenamiento de token en web. ✅ ownership 403 + append-only verificados por tests.
@@ -225,15 +225,9 @@ start session → present initial challenge
 
 Después de cada PR incluir: archivos tocados, qué estaba antes, qué cambió, evidencia/test, riesgos, screenshots cuando sea posible, deuda nueva y tickets terminados. No marcar un ticket completo hasta demostrar su criterio de aceptación.
 
-## 7. Orden inmediata para OpenCode — COPIAR Y EJECUTAR
-
-> **Continúa el repositorio actual CognitiveFlow AI.** Antes de programar, inspecciona código, lockfiles, tests, API y BD existentes. Lee `PLAN.md` y `DESIGN.md`. Preserva módulos, laboratorios, datos y mejoras ya implementadas; no inicialices proyectos nuevos. Empieza por PR-01 y PR-02: audita `genui/catalog.dart`, `genui/tutor_surface.dart` y el `LabDetailPage`; convierte el `LearningCurveSimulator` de tarjeta estática a widget interactivo reutilizando la gráfica/sliders actuales, y crea el circuito bidireccional de eventos validado con persistencia backend. Incluye tests reales y ejecuta Flutter analyze/test y pytest. Una vez funcionando, integra Jev contratado con su SDK/API validada y Google Gemini como agente socrático. No hardcodees secretos ni presupongas que los endpoints anteriores existen; verifica. Refactoriza de forma incremental, conserva SQLite, la trifecta de `DESIGN.md` y el acceso por roles. Nunca utilices nano; si necesitas editor de terminal utiliza vim. Reporta qué has validado, qué sigue pendiente y cómo reproducir cada resultado.
-
 ## 8. Referencias en repositorio
 
 - `DESIGN.md`: tokens, colores, UX, accesibilidad y señalización cognitiva.
-- `COGNITIVEFLOW_PLAN(2).md` o plan previo con avances: currículo de 8 módulos, checklist histórico y criterios de CHARAL.
-- `app.rar`: instantánea parcial del frontend (no sustituye una auditoría del repositorio real).
 - Documentación oficial actual de Flutter GenUI, paquete Dart y SDK Jev correspondiente a la cuenta contratada; documentación actual de Gemini API según tipo de credencial. Fijar versiones en lockfiles.
 
 **Definition of Done del proyecto:** un juez puede abrir una URL HTTPS, entrar como estudiante demo, predecir y manipular un experimento, justificar, recibir evaluación Jev auténtica, conversar con Gemini, completar una intervención GenUI interactiva y un postest sin ayuda; el instructor puede revisar y exportar evidencias; tests y documentación permiten reproducirlo. Si algún servicio no está disponible, la app presenta un estado explícito de fallo, no una demostración engañosa.

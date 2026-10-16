@@ -58,10 +58,9 @@ def new_token(db: Session, user_id: str) -> str:
     return tok
 
 
-def revoke_token(db: Session, token: str) -> bool:
+def revoke_token(db: Session, token: str) -> None:
     tok = db.query(models.AuthToken).filter_by(token=token).first()
     if not tok:
-        return False
+        return
     db.delete(tok)
     db.commit()
-    return True
