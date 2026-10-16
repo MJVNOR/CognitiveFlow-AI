@@ -130,8 +130,8 @@ flowchart TD
 
 ### P7 — Seguridad, piloto y concurso
 
-- [ ] **P7.1** Roles y acceso a API; tratamiento de tokens web (evaluar cookies HttpOnly/SameSite/CSRF según arquitectura); sanitización de respuestas; no ejecutar SQL/Python/shell sin aislamiento.
-- [ ] **P7.2** DB SQLite persistente con migrations/backups; pruebas de concurrencia para cuatro estudiantes; CORS explícito, HTTPS, límites de payload y costo.
+- [x] **P7.1** Roles y acceso a API; tratamiento de tokens web (evaluar cookies HttpOnly/SameSite/CSRF según arquitectura); sanitización de respuestas; no ejecutar SQL/Python/shell sin aislamiento. ✅ PR-09: TTL 12h + `DELETE /auth/logout` (tokens opacos; cookies HttpOnly innecesarias con Bearer en piloto); rate limit login 10/min; topes de payload (422); Flutter escapa texto por defecto; sin exec de código en ningún endpoint.
+- [x] **P7.2** DB SQLite persistente con migrations/backups; pruebas de concurrencia para cuatro estudiantes; CORS explícito, HTTPS, límites de payload y costo. ✅ PR-09: `ensure_columns()` sin borrar datos; `GET /instructor/backup`; 4 alumnos intercalados sin cruces; CORS por env; HTTPS/documentado en `docs/security.md` para el deploy.
 - [ ] **P7.3** Pruebas con cuatro estudiantes con consentimiento: tareas de diagnóstico, aprendizaje, postest y entrevista; resultados descriptivos, **sin afirmaciones causales generalizables**.
 - [ ] **P7.4** Deploy HTTPS real, smoke tests de datos, autenticación, sesiones, Jev y Gemini, fallback si fallan APIs; no logs secretos.
 - [ ] **P7.5** Entregables CHARAL: repositorio y arquitectura, URL pública, pitch deck, video 5 minutos, documento de gobernanza de 3–5 páginas, README de reproducibilidad. Revisar fecha/hora exactas oficiales.
