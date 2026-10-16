@@ -22,9 +22,13 @@ USERS = [
 ]
 
 LABS = [
-    ("lab-ml", "ML Experiment Lab", "ml_experiment"),
-    ("lab-data", "Data Detective", "data_detective"),
-    ("lab-monitor", "Model Monitoring Lab", "model_monitoring"),
+    # id, title, lab_type, module_id, order, description
+    ("lab-data", "Data Detective", "data_detective", "m2", 1,
+     "Datos sucios, decisiones limpias: detecta anomalías en una tabla y justifica tu plan de limpieza."),
+    ("lab-ml", "ML Experiment Lab", "ml_experiment", "m3", 2,
+     "Complejidad vs generalización: experimenta con las curvas de pérdida y formula tu hipótesis."),
+    ("lab-monitor", "Model Monitoring Lab", "model_monitoring", "m6", 3,
+     "El modelo ya está en producción: detecta deriva y decide si reentrenar o seguir monitoreando."),
 ]
 
 
@@ -42,8 +46,10 @@ def seed_if_empty():
             for uid, name, role in USERS:
                 db.add(models.User(id=uid, display_name=name, role=role))
         if db.query(models.LabTemplate).count() == 0:
-            for lid, title, ltype in LABS:
-                db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype))
+            for lid, title, ltype, mid, order, desc in LABS:
+                db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
+                                          module_id=mid, order_index=order,
+                                          description=desc))
         db.commit()
     finally:
         db.close()

@@ -564,6 +564,7 @@ class _AcademyState extends State<AcademyPage> {
       );
 
   Widget _labCard(Map l, Map statusMap) {
+    final st = statusMap[l['id']] as String?;
     return Card(
       child: ListTile(
         title: Text(l['title']),
@@ -572,7 +573,16 @@ class _AcademyState extends State<AcademyPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Chip(
-              label: Text(_labStatusLabel(statusMap[l['id']] as String?),
+              avatar: Icon(
+                switch (st) {
+                  'active' => Icons.play_arrow,
+                  'posttest' => Icons.lock_outline,
+                  'done' => Icons.check_circle,
+                  _ => Icons.circle_outlined,
+                },
+                size: 14,
+              ),
+              label: Text(_labStatusLabel(st),
                   style: const TextStyle(fontSize: 11)),
               visualDensity: VisualDensity.compact,
             ),
@@ -604,9 +614,43 @@ class _AcademyState extends State<AcademyPage> {
         final labs = s.data![1] as List;
         final statusMap = s.data![2] as Map;
         final orphans = [for (final l in labs) if ((l['module_id'] ?? '') == '') l];
+        // Objetivo actual: lo en curso primero, si no lo siguiente sin iniciar.
+        Map? current;
+        for (final l in labs) {
+          if (statusMap[l['id']] == 'active' || statusMap[l['id']] == 'posttest') {
+            current = l as Map;
+            break;
+          }
+        }
+        current ??= [for (final l in labs) if ((statusMap[l['id']] as String?) == null) l]
+            .firstOrNull as Map?;
+        final cur = current;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (cur != null) ...[
+              SectionCard(
+                icon: Icons.track_changes,
+                title: 'Tu objetivo actual',
+                trailing: Chip(
+                  label: Text(_labStatusLabel(statusMap[cur['id']] as String?),
+                      style: const TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                ),
+                children: [
+                  Text('${cur['title']}',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  if ('${cur['description'] ?? ''}'.isNotEmpty)
+                    Text('${cur['description']}'),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    onPressed: () => _goLab(cur),
+                    child: const Text('Continuar'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
             for (final m in modules) ...[
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 4),
@@ -811,10 +855,113 @@ class LabHeader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(objective, style: Theme.of(context).textTheme.titleSmall),
+        Text(objective, style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         LabSteps(current: step),
         const Divider(),
+      ],
+    );
+  }
+}
+
+/// Sección reutilizable del ciclo predecir→experimentar→justificar.
+/// Un título con icono + cuerpo; el color semántico llega por [accent].
+class SectionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Color? accent;
+  final Widget? trailing;
+  final List<Widget> children;
+  const SectionCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.children,
+    this.accent,
+    this.trailing,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final ac = accent ?? cs.primary;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 18, color: ac),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.copyWith(color: ac)),
+                ),
+                if (trailing case final Widget t) t,
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Slider de parámetro de laboratorio con etiqueta, valor y ayuda.
+/// Teal por defecto (experimentación, DESIGN.md §3); postest usa neutral.
+class ParamSlider extends StatelessWidget {
+  final String label;
+  final String value;
+  final String? help;
+  final double current;
+  final double min;
+  final double max;
+  final int divisions;
+  final ValueChanged<double>? onChanged;
+  final ValueChanged<double>? onChangeEnd;
+  const ParamSlider({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.current,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    this.help,
+    this.onChanged,
+    this.onChangeEnd,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(label)),
+            Chip(
+              label: Text(value, style: const TextStyle(fontSize: 12)),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        Slider(
+          value: current,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: value,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+        ),
+        if (help != null)
+          Text(help!, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
@@ -953,12 +1100,39 @@ class ResultPanel extends StatelessWidget {
           ),
           TextButton(onPressed: onRetry, child: const Text(Strings.retry)),
         ],
-        if (lab.evalResult != null)
-          Text(
-            'Evaluación (${lab.evalResult!['evaluator']}): '
-            '${(lab.evalResult!['criteria'] as List).map((c) => "${c['id']}=${c['score']}").join(', ')}',
-            style: const TextStyle(fontSize: 12),
+        if (lab.evalResult != null) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Chip(
+                label: Text(
+                  'Evaluación: ${lab.evalResult!['evaluator']}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                visualDensity: VisualDensity.compact,
+              ),
+              for (final c in (lab.evalResult!['criteria'] as List))
+                Chip(
+                  avatar: Icon(
+                    (c['score'] as num) >= 2
+                        ? Icons.check_circle
+                        : Icons.error_outline,
+                    size: 16,
+                  ),
+                  label: Text('${c['id']} · ${c['score']}',
+                      style: const TextStyle(fontSize: 12)),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
           ),
+          const SizedBox(height: 4),
+          const Text(
+            'Evidencia orientativa, revisable por tu instructor.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
         if (lab.socraticQ.isNotEmpty) ...[
           const SizedBox(height: 8),
           Container(
@@ -992,8 +1166,13 @@ class ResultPanel extends StatelessWidget {
           ),
           FilledButton.tonal(
             onPressed: lab.nextBusy ? null : onNext,
-            child: const Text('Siguiente actividad'),
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+            child: const SizedBox(
+                width: double.infinity,
+                child: Text('Siguiente actividad', textAlign: TextAlign.center)),
           ),
+          const Text('La evaluación es evidencia; la actividad sigue con el tutor.',
+              style: TextStyle(fontSize: 12)),
         ] else if (lab.evalResult != null && !lab.evaluating && lab.evalError == null) ...[
           const SizedBox(height: 8),
           FilledButton.tonal(
@@ -1334,6 +1513,9 @@ class _LabDetailState extends State<LabDetailPage> {
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
     final sent = lab.posttestSent;
+    final cs = Theme.of(context).colorScheme;
+    final experimentAccent =
+        lab.posttestMode ? null : cs.secondary;
     final controls = [
       LabHeader(
         objective: lab.posttestMode
@@ -1342,44 +1524,106 @@ class _LabDetailState extends State<LabDetailPage> {
         step: lab.step,
       ),
       const SizedBox(height: 12),
-      AccessibleCurveChart(
-          train: train,
-          val: val,
-          label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida'),
-      if (curve?['simulated'] == true)
-        const Text(Strings.simulated, style: TextStyle(fontSize: 12)),
-      Slider(
-        value: complexity, min: 1, max: 10, divisions: 9,
-        label: 'Complejidad ${complexity.round()}',
-        onChanged: sent ? null : (v) => setState(() => complexity = v),
-        onChangeEnd: sent ? null : (_) => _loadCurve(),
-      ),
-      Text('Complejidad: ${complexity.round()}', style: const TextStyle(fontSize: 12)),
-      Slider(
-        value: noise, min: 0, max: 50, divisions: 10,
-        label: 'Ruido ${noise.round()}%',
-        onChanged: sent ? null : (v) => setState(() => noise = v),
-        onChangeEnd: sent ? null : (_) => _loadCurve(),
-      ),
-      Text('Ruido: ${noise.round()}%', style: const TextStyle(fontSize: 12)),
-      TextField(
-        controller: hypo,
-        maxLines: 3,
-        enabled: !sent,
-        decoration: InputDecoration(
-          labelText: lab.posttestMode
-              ? 'Tu diagnóstico y justificación *'
-              : 'Hipótesis / justificación (obligatoria)',
-          border: const OutlineInputBorder(),
+      if (lab.posttestMode)
+        Card(
+          color: cs.surfaceContainerHighest,
+          child: const Padding(
+            padding: EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(Icons.lock_outline, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Modo postest — sin pistas, sin tutor, sin evaluación hasta entregar.',
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
+      if (lab.posttestMode) const SizedBox(height: 12),
+      SectionCard(
+        icon: Icons.science,
+        title: '1 · Experimenta con las curvas',
+        accent: experimentAccent,
+        trailing: curve?['simulated'] == true
+            ? const Chip(
+                label: Text(Strings.simulated,
+                    style: TextStyle(fontSize: 11)),
+                visualDensity: VisualDensity.compact,
+              )
+            : null,
+        children: [
+          AccessibleCurveChart(
+            train: train,
+            val: val,
+            height: 220,
+            label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida',
+          ),
+          const SizedBox(height: 12),
+          ParamSlider(
+            label: 'Complejidad del modelo',
+            value: '${complexity.round()} / 10',
+            help: 'Sube la complejidad y mira cuándo la validación se despega.',
+            current: complexity,
+            min: 1,
+            max: 10,
+            divisions: 9,
+            onChanged: sent ? null : (v) => setState(() => complexity = v),
+            onChangeEnd: sent ? null : (_) => _loadCurve(),
+          ),
+          ParamSlider(
+            label: 'Ruido en los datos',
+            value: '${noise.round()} %',
+            help: 'Más ruido → ambas curvas más altas e inestables.',
+            current: noise,
+            min: 0,
+            max: 50,
+            divisions: 10,
+            onChanged: sent ? null : (v) => setState(() => noise = v),
+            onChangeEnd: sent ? null : (_) => _loadCurve(),
+          ),
+        ],
       ),
       const SizedBox(height: 12),
-      if (!sent)
-        FilledButton(
-          onPressed: lab.evaluating ? null : _send,
-          child: Text(
-              lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
-        ),
+      SectionCard(
+        icon: Icons.edit_note,
+        title: '2 · Predice y justifica',
+        accent: lab.posttestMode ? null : cs.tertiary,
+        children: [
+          TextField(
+            controller: hypo,
+            maxLines: 4,
+            minLines: 3,
+            enabled: !sent,
+            decoration: InputDecoration(
+              labelText: lab.posttestMode
+                  ? 'Tu diagnóstico y justificación *'
+                  : 'Hipótesis / justificación (obligatoria)',
+              helperText: lab.posttestMode
+                  ? 'Cita ambas curvas y tu decisión.'
+                  : 'Predice qué pasa al subir la complejidad y cita las dos curvas.',
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (!sent)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                ),
+                onPressed: lab.evaluating ? null : _send,
+                child: Text(lab.posttestMode
+                    ? Strings.deliverPosttest
+                    : Strings.sendAttempt),
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 12),
     ];
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1397,7 +1641,23 @@ class _LabDetailState extends State<LabDetailPage> {
                     }),
             child: const Text(Strings.goPosttestNoAI),
           ),
-        if (!lab.posttestMode)
+        if (!lab.posttestMode &&
+            (lab.evalResult != null ||
+                lab.evaluating ||
+                lab.evalError != null ||
+                lab.intervention != null))
+          SectionCard(
+            icon: Icons.fact_check,
+            title: '3 · Evidencia y siguiente paso',
+            children: [
+              ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+            ],
+          ),
+        if (!lab.posttestMode &&
+            lab.evalResult == null &&
+            !lab.evaluating &&
+            lab.evalError == null &&
+            lab.intervention == null)
           ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
         if (lab.posttestMode && sent)
           PosttestReflection(
@@ -1457,8 +1717,40 @@ class CurvePainter extends StatelessWidget {
       LineChartData(
         minY: 0,
         maxY: 1,
-        gridData: const FlGridData(show: false),
-        titlesData: const FlTitlesData(show: false),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (_) => FlLine(
+            color: Theme.of(context).colorScheme.outlineVariant,
+            strokeWidth: 1,
+          ),
+        ),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 32,
+              getTitlesWidget: (v, _) => Text(
+                v.toStringAsFixed(1),
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 22,
+              interval: 5,
+              getTitlesWidget: (v, _) => Text(
+                'e${v.toInt()}',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+          ),
+        ),
         borderData: FlBorderData(show: false),
         lineTouchData: const LineTouchData(enabled: false),
         lineBarsData: [
@@ -1467,7 +1759,7 @@ class CurvePainter extends StatelessWidget {
               spots: _spots(train),
               isCurved: false,
               color: trainColor,
-              barWidth: 2,
+              barWidth: 3,
               dotData: const FlDotData(show: false),
             ),
           if (val.isNotEmpty)
@@ -1475,7 +1767,7 @@ class CurvePainter extends StatelessWidget {
               spots: _spots(val),
               isCurved: false,
               color: valColor,
-              barWidth: 2,
+              barWidth: 3,
               dotData: const FlDotData(show: false),
               dashArray: [6, 4],
             ),
@@ -1494,7 +1786,8 @@ class AccessibleCurveChart extends StatelessWidget {
   final List<num> train;
   final List<num> val;
   final String label;
-  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label});
+  final double height;
+  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label, this.height = 180});
 
   String _summary(List<num> ys) {
     if (ys.isEmpty) return 'sin datos';
@@ -1513,7 +1806,7 @@ class AccessibleCurveChart extends StatelessWidget {
         Semantics(
           label: '$label. Entrenamiento: ${_summary(train)}. Validación: ${_summary(val)}.',
           child: SizedBox(
-            height: 180,
+            height: height,
             child: CurvePainter(train, val, trainColor: cs.primary, valColor: cs.tertiary),
           ),
         ),
@@ -2053,24 +2346,27 @@ class _InstructorState extends State<InstructorPage> {
         }
         final students = s.data!;
         return ListView(
+          padding: const EdgeInsets.all(16),
           children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                '${students.length} estudiantes',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            SectionCard(
+              icon: Icons.groups,
+              title: '${students.length} estudiantes',
+              children: const [
+                Text('Toca un estudiante para ver sus sesiones y revisar.'),
+              ],
             ),
+            const SizedBox(height: 12),
             for (final st in students)
-              ListTile(
-                title: Text(st['display_name']),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => showDialog(
-                  context: context,
-                  builder: (d) => AlertDialog(
-                    title: Text(st['display_name']),
-                    content: _SessionsDialog(studentId: '${st['id']}'),
-                  ),
+              Card(
+                child: ExpansionTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(st['display_name']),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: _SessionsDialog(studentId: '${st['id']}'),
+                    ),
+                  ],
                 ),
               ),
           ],

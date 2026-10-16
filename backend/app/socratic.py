@@ -1,6 +1,5 @@
 """Tutor socrático: Gemini Interactions API con fallback mock (etiquetado)."""
 import os
-import time
 
 import httpx
 
@@ -40,16 +39,14 @@ def _gemini_ask(prompt: str) -> str | None:
     if not key:
         return None
     model = os.getenv("LLM_MODEL", "gemini-3.8-flash")
-    # ponytail: 1 reintento ante 503 (demanda alta documentada); timeout corto
-    for attempt in (0, 1):
-        if attempt:
-            time.sleep(8)
+    # ponytail: sin sleep entre reintentos; el endpoint es síncrono y bloquea el worker.
+    for _ in (0, 1):
         try:
             r = httpx.post(
                 "https://generativelanguage.googleapis.com/v1beta/interactions",
                 headers={"Content-Type": "application/json", "x-goog-api-key": key, **G_UA},
                 json={"model": model, "input": prompt},
-                timeout=25,
+                timeout=10,
             )
             if r.status_code == 503:
                 continue

@@ -49,12 +49,13 @@ for mid, title, order in [
 for uid in ["s1", "s2", "s3", "s4"]:
     db.add(models.User(id=uid, display_name=uid, role="student"))
 db.add(models.User(id="i1", display_name="Instructor", role="instructor"))
-for lid, title, ltype in [
-    ("lab-ml", "ML Experiment Lab", "ml_experiment"),
-    ("lab-data", "Data Detective", "data_detective"),
-    ("lab-monitor", "Model Monitoring Lab", "model_monitoring"),
+for lid, title, ltype, mid, order, desc in [
+    ("lab-data", "Data Detective", "data_detective", "m2", 1, "datos"),
+    ("lab-ml", "ML Experiment Lab", "ml_experiment", "m3", 2, "ml"),
+    ("lab-monitor", "Model Monitoring Lab", "model_monitoring", "m6", 3, "monitoreo"),
 ]:
-    db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype))
+    db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
+                              module_id=mid, order_index=order, description=desc))
 db.commit()
 db.close()
 
@@ -115,6 +116,25 @@ def test_cross_student_session_forbidden():
     assert client.get(f"/sessions/{sid}", headers=H_S2).status_code == 403
     assert client.get(f"/sessions/{sid}", headers=H_S1).json()["status"] == "active"
     assert client.get(f"/sessions/{sid}", headers=H_I1).json()["status"] == "active"
+
+
+# E1: academia viva — labs con descripción, orden y módulo + estado por estudiante
+def test_labs_expose_description_order_module():
+    labs = client.get("/labs").json()
+    assert {l["id"] for l in labs} == {"lab-ml", "lab-data", "lab-monitor"}
+    assert all(l["description"] and l["module_id"] for l in labs)
+    orders = [l["order_index"] for l in labs]
+    assert orders == sorted(orders)
+
+
+def test_my_lab_status_tracks_session():
+    h_s4 = {"Authorization": f"Bearer {client.post('/auth/login', json={'user_id': 's4'}).json()['token']}"}
+    assert client.get("/me/lab-status", headers=h_s4).json() == {}
+    assert client.get("/me/lab-status").status_code == 401
+    sid = client.post("/sessions", json={"lab_template_id": "lab-data"}, headers=h_s4).json()["id"]
+    assert client.get("/me/lab-status", headers=h_s4).json() == {"lab-data": "active"}
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": "x"}, headers=h_s4)
+    assert client.get("/me/lab-status", headers=h_s4).json() == {"lab-data": "posttest"}
 
 
 # G1: Data Detective — dataset determinista sin filtrar plantados + rúbrica datos

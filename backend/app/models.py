@@ -23,6 +23,9 @@ class LabTemplate(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     lab_type: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    module_id: Mapped[str] = mapped_column(String, default="")
     config_json: Mapped[str] = mapped_column(Text, default="{}")
 
 

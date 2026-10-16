@@ -698,10 +698,10 @@ Si el tiempo aprieta, mantener **un único ML Experiment Lab perfectamente funci
 
 ### Épica F — Tutor y GenUI
 
-- [x] F1 Adapter Gemini vía Interactions API (`POST /v1beta/interactions`, `gemini-3.8-flash`, reintento ante 503, timeout 25s) con fallback mock etiquetado; `POST /sessions/{id}/socratic`.
+- [x] F1 Adapter Gemini vía Interactions API (`POST /v1beta/interactions`, `gemini-3.8-flash`, reintento ante 503, timeout 10s sin sleep porque el endpoint es síncrono) con fallback mock etiquetado; `POST /sessions/{id}/socratic`.
 - [x] F2 Reglas socráticas deterministas (`POST /sessions/{id}/next-intervention`: débil→evidencia, sólida→transferencia, ambigua→aclarar; 16 tests).
 - [x] F3 UI planner con catálogo cerrado (12 widgets) + `validate_ui_spec` y fallback seguro.
-- [x] F4 Catálogo Flutter GenUI (`genui 0.10.4` fijado en `pubspec.lock`, `lib/genui/catalog.dart` con 3 items + tests de contrato; eventos nativos A2UI pendientes).
+- [x] F4 Catálogo Flutter GenUI (`genui 0.10.4` fijado en `pubspec.lock`, `lib/genui/catalog.dart` con los 12 items = espejo exacto de `CATALOG` + test de render de los 12 vía `TutorSurface`; eventos nativos A2UI pendientes).
 - [x] F5 Flujo evento→backend→evaluación→intervención→GenUI→evento (`TutorSurface`: ui_spec→A2UI v0.9→`SurfaceController`→`Surface`, verificado con test).
 - [ ] F6 Fallback cuando falla LLM/Jev o el UI spec no valida.
 
@@ -880,6 +880,7 @@ Los módulos y comandos de seed son **objetivos de implementación**, no archivo
 5. **Flutter en este equipo:** `flutter run -d chrome` no lanza el navegador; usar `flutter run -d web-server --web-port 8080` (documentado en `README.md`).
 6. **Git:** repo `main` inicializado, `.gitignore` cubre `.venv`, `*.db*`, `build/`, `.env`. El bloque MCP `jev` con su key vive solo en la config de usuario de opencode; `opencode.json` del proyecto no debe contener secretos.
 7. **CORS:** `CORSMiddleware` con orígenes de `CORS_ORIGINS`; preflight `OPTIONS` verificado 200 (el login web fallaba sin esto).
+8. **Labs blendeados + siguiente actividad fiable (16 oct 2026, verificado con Marionette live):** `LabTemplate` suma `description`/`order_index`/`module_id` (requirió borrar `cognitiveflow.db*` + reseed; sin Alembic); `GET /labs` expone esos campos ordenados + `GET /me/lab-status` da estado por estudiante; Academia agrupa labs por módulo con cards (descripción + chip En curso/En postest/Completado/No iniciado). Los 3 labs comparten `LabSession` (sesión→intento→evaluar→intervenir→postest) y cabecera `LabSteps` (Explorar→Evaluar→Intervenir→Postest); postest integrado en los 3 (ruta `/posttest/:sid` y `PosttestPage` eliminadas); `PosttestReflection` cierra con reflexión + `NextLabButton` al siguiente por `order_index`. `ResultPanel` separa try de evaluate/socratic (si la pregunta falla, la evaluación se conserva + botón Reintentar) con spinners y botón `Siguiente actividad` siempre visible. E2E: academia con chips reales, intento ML → `exactitud=4` + pregunta socrática + botón; backend `next-intervention` → `transfer`/`HypothesisEditor`. Límite del harness: taps Marionette por coordenadas no aterrizan en columnas scrolleables (solo por tipo, primer match); el cambio a modo postest y el tap de Siguiente actividad no se pudieron pulsar E2E — paths cubiertos por tests backend (`test_posttest_locks_session`) y misma función `send()`.
 
 ---
 
