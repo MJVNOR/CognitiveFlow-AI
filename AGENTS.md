@@ -77,5 +77,5 @@ flutter analyze --no-pub; flutter test; flutter build web
 - Rama `main`, remoto `origin` (`MJVNOR/CognitiveFlow-AI`); identidad local lista.
 - `.gitignore` excluye `.env`, `opencode.json`, `.venv`, `*.db*`, `build/`.
   **Nunca** stagear `opencode.json` (tiene keys MCP locales) ni imprimir keys.
-- Plan vivo en `COGNITIVEFLOW_PLAN.md` (§22 hallazgos verificados): marcar `[x]`
+- Plan vivo en `PLAN.md` (antes `COGNITIVEFLOW_PLAN.md`, viejo): marcar `[x]`
   con evidencia al cerrar cada épica.
