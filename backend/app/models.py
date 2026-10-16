@@ -85,3 +85,14 @@ class UiEvent(Base):
     widget_type: Mapped[str] = mapped_column(String, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class InterventionLog(Base):
+    """P3/F5: audit trail de intervenciones (estrategia decidida por intento)."""
+    __tablename__ = "intervention_log"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    attempt_id: Mapped[str] = mapped_column(String, nullable=False)
+    strategy: Mapped[str] = mapped_column(String, nullable=False)
+    widget_type: Mapped[str] = mapped_column(String, nullable=False)
+    spec_json: Mapped[str] = mapped_column(Text, default="{}")

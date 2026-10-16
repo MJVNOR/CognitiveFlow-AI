@@ -72,19 +72,19 @@ def _noul_to_score(p: float) -> int:
 
 
 def jev_to_internal(jev_answers: dict) -> dict:
+    # ponytail: raw saneado = solo floats noul por criterio; nada de PII (el state no vuelve)
+    safe = {cid: {"noul": float((jev_answers.get(cid) or {}).get("noul", 0.0))}
+            for cid in JEV_QUESTIONS}
     return {
         "evaluator": "jev",
         "status": "evaluated",
         "rubric_version": RUBRIC_VERSION,
         "mapping": "noul>=0.75→4, >=0.5→2, else 0 (heurística UI, no calibración)",
         "criteria": [
-            {
-                "id": cid,
-                "score": _noul_to_score(float((jev_answers.get(cid) or {}).get("noul", 0.0))),
-                "noul": float((jev_answers.get(cid) or {}).get("noul", 0.0)),
-            }
+            {"id": cid, "score": _noul_to_score(safe[cid]["noul"]), "noul": safe[cid]["noul"]}
             for cid in JEV_QUESTIONS
         ],
+        "raw_answers": safe,
         "feedback_generated_by": None,
     }
 

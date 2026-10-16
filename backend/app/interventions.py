@@ -68,7 +68,7 @@ def _avg(criteria: list[dict]) -> float:
 
 
 async def select_intervention(answer_text: str, input_state: dict, eval_result: dict | None,
-                        lab_type: str = "ml_experiment") -> dict:
+                         lab_type: str = "ml_experiment", attempt_number: int = 1) -> dict:
     """P3.4: 6 estrategias sobre el mismo catálogo."""
     complexity = int(input_state.get("complexity", 5))
     noise = int(input_state.get("noise_pct", 20))
@@ -124,7 +124,11 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
     # ponytail: mixta = acierta algo y falla algo → contrastar, no repetir evidencia
     mixed = bool(criteria) and min(c.get("score", 0) for c in criteria) <= 1 and max(
         c.get("score", 0) for c in criteria) >= 3
-    strategy = "contrast_example" if mixed else "request_evidence"
+    # ponytail: primer intento débil → simplificar la pregunta, no pedir más evidencia aún
+    if attempt_number <= 1 and avg <= 2 and not mixed:
+        strategy = "simplify"
+    else:
+        strategy = "contrast_example" if mixed else "request_evidence"
 
     if avg <= 2:
         q = (await socratic_question(answer_text, weak, lab_hint))["question"]

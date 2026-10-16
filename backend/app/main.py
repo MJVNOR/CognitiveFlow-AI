@@ -89,6 +89,57 @@ def my_lab_status(user=Depends(current_user), db: Session = Depends(get_db)):
     return status
 
 
+@app.get("/me/sessions")
+def my_sessions(lab_template_id: str = "", user=Depends(current_user),
+                db: Session = Depends(get_db)):
+    # P1.6: reanudar — última sesión propia por lab, con fase (sin gastar re-evaluar).
+    q = db.query(models.LearningSession).filter_by(student_id=user.id)
+    if lab_template_id:
+        q = q.filter_by(lab_template_id=lab_template_id)
+    return [{"id": s.id, "lab_template_id": s.lab_template_id, "status": s.status,
+             "phase": _phase(db, s)} for s in q.all()]
+
+
+@app.get("/sessions/{session_id}/interventions")
+def session_interventions(session_id: str, user=Depends(current_user),
+                          db: Session = Depends(get_db)):
+    # F5: audit trail legible (estrategia por intento); ownership primero.
+    session_for(user, db, session_id)
+    rows = db.query(models.InterventionLog).filter_by(session_id=session_id).all()
+    return [{"attempt_id": r.attempt_id, "strategy": r.strategy,
+             "widget_type": r.widget_type} for r in rows]
+
+
+@app.get("/instructor/agreement")
+def instructor_agreement(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    # Calibración: acuerdo Jev vs humano por criterio (la validación real pide piloto).
+    out = {}
+    for ev in db.query(models.EvaluationResult).filter_by(evaluator="jev",
+                                                          status="evaluated").all():
+        try:
+            crits = json.loads(ev.normalized_scores_json).get("criteria", [])
+        except Exception:
+            continue
+        revs = db.query(models.InstructorReview).filter_by(attempt_id=ev.attempt_id).all()
+        if not revs:
+            continue
+        rmap = {}
+        for r in revs:
+            try:
+                rmap.update(json.loads(r.rubric_scores_json))
+            except Exception:
+                continue
+        for c in crits:
+            cid = c.get("id")
+            if cid in rmap and isinstance(rmap[cid], int):
+                d = out.setdefault(cid, {"n": 0, "exact": 0, "abs": 0})
+                d["n"] += 1
+                d["exact"] += 1 if rmap[cid] == c.get("score") else 0
+                d["abs"] += abs(rmap[cid] - c.get("score", 0))
+    return {k: {"n": v["n"], "exact_rate": round(v["exact"] / v["n"], 3),
+                "mean_abs_diff": round(v["abs"] / v["n"], 3)} for k, v in out.items()}
+
+
 @app.get("/instructor/students")
 def instructor_students(user=Depends(require_instructor), db: Session = Depends(get_db)):
     rows = db.query(models.User).filter(models.User.role == "student").all()
@@ -204,8 +255,21 @@ def create_session(body: SessionIn, user=Depends(current_user), db: Session = De
 def get_session(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
     attempts = _practice_attempts(db, session_id)
+    last_eval = None
+    for a in reversed(attempts):
+        ev = (db.query(models.EvaluationResult).filter_by(attempt_id=a.id)
+              .order_by(models.EvaluationResult.id.desc()).first())
+        if ev is not None:
+            try:
+                last_eval = json.loads(ev.normalized_scores_json)
+                last_eval["attempt_id"] = a.id
+            except Exception:
+                last_eval = None
+            break
     return {"id": s.id, "student_id": s.student_id, "lab_template_id": s.lab_template_id,
-            "status": s.status, "phase": _phase(db, s), "attempt_count": len(attempts)}
+            "status": s.status, "phase": _phase(db, s), "attempt_count": len(attempts),
+            "last_eval": last_eval,
+            "variant": _posttest_variant(session_id) if s.status == "posttest" else None}
 
 
 MAX_REVISIONS = 6  # P3.5: tope de ciclos evaluar→intervenir por sesión; luego postest
@@ -478,8 +542,14 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
 
         raise HTTPException(404, "attempt not found")
     if len(_practice_attempts(db, session_id)) > MAX_REVISIONS:
-        return await safe_intervention(
+        limited = await safe_intervention(
             f"Límite de {MAX_REVISIONS} revisiones alcanzado; ve al postest")
+        db.add(models.InterventionLog(id=uuid.uuid4().hex[:8], session_id=session_id,
+                                      attempt_id=attempt.id, strategy=limited["strategy"],
+                                      widget_type=limited["widget_type"],
+                                      spec_json=json.dumps(limited["widget_parameters"])))
+        db.commit()
+        return limited
     ev = (
         db.query(models.EvaluationResult)
         .filter_by(attempt_id=attempt.id)
@@ -490,6 +560,7 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     intervention = await select_intervention(
         attempt.answer_text, json.loads(attempt.input_state_json), eval_result,
         _lab_type(db, session_id),
+        attempt_number=len(_practice_attempts(db, session_id)),
     )
     spec = intervention["widget_parameters"]
     errors = validate_ui_spec(
@@ -500,6 +571,13 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     # P1.1: contrato versionado — el cliente valida tipo, versión y eventos.
     intervention["schema_version"] = SCHEMA_VERSION
     intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])
+    # F5: audit trail — qué estrategia se decidió por intento (append-only).
+    db.add(models.InterventionLog(id=uuid.uuid4().hex[:8], session_id=session_id,
+                                  attempt_id=attempt.id,
+                                  strategy=intervention["strategy"],
+                                  widget_type=intervention["widget_type"],
+                                  spec_json=json.dumps(intervention["widget_parameters"])))
+    db.commit()
     return intervention
 
 

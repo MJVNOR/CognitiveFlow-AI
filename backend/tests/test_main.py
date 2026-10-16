@@ -185,7 +185,7 @@ def test_data_eval_weak_flags_nothing():
     assert {c["id"]: c["score"] for c in r["criteria"]}["exactitud"] == 0
     iv = client.post(f"/sessions/{sid}/next-intervention",
                      json={"attempt_id": aid}, headers=H_S1).json()
-    assert iv["strategy"] == "request_evidence"
+    assert iv["strategy"] == "simplify"
     assert iv["widget_type"] == "DataTableExplorer"
 
 
@@ -410,7 +410,23 @@ def _intervene(answer: str):
 
 
 def test_weak_answer_requests_evidence():
-    r = _intervene("no sé")
+    # 1er intento débil → simplificar; 2do débil → pedir evidencia
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    a1 = client.post(f"/sessions/{sid}/attempts",
+        json={"complexity": 5, "noise_pct": 20, "seed": 1, "answer_text": "no sé"},
+        headers=H_S1).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": a1}, headers=H_S1)
+    r1 = client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": a1}, headers=H_S1).json()
+    assert r1["strategy"] == "simplify"
+    a2 = client.post(f"/sessions/{sid}/attempts",
+        json={"complexity": 5, "noise_pct": 20, "seed": 1, "answer_text": "tampoco sé"},
+        headers=H_S1).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": a2}, headers=H_S1)
+    r = client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": a2}, headers=H_S1).json()
     assert r["strategy"] == "request_evidence"
     assert r["widget_type"] == "EvidenceComparison"
     assert r["difficulty_delta"] == 0 and not r["give_direct_answer"]
@@ -722,6 +738,105 @@ def test_reflection_summary_honest():
     r2 = client.post(f"/sessions/{sid2}/reflection", json={"text": "mejoré"},
                      headers=H_S1).json()
     assert r2["summary"]["mejora"] is not None
+
+
+# PR-05b: raw Jev, audit trail, resume, agreement y E2E de laboratorio
+def test_jev_raw_answers_persisted(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("EVALUATOR_MODE", "jev")
+    monkeypatch.setenv("JEV_API_KEY", "test-key")
+    ans = {cid: {"type": "noul", "noul": 0.8} for cid in
+           ["exactitud", "evidencia", "causal", "alternativas", "metacognicion"]}
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _FakeJev(200, ans))
+    sid = _ml_session()
+    aid = _attempt(sid, "x")
+    r = _eval_on(sid, aid)
+    assert r["raw_answers"]["exactitud"] == {"noul": 0.8}
+    row = TestingSession().query(models.EvaluationResult).filter_by(attempt_id=aid).first()
+    import json
+
+    assert json.loads(row.normalized_scores_json)["raw_answers"]["evidencia"]["noul"] == 0.8
+
+
+def test_intervention_audit_trail(monkeypatch):
+    import httpx
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    log = client.get(f"/sessions/{sid}/interventions", headers=H_S1).json()
+    assert len(log) == 1 and log[0]["strategy"] == iv["strategy"] == "simplify"
+    assert log[0]["attempt_id"] == aid
+    assert client.get(f"/sessions/{sid}/interventions", headers=H_S2).status_code in (403, 404)
+
+
+def test_resume_endpoints():
+    sid = _ml_session()
+    mine = client.get("/me/sessions?lab_template_id=lab-ml", headers=H_S1).json()
+    assert any(m["id"] == sid and m["phase"] == "prediccion" for m in mine)
+    assert all(m["phase"] for m in mine)
+    assert client.get("/me/sessions", headers=H_S2).json() == []
+    aid = _attempt(sid, "creo que sube")
+    _eval_on(sid, aid)
+    det = client.get(f"/sessions/{sid}", headers=H_S1).json()
+    assert det["last_eval"]["attempt_id"] == aid
+    assert det["last_eval"]["criteria"]
+    assert det["variant"] is None
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1)
+    det2 = client.get(f"/sessions/{sid}", headers=H_S1).json()
+    assert det2["phase"] == "postest" and det2["variant"]["seed"] >= 100
+
+
+def test_agreement_empty_then_computed(monkeypatch):
+    import httpx
+
+    assert client.get("/instructor/agreement", headers=H_I1).json() == {}
+    assert client.get("/instructor/agreement", headers=H_S1).status_code == 403
+    monkeypatch.setenv("EVALUATOR_MODE", "jev")
+    monkeypatch.setenv("JEV_API_KEY", "test-key")
+    high = {cid: {"type": "noul", "noul": 0.9} for cid in
+            ["exactitud", "evidencia", "causal", "alternativas", "metacognicion"]}
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _FakeJev(200, high))
+    sid = _ml_session()
+    aid = _attempt(sid, "fuerte")
+    _eval_on(sid, aid)
+    assert client.get("/instructor/agreement", headers=H_I1).json() == {}
+    client.post(f"/instructor/attempts/{aid}/reviews",
+        json={"rubric_scores": {"exactitud": 4, "evidencia": 2}, "notes": ""}, headers=H_I1)
+    ag = client.get("/instructor/agreement", headers=H_I1).json()
+    assert ag["exactitud"] == {"n": 1, "exact_rate": 1.0, "mean_abs_diff": 0.0}
+    assert ag["evidencia"] == {"n": 1, "exact_rate": 0.0, "mean_abs_diff": 2.0}
+
+
+def test_e2e_lab_loop_no_credits(monkeypatch):
+    # P1.7: ciclo completo con mocks — practicar→evaluar→tutor→intervenir→evento
+    # →postest→reflexión, sin gastar Jev/Gemini.
+    import httpx
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    sid = _ml_session()
+    aid = _attempt(sid, "Hay overfit porque validación sube con complejidad 7")
+    assert _eval_on(sid, aid)["evaluator"] == "mock"
+    q = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).json()
+    assert q["provider"] == "mock" and q["question"]
+    iv = _intervene_aid(sid, aid)
+    assert iv["schema_version"] == 1 and iv["widget_type"] in (
+        "EvidenceComparison", "HypothesisEditor", "SocraticQuestionCard")
+    ev = client.post(f"/sessions/{sid}/events",
+        json={"client_event_id": "e2e-1", "widget_type": "LearningCurveSimulator",
+              "event_type": "parameterChanged", "payload": {"complexity": 7}},
+        headers=H_S1).json()
+    assert ev == {"id": "e2e-1", "deduped": False}
+    sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post"}, headers=H_S1).json()
+    assert sub["status"] == "submitted"
+    done = client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1).json()
+    assert done["status"] == "done" and "summary" in done
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["phase"] == "cierre"
 
 
 # PR-04 P3.4/P3.6: 6 estrategias, sin bucles, prompt con guarda

@@ -920,10 +920,7 @@ class LabSession {
     } catch (e) {
       evalError = 'Evaluado ✓, pero la pregunta no llegó: $e';
     }
-    try {
-      final h = await fetchJson('/sessions/$sessionId/tutor-history');
-      tutorHistory = h.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } catch (_) {}
+    await loadHistory();
   }
 
   Future<void> next() async {
@@ -933,6 +930,51 @@ class LabSession {
           '/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
     } catch (e) {
       nextError = 'No llegó la actividad: $e';
+    }
+  }
+
+  Future<void> loadHistory() async {
+    try {
+      final h = await fetchJson('/sessions/$sessionId/tutor-history');
+      tutorHistory = h.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {}
+  }
+
+  // P1.6: reanudar sesión abierta tras recarga — sin re-evaluar (cero créditos).
+  Future<bool> resume(String labId) async {
+    try {
+      final mine = await fetchJson('/me/sessions?lab_template_id=$labId');
+      Map<String, dynamic>? open;
+      for (final m in mine) {
+        final mm = Map<String, dynamic>.from(m as Map);
+        if (mm['status'] != 'done') open = mm;
+      }
+      if (open == null) return false;
+      sessionId = open['id'] as String;
+      final det = await fetchMap('/sessions/$sessionId');
+      posttestMode = det['status'] == 'posttest';
+      final v = det['variant'];
+      if (v is Map) posttestVariant = Map<String, dynamic>.from(v);
+      final atts = await fetchJson('/sessions/$sessionId/attempts');
+      attemptId = null;
+      posttestSent = false;
+      for (final a in atts) {
+        final am = Map<String, dynamic>.from(a as Map);
+        final input = Map<String, dynamic>.from(am['input'] as Map);
+        if (input['kind'] == 'posttest') {
+          posttestSent = true;
+        } else if (am['id'] != null) {
+          attemptId = am['id'] as String;
+        }
+      }
+      final le = det['last_eval'];
+      evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
+      socraticQ = '';
+      intervention = null;
+      await loadHistory();
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1554,10 +1596,13 @@ class _DataLabState extends State<DataLabPage> {
   }
 
   Future<void> _init() async {
-    await lab.init(widget.labId);
-    if (lab.sessionId == null) {
-      setState(() {});
-      return;
+    // P1.6: reanudar abierta antes de crear una nueva.
+    if (!await lab.resume(widget.labId)) {
+      await lab.init(widget.labId);
+      if (lab.sessionId == null) {
+        setState(() {});
+        return;
+      }
     }
     await _loadTable();
     // Borrador previo (si salió del lab sin entregar).
@@ -1779,10 +1824,13 @@ class _LabDetailState extends State<LabDetailPage> {
   }
 
   Future<void> _init() async {
-    await lab.init(widget.labId);
-    if (lab.sessionId == null) {
-      setState(() {});
-      return;
+    // P1.6: reanudar abierta antes de crear una nueva.
+    if (!await lab.resume(widget.labId)) {
+      await lab.init(widget.labId);
+      if (lab.sessionId == null) {
+        setState(() {});
+        return;
+      }
     }
     await _loadCurve();
     final cx = await loadDraft(widget.labId, 'complexity');
@@ -1795,6 +1843,16 @@ class _LabDetailState extends State<LabDetailPage> {
       if (h != null) hypo.text = h;
     });
     if (cx != null || nz != null) await _loadCurve();
+    // En postest manda la variante del servidor, no el borrador.
+    final v = lab.posttestVariant;
+    if (lab.posttestMode && v != null) {
+      if (!mounted) return;
+      setState(() {
+        complexity = (v['complexity'] as num).toDouble();
+        noise = (v['noise_pct'] as num).toDouble();
+      });
+      await _loadCurve();
+    }
   }
 
   Future<void> _loadCurve() async {
@@ -2404,10 +2462,13 @@ class _MonitorState extends State<MonitorLabPage> {
   }
 
   Future<void> _init() async {
-    await lab.init(widget.labId);
-    if (lab.sessionId == null) {
-      setState(() {});
-      return;
+    // P1.6: reanudar abierta antes de crear una nueva.
+    if (!await lab.resume(widget.labId)) {
+      await lab.init(widget.labId);
+      if (lab.sessionId == null) {
+        setState(() {});
+        return;
+      }
     }
     await _load();
     final ft = await loadDraft(widget.labId, 'feature');
