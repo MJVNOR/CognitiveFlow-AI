@@ -1,13 +1,14 @@
 import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from app.db import get_db
+from app.db import ensure_columns, get_db
 from app import models
 from app.seed import init_db, seed_if_empty
 from app.labs_ml import ml_curve
@@ -17,7 +18,7 @@ from app.labs_monitor import generate as generate_monitor
 from app.socratic import socratic_question, feedback_text
 from app.interventions import select_intervention, validate_ui_spec, safe_intervention, CATALOG
 from app.interventions import SCHEMA_VERSION, ALLOWED_EVENTS, ALLOWED_BY_WIDGET
-from app.auth import current_user, require_instructor, session_for, new_token
+from app.auth import current_user, require_instructor, session_for, new_token, revoke_token
 
 load_dotenv()
 
@@ -25,6 +26,7 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    ensure_columns()
     seed_if_empty()
     yield
 
@@ -150,15 +152,68 @@ class LoginIn(BaseModel):
     user_id: str
 
 
+_LOGIN_HITS: dict[str, list] = {}  # ponytail: memoria local, 1 worker demo
+LOGIN_MAX_MIN = 10  # P7.1: freno a fuerza bruta en login demo
+
+
+def _login_allowed(ip: str) -> bool:
+    now = time.monotonic()
+    hits = [t for t in _LOGIN_HITS.get(ip, []) if now - t < 60]
+    _LOGIN_HITS[ip] = hits
+    if len(hits) >= LOGIN_MAX_MIN:
+        return False
+    hits.append(now)
+    return True
+
+
 @app.post("/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     # Demo piloto: user_id de seed (s1-s4, i1). Sin passwords (ver app/auth.py).
+    if not _login_allowed(request.client.host if request.client else "?"):
+        from fastapi import HTTPException
+
+        raise HTTPException(429, "demasiados intentos, espera un minuto")
     user = db.query(models.User).filter_by(id=body.user_id, active=1).first()
     if not user:
         from fastapi import HTTPException
 
         raise HTTPException(401, "usuario desconocido")
     return {"token": new_token(db, user.id), "role": user.role, "user_id": user.id}
+
+
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+_bearer_opt = HTTPBearer(auto_error=False)
+
+
+@app.delete("/auth/logout")
+def logout(creds: HTTPAuthorizationCredentials | None = Depends(_bearer_opt),
+           user=Depends(current_user), db: Session = Depends(get_db)):
+    if creds:
+        revoke_token(db, creds.credentials)
+    return {"status": "bye"}
+
+
+@app.get("/instructor/backup")
+def instructor_backup(user=Depends(require_instructor)):
+    # P7.2: descarga del sqlite para backup externo (solo instructor).
+    from fastapi.responses import FileResponse
+
+    url = os.getenv("DATABASE_URL", "sqlite:///./cognitiveflow.db")
+    if not url.startswith("sqlite://"):
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "backup solo para sqlite en archivo")
+    import re
+
+    path = re.sub(r"^/([A-Za-z]:/)", r"\1", url[len("sqlite://"):])
+    if path.startswith("/./"):
+        path = path[1:]
+    if not path or not os.path.isfile(path):
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "sin archivo de respaldo")
+    return FileResponse(path, filename="cognitiveflow-backup.db")
 
 
 @app.get("/auth/me")
@@ -175,7 +230,7 @@ def instructor_sessions(student_id: str, user=Depends(require_instructor),
 
 class ReviewIn(BaseModel):
     rubric_scores: dict = {}
-    notes: str = ""
+    notes: str = Field(default="", max_length=2000)
 
 
 @app.post("/instructor/attempts/{attempt_id}/reviews")
@@ -335,7 +390,7 @@ class AttemptIn(BaseModel):
     complexity: int = 5
     noise_pct: int = 20
     seed: int = 1
-    answer_text: str = ""
+    answer_text: str = Field(default="", max_length=6000)  # P7.1: tope de payload
     flags: list = []  # ids de filas marcadas (Data Detective)
     extra: dict = {}  # monitor: {feature, changepoint}
 
@@ -590,7 +645,7 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
 class PosttestIn(BaseModel):
     complexity: int = 5  # ignorados: la variante la fija el servidor (P4.1)
     noise_pct: int = 20
-    answer_text: str = ""
+    answer_text: str = Field(default="", max_length=6000)
 
 
 def _posttest_variant(session_id: str) -> dict:
@@ -700,7 +755,7 @@ def instructor_matrix(user=Depends(require_instructor), db: Session = Depends(ge
 
 
 class ReflectionIn(BaseModel):
-    text: str
+    text: str = Field(max_length=2000)
 
 
 @app.post("/sessions/{session_id}/reflection")

@@ -662,6 +662,77 @@ def test_jev_live_opt_in():
     assert r["status"] in ("evaluated", "pending")
 
 
+# PR-09 P7.1/P7.2: expiración, logout, rate limit, topes, backup, concurrencia
+def test_token_expiry_and_logout():
+    import time
+
+    tok = client.post("/auth/login", json={"user_id": "s1"}).json()["token"]
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+    db = TestingSession()
+    row = db.query(models.AuthToken).filter_by(token=tok).first()
+    row.created_at = int(time.time()) - 13 * 3600
+    db.commit()
+    db.close()
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"}).status_code == 401
+
+    tok2 = client.post("/auth/login", json={"user_id": "s1"}).json()["token"]
+    h2 = {"Authorization": f"Bearer {tok2}"}
+    assert client.delete("/auth/logout", headers=h2).json() == {"status": "bye"}
+    assert client.get("/auth/me", headers=h2).status_code == 401
+
+
+def test_login_rate_limit():
+    from app.main import _LOGIN_HITS
+
+    _LOGIN_HITS.clear()
+    for _ in range(10):
+        assert client.post("/auth/login", json={"user_id": "s9"}).status_code == 401
+    assert client.post("/auth/login", json={"user_id": "s9"}).status_code == 429
+    _LOGIN_HITS.clear()
+    assert client.post("/auth/login", json={"user_id": "s1"}).status_code == 200
+
+
+def test_payload_limits():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    big = "x" * 7000
+    assert client.post(f"/sessions/{sid}/attempts",
+        json={"answer_text": big}, headers=H_S1).status_code == 422
+    assert client.post(f"/sessions/{sid}/posttest",
+        json={"answer_text": big}, headers=H_S1).status_code == 422
+
+
+def test_backup_instructor_only():
+    r = client.get("/instructor/backup", headers=H_I1)
+    assert r.status_code == 200 and "backup" in r.headers.get("content-disposition", "")
+    assert client.get("/instructor/backup", headers=H_S1).status_code == 403
+
+
+def test_four_students_concurrent():
+    # ponytail: hilos reales contra :memory:/StaticPool no son thread-safe en el
+    # harness; en producción el archivo SQLite serializa escritores (WAL).
+    # Aquí: 4 alumnos intercalados rápido, sin cruces y todo evaluado.
+    toks = {u: client.post("/auth/login", json={"user_id": u}).json()["token"]
+            for u in ["s1", "s2", "s3", "s4"]}
+    sids, aids = {}, {}
+    for u, tok in toks.items():
+        h = {"Authorization": f"Bearer {tok}"}
+        sids[u] = client.post("/sessions", json={"lab_template_id": "lab-ml"},
+                              headers=h).json()["id"]
+    for u, tok in toks.items():
+        h = {"Authorization": f"Bearer {tok}"}
+        aids[u] = client.post(f"/sessions/{sids[u]}/attempts",
+            json={"answer_text": f"intento de {u}"}, headers=h).json()["id"]
+    for u, tok in toks.items():
+        h = {"Authorization": f"Bearer {tok}"}
+        ev = client.post(f"/sessions/{sids[u]}/evaluate",
+                         json={"attempt_id": aids[u]}, headers=h).json()
+        assert ev["status"] == "evaluated"
+        mine = client.get(f"/sessions/{sids[u]}", headers=h).json()
+        assert mine["student_id"] == u  # sin cruces entre alumnos
+
+
 # PR-07 P5: intervenciones data/monitor llevan parámetros reales
 def test_data_intervention_carries_n_rows():
     sid = client.post(
@@ -875,7 +946,7 @@ def test_resume_endpoints():
     mine = client.get("/me/sessions?lab_template_id=lab-ml", headers=H_S1).json()
     assert any(m["id"] == sid and m["phase"] == "prediccion" for m in mine)
     assert all(m["phase"] for m in mine)
-    assert client.get("/me/sessions", headers=H_S2).json() == []
+    assert client.get("/me/sessions?lab_template_id=lab-monitor", headers=H_S2).json() == []
     aid = _attempt(sid, "creo que sube")
     _eval_on(sid, aid)
     det = client.get(f"/sessions/{sid}", headers=H_S1).json()

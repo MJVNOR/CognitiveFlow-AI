@@ -25,6 +25,18 @@ def _sqlite_pragmas(dbapi_conn, _):
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+def ensure_columns() -> None:
+    """P7.2: añade columnas nuevas a DBs existentes sin borrar datos (sin Alembic)."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if insp.has_table("auth_tokens"):
+        cols = [c["name"] for c in insp.get_columns("auth_tokens")]
+        if "created_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE auth_tokens ADD COLUMN created_at INTEGER DEFAULT 0"))
+
+
 def get_db():
     db = SessionLocal()
     try:

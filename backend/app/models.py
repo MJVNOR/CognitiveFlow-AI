@@ -66,6 +66,8 @@ class AuthToken(Base):
     __tablename__ = "auth_tokens"
     token: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False)
+    # P7.1: epoch de emisión; 0 = heredado sin expiración (solo filas viejas)
+    created_at: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class InstructorReview(Base):
