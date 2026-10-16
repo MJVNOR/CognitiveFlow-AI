@@ -120,11 +120,11 @@ flowchart TD
 
 ### P6 — Diseño profesional, Impeccable y refactor
 
-- [ ] **P6.1** Seguir `DESIGN.md` sin cambiar la trifecta. Revisión `critique` inicial; `layout`, `typeset`, `distill`, `polish` por fases; utilizar inspección de Flutter Web, no asumir que herramientas HTML analizan Dart.
-- [ ] **P6.2** Layout desktop dividido (actividad/tutor) y móvil sin overflow; modo concentración sin esconder controles esenciales; foco, teclado, lectores de pantalla, contraste WCAG AA.
-- [ ] **P6.3** Refactor incremental de `main.dart` a features/widgets, preservando rutas/estado y añadiendo pruebas por extracción; no reescritura total.
-- [ ] **P6.4** `ResultPanel` con etiquetas humanas, evidencia, incertidumbre y siguiente acción; mejorar placeholders y empty/error states.
-- [ ] **P6.5** Completar cadenas `l10n` existentes; prueba de navegación completa + viewport móvil y desktop; si no hay herramientas de screenshot, reportarlo.
+- [ ] **P6.1** Seguir `DESIGN.md` sin cambiar la trifecta. Revisión `critique` inicial; `layout`, `typeset`, `distill`, `polish` por fases; utilizar inspección de Flutter Web, no asumir que herramientas HTML analizan Dart. Parcial PR-08: refs impeccable consultados; critique dual con browser no ejecutable aquí (sin PRODUCT.md/brief, browser bloquea localhost); trifecta intacta.
+- [ ] **P6.2** Layout desktop dividido (actividad/tutor) y móvil sin overflow; modo concentración sin esconder controles esenciales; foco, teclado, lectores de pantalla, contraste WCAG AA. Parcial PR-08: auditoría estática (targets 48px en primarios, liveRegions en errores/estados, charts con Semantics + tablas, fix ellipsis matriz); sin verificación de render (ver P6.5).
+- [x] **P6.3** Refactor incremental de `main.dart` a features/widgets, preservando rutas/estado y añadiendo pruebas por extracción; no reescritura total. ✅ PR-08: `session/lab_session.dart` (transporte + `LabSession` + etiquetas, 255 lín); `main.dart` 3080→2825; 36/36 tests.
+- [x] **P6.4** `ResultPanel` con etiquetas humanas, evidencia, incertidumbre y siguiente acción; mejorar placeholders y empty/error states. ✅ venía de PR-03/04 (etiquetas, pending con reintento, fortaleza/brecha); Progreso/Instructor tienen `noApi`/vacíos.
+- [ ] **P6.5** Completar cadenas `l10n` existentes; prueba de navegación completa + viewport móvil y desktop; si no hay herramientas de screenshot, reportarlo. Parcial PR-08: `app_en/es.arb` completos y generados; **capturas bloqueadas** (navegador MCP con SSRF guard no abre localhost; puertos 8000/8080 ocupados por instancias existentes).
 
 **Aceptación:** no hay regresiones de navegación, overflow o controles inaccesibles; capturas antes/después y cambios justificados.
 
