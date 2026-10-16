@@ -682,7 +682,7 @@ def test_token_expiry_and_logout():
 
 
 def test_login_rate_limit():
-    from app.main import _LOGIN_HITS
+    from app.routers.auth import _LOGIN_HITS
 
     _LOGIN_HITS.clear()
     for _ in range(10):

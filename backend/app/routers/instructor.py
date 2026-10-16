@@ -1,0 +1,143 @@
+"""Panel instructor: alumnos, revisiones, matriz, acuerdo, export, backup."""
+import csv
+import io
+import json
+import os
+import re
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app import models
+from app.auth import require_instructor
+from app.db import get_db
+from app.helpers import _lab_progress
+
+router = APIRouter()
+
+
+@router.get("/instructor/agreement")
+def instructor_agreement(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    # Calibración: acuerdo Jev vs humano por criterio (la validación real pide piloto).
+    out = {}
+    for ev in db.query(models.EvaluationResult).filter_by(evaluator="jev",
+                                                          status="evaluated").all():
+        try:
+            crits = json.loads(ev.normalized_scores_json).get("criteria", [])
+        except Exception:
+            continue
+        revs = db.query(models.InstructorReview).filter_by(attempt_id=ev.attempt_id).all()
+        if not revs:
+            continue
+        rmap = {}
+        for r in revs:
+            try:
+                rmap.update(json.loads(r.rubric_scores_json))
+            except Exception:
+                continue
+        for c in crits:
+            cid = c.get("id")
+            if cid in rmap and isinstance(rmap[cid], int):
+                d = out.setdefault(cid, {"n": 0, "exact": 0, "abs": 0})
+                d["n"] += 1
+                d["exact"] += 1 if rmap[cid] == c.get("score") else 0
+                d["abs"] += abs(rmap[cid] - c.get("score", 0))
+    return {k: {"n": v["n"], "exact_rate": round(v["exact"] / v["n"], 3),
+                "mean_abs_diff": round(v["abs"] / v["n"], 3)} for k, v in out.items()}
+
+
+@router.get("/instructor/students")
+def instructor_students(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    rows = db.query(models.User).filter(models.User.role == "student").all()
+    return [{"id": u.id, "display_name": u.display_name} for u in rows]
+
+
+@router.get("/instructor/students/{student_id}/sessions")
+def instructor_sessions(student_id: str, user=Depends(require_instructor),
+                        db: Session = Depends(get_db)):
+    rows = db.query(models.LearningSession).filter_by(student_id=student_id).all()
+    return [{"id": s.id, "lab_template_id": s.lab_template_id, "status": s.status} for s in rows]
+
+
+class ReviewIn(BaseModel):
+    rubric_scores: dict = {}
+    notes: str = Field(default="", max_length=2000)
+
+
+@router.post("/instructor/attempts/{attempt_id}/reviews")
+def create_review(attempt_id: str, body: ReviewIn, user=Depends(require_instructor),
+                  db: Session = Depends(get_db)):
+    attempt = db.query(models.LabAttempt).filter_by(id=attempt_id).first()
+    if not attempt:
+        raise HTTPException(404, "attempt not found")
+    # ponytail: append-only; jamás modifica evaluation_results
+    for cid, score in body.rubric_scores.items():
+        if not isinstance(score, int) or not 0 <= score <= 4:
+            raise HTTPException(422, f"score inválido en {cid}: 0-4")
+    rid = uuid.uuid4().hex[:8]
+    db.add(models.InstructorReview(id=rid, attempt_id=attempt_id, instructor_id=user.id,
+                                   rubric_scores_json=json.dumps(body.rubric_scores),
+                                   notes=body.notes))
+    db.commit()
+    return {"id": rid}
+
+
+@router.get("/instructor/export")
+def instructor_export(format: str = "csv", user=Depends(require_instructor),
+                      db: Session = Depends(get_db)):
+    # ponytail: anonimizado — códigos, nunca nombres
+    code = {}
+
+    def anon(uid: str) -> str:
+        return code.setdefault(uid, f"STU-{len(code)+1:02d}")
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["student", "session", "lab", "attempt", "evaluator", "criterion", "score",
+                "reviewer_score"])
+    for s in db.query(models.LearningSession).all():
+        for a in db.query(models.LabAttempt).filter_by(session_id=s.id).all():
+            evs = db.query(models.EvaluationResult).filter_by(attempt_id=a.id).all()
+            revs = db.query(models.InstructorReview).filter_by(attempt_id=a.id).all()
+            rmap = {}
+            for r in revs:
+                rmap.update(json.loads(r.rubric_scores_json))
+            crits = [c for ev in evs for c in json.loads(ev.normalized_scores_json).get("criteria", [])]
+            if not crits:
+                w.writerow([anon(s.student_id), s.id, s.lab_template_id, a.id, "", "", "", ""])
+            for c in crits:
+                w.writerow([anon(s.student_id), s.id, s.lab_template_id, a.id,
+                            (evs[0].evaluator if evs else ""), c.get("id"), c.get("score"),
+                            rmap.get(c.get("id"), "")])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv")
+
+
+@router.get("/instructor/matrix")
+def instructor_matrix(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    # P4.4: matriz alumnos × labs con baseline/postest; códigos, nunca nombres aquí.
+    users = db.query(models.User).filter(models.User.role == "student").all()
+    labs = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
+    code = {}
+
+    def anon(uid: str) -> str:
+        return code.setdefault(uid, f"STU-{len(code)+1:02d}")
+
+    return [{"student": anon(u.id), "student_id": u.id,
+             "labs": {l.id: _lab_progress(db, u.id, l.id) for l in labs}} for u in users]
+
+
+@router.get("/instructor/backup")
+def instructor_backup(user=Depends(require_instructor)):
+    # P7.2: descarga del sqlite para backup externo (solo instructor).
+    url = os.getenv("DATABASE_URL", "sqlite:///./cognitiveflow.db")
+    if not url.startswith("sqlite://"):
+        raise HTTPException(404, "backup solo para sqlite en archivo")
+    path = re.sub(r"^/([A-Za-z]:/)", r"\1", url[len("sqlite://"):])
+    if path.startswith("/./"):
+        path = path[1:]
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, "sin archivo de respaldo")
+    return FileResponse(path, filename="cognitiveflow-backup.db")

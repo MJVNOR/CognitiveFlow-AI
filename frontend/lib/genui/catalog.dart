@@ -3,7 +3,6 @@
 // ponytail: sin eventos GenUI nativos aún; el loop usa nuestros eventos REST (verificado E2E).
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:genui/genui.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
 
@@ -56,7 +55,7 @@ Widget _titledCard(BuildContext context, String title, String body,
         ],
       ),
     ),
-  ).animate().fadeIn(duration: 250.ms);
+  );
 }
 
 Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
@@ -107,7 +106,7 @@ Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
         ),
       ),
     );
-  }).animate().fadeIn(duration: 250.ms);
+  });
 }
 
 final socraticQuestionCard = CatalogItem(

@@ -5,7 +5,6 @@ import 'dart:async';
 
 import 'package:a2ui_core/a2ui_core.dart' as core;
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:genui/genui.dart';
 
 import 'catalog.dart';
@@ -116,9 +115,6 @@ class _TutorSurfaceState extends State<TutorSurface> {
 
   @override
   Widget build(BuildContext context) {
-    return Surface(surfaceContext: _controller.contextFor(tutorSurfaceId))
-        .animate()
-        .fadeIn(duration: 300.ms)
-        .slideY(begin: 0.1, end: 0);
+    return Surface(surfaceContext: _controller.contextFor(tutorSurfaceId));
   }
 }

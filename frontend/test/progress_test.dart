@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:cognitiveflow/main.dart';
+import 'package:cognitiveflow/widgets/cards.dart';
 import 'package:cognitiveflow/session/lab_session.dart';
 
 void main() {
