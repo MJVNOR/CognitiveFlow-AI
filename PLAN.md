@@ -112,9 +112,9 @@ flowchart TD
 
 ### P5 — Completar los otros laboratorios sin sobreingeniería
 
-- [ ] **P5.1 Data Detective:** conectar explorador de DataFrame (selección/filtrado/marcado de anomalías) con justificación, Jev y pregunta adaptativa. Datos sintéticos reproducibles.
-- [ ] **P5.2 Model Monitoring:** distribuciones de referencia/actual, selección de feature/tiempo, justificación de drift, diferenciación entre data drift y degradación de performance; Jev y postest.
-- [ ] **P5.3** Priorizar reutilizar `EvidenceComparison`, `HypothesisEditor`, `RubricFeedbackCard`; dejar editor SQL y DAG avanzado como futuro salvo necesidad demostrada.
+- [x] **P5.1 Data Detective:** conectar explorador de DataFrame (selección/filtrado/marcado de anomalías) con justificación, Jev y pregunta adaptativa. Datos sintéticos reproducibles. ✅ 2026-10-16 PR-07 (`5ed59d6`): `DataTableExplorer` real (flags validados 0..n-1 + justificación → `evidenceSelected`/`argumentSubmitted`); backend pasa `n_rows`; Jev sigue solo en ML por diseño.
+- [x] **P5.2 Model Monitoring:** distribuciones de referencia/actual, selección de feature/tiempo, justificación de drift, diferenciación entre data drift y degradación de performance; Jev y postest. ✅ `DriftDistributionExplorer` real (chips temp/pressure/vibration + slider changepoint + diagnóstico drift-vs-degradación); backend pasa `features` reales del seed.
+- [x] **P5.3** Priorizar reutilizar `EvidenceComparison`, `HypothesisEditor`, `RubricFeedbackCard`; dejar editor SQL y DAG avanzado como futuro salvo necesidad demostrada. ✅ sin duplicar tabla/histograma (viven en las páginas); SQL/DAG/Map/Pipeline/Rúbrica/Reflexión quedan `_simpleCard` futuro.
 
 **Aceptación:** tres laboratorios aparecen, al menos ML completo E2E; otros dos tienen interacción verdadera y no contienen componentes falsamente funcionales.
 
