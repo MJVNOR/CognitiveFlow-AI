@@ -22,10 +22,19 @@ void main() {
     expect(find.text('Entrar'), findsOneWidget);
   });
 
-  testWidgets('con auth muestra tabs', (tester) async {
+  testWidgets('estudiante no ve tab Instructor', (tester) async {
     await _pump(
       tester,
       const AuthState(token: 'test-token', userId: 's1', role: 'student'),
+    );
+    expect(find.text('Academia'), findsOneWidget);
+    expect(find.text('Instructor'), findsNothing);
+  });
+
+  testWidgets('instructor sí ve tab Instructor', (tester) async {
+    await _pump(
+      tester,
+      const AuthState(token: 'test-token', userId: 'i1', role: 'instructor'),
     );
     expect(find.text('Academia'), findsOneWidget);
     expect(find.text('Instructor'), findsOneWidget);

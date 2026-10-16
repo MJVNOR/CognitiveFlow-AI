@@ -74,6 +74,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String routeProgress(int done, int total) {
-    return 'Path: $done of $total labs completed';
+    return 'Progress: $done of $total labs finished';
   }
 }

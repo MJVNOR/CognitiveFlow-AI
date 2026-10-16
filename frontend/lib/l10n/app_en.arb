@@ -27,5 +27,5 @@
       "total": { "type": "int" }
     }
   },
-  "routeProgress": "Path: {done} of {total} labs completed"
+  "routeProgress": "Progress: {done} of {total} labs finished"
 }

@@ -215,6 +215,19 @@ ThemeData buildCognitiveLightTheme() {
     appBarTheme: const AppBarTheme(
       backgroundColor: CognitiveColors.surface,
       foregroundColor: CognitiveColors.ink,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      centerTitle: false,
+      titleSpacing: 16,
+      titleTextStyle: TextStyle(
+        color: CognitiveColors.ink,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+      ),
+      shape: Border(
+        bottom: BorderSide(color: CognitiveColors.border, width: 1),
+      ),
     ),
     cardTheme: CardThemeData(
       color: CognitiveColors.surface,
@@ -274,6 +287,19 @@ ThemeData buildCognitiveDarkTheme() {
     appBarTheme: const AppBarTheme(
       backgroundColor: CognitiveColors.surfaceDark,
       foregroundColor: CognitiveColors.inkDark,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      centerTitle: false,
+      titleSpacing: 16,
+      titleTextStyle: TextStyle(
+        color: CognitiveColors.inkDark,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+      ),
+      shape: Border(
+        bottom: BorderSide(color: CognitiveColors.borderDark, width: 1),
+      ),
     ),
     cardTheme: CardThemeData(
       color: CognitiveColors.surfaceDark,
@@ -402,7 +428,9 @@ class _LoginState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text(Strings.appTitle)),
+      appBar: AppBar(
+          title: const Text(Strings.appTitle,
+              maxLines: 1, overflow: TextOverflow.ellipsis)),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -487,20 +515,52 @@ class Shell extends ConsumerWidget {
       await ref.read(authProvider.notifier).logout();
       if (context.mounted) context.go('/login');
     }
+    final isInstructor = ref.watch(authProvider)?.isStudent == false;
+    final tabs = isInstructor ? _shellTabs : _shellTabs.sublist(0, 3);
+    final sel = _index >= tabs.length ? 0 : _index;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        void go(int i) => context.go(_shellTabs[i]);
+        void go(int i) => context.go(tabs[i]);
+        final cs = Theme.of(context).colorScheme;
         final rail = NavigationRail(
-          selectedIndex: _index,
+          selectedIndex: sel,
           onDestinationSelected: go,
           labelType: NavigationRailLabelType.all,
-          destinations: const [
-            NavigationRailDestination(icon: Icon(Icons.school), label: Text(Strings.tabAcademy)),
-            NavigationRailDestination(icon: Icon(Icons.science), label: Text(Strings.tabLabs)),
-            NavigationRailDestination(icon: Icon(Icons.trending_up), label: Text(Strings.tabProgress)),
-            NavigationRailDestination(icon: Icon(Icons.person), label: Text(Strings.tabInstructor)),
+          useIndicator: true,
+          backgroundColor: cs.surface,
+          indicatorColor: cs.primaryContainer,
+          selectedIconTheme: IconThemeData(color: cs.onPrimaryContainer, size: 24),
+          unselectedIconTheme: IconThemeData(color: cs.onSurfaceVariant, size: 24),
+          selectedLabelTextStyle: TextStyle(
+            color: cs.onSurface,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+          unselectedLabelTextStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+          destinations: [
+            const NavigationRailDestination(
+              icon: Icon(Icons.school_outlined),
+              selectedIcon: Icon(Icons.school),
+              label: Text(Strings.tabAcademy),
+            ),
+            const NavigationRailDestination(
+              icon: Icon(Icons.science_outlined),
+              selectedIcon: Icon(Icons.science),
+              label: Text(Strings.tabLabs),
+            ),
+            const NavigationRailDestination(
+              icon: Icon(Icons.trending_up),
+              selectedIcon: Icon(Icons.trending_up),
+              label: Text(Strings.tabProgress),
+            ),
+            if (isInstructor)
+              const NavigationRailDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: Text(Strings.tabInstructor),
+              ),
           ],
           trailing: Expanded(
             child: Align(
@@ -519,11 +579,16 @@ class Shell extends ConsumerWidget {
         );
         return Scaffold(
           appBar: AppBar(
-            title: const Text(Strings.appTitle),
+            title: const Text(
+              Strings.appTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             actions: [
               const ThemeToggleButton(),
               if (!wide)
                 IconButton(
+                  key: const ValueKey('nav_logout_narrow'),
                   tooltip: 'Salir',
                   icon: const Icon(Icons.logout),
                   onPressed: logout,
@@ -536,13 +601,14 @@ class Shell extends ConsumerWidget {
           bottomNavigationBar: wide
               ? null
               : NavigationBar(
-                  selectedIndex: _index,
+                  selectedIndex: sel,
                   onDestinationSelected: go,
-                  destinations: const [
-                    NavigationDestination(icon: Icon(Icons.school), label: Strings.tabAcademy),
-                    NavigationDestination(icon: Icon(Icons.science), label: Strings.tabLabs),
-                    NavigationDestination(icon: Icon(Icons.trending_up), label: Strings.tabProgress),
-                    NavigationDestination(icon: Icon(Icons.person), label: Strings.tabInstructor),
+                  destinations: [
+                    const NavigationDestination(icon: Icon(Icons.school), label: Strings.tabAcademy),
+                    const NavigationDestination(icon: Icon(Icons.science), label: Strings.tabLabs),
+                    const NavigationDestination(icon: Icon(Icons.trending_up), label: Strings.tabProgress),
+                    if (isInstructor)
+                      const NavigationDestination(icon: Icon(Icons.person), label: Strings.tabInstructor),
                   ],
                 ),
         );
@@ -559,7 +625,7 @@ class AcademyPage extends StatefulWidget {
 
 String labStatusLabel(String? status) => switch (status) {
       'active' => 'En curso',
-      'posttest' => 'En postest',
+      'posttest' => 'Postest sin ayuda',
       'done' => 'Completado',
       _ => 'No iniciado',
     };
@@ -716,11 +782,11 @@ class _AcademyState extends State<AcademyPage> {
                 children: [
                   const Icon(Icons.school_outlined, size: 40),
                   const SizedBox(height: 12),
-                  Text('Sin laboratorios todavía',
+                  Text('Todavía sin laboratorios asignados',
                       style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text(
-                      'Vuelve más tarde o avisa a tu instructor si esperabas contenido aquí.',
+                      'Si tu instructor te asignó un lab y no lo ves, avísale con el nombre del módulo.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium),
                 ],
@@ -894,7 +960,7 @@ class _LabsState extends State<LabsPage> {
           return const Center(
             child: Padding(
               padding: EdgeInsets.all(24),
-              child: Text('Sin laboratorios todavía',
+              child: Text('Todavía sin laboratorios asignados',
                   textAlign: TextAlign.center),
             ),
           );
@@ -989,6 +1055,65 @@ class LabHeader extends StatelessWidget {
         LabSteps(current: step),
         const Divider(),
       ],
+    );
+  }
+}
+
+/// Segunda fila de la doble barra (diseño como en imagen): título de la
+/// vista bajo la AppBar global de marca. No es una AppBar Material más,
+/// sino el segundo nivel intencional: misma superficie, solo borde inferior,
+/// tipografía un paso menor que la marca y retroceso opcional.
+class DoubleTitleBar extends StatelessWidget implements PreferredSizeWidget {
+  final String title;
+  final String? backRoute;
+  final bool posttest;
+  const DoubleTitleBar(
+      {super.key, required this.title, this.backRoute, this.posttest = false});
+
+  @override
+  Size get preferredSize => const Size.fromHeight(52);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      height: preferredSize.height,
+      decoration: BoxDecoration(
+        color: cs.surface,
+        border: Border(bottom: BorderSide(color: cs.outlineVariant)),
+      ),
+      padding: EdgeInsets.only(left: backRoute != null ? 4 : 16, right: 16),
+      child: Row(
+        children: [
+          if (backRoute != null)
+            IconButton(
+              tooltip: 'Volver',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => context.go(backRoute!),
+            ),
+          Expanded(
+            child: Semantics(
+              header: true,
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+          if (posttest)
+            Chip(
+              avatar: const Icon(Icons.lock_outline, size: 14),
+              label: const Text('Postest', style: TextStyle(fontSize: 11)),
+              visualDensity: VisualDensity.compact,
+              side: BorderSide.none,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1202,7 +1327,7 @@ class _PosttestReflectionState extends State<PosttestReflection> {
             final desafio = s['desafio'];
             if (mejora == null && desafio == null) {
               return const Text(
-                  'Aún sin evidencias comparables; sigue practicando.',
+                  'Todavía sin evidencias para comparar; sigue practicando.',
                   style: TextStyle(fontSize: 13));
             }
             return Column(
@@ -1607,8 +1732,8 @@ class _DataLabState extends State<DataLabPage> {
     final cs = Theme.of(context).colorScheme;
     final experimentAccent = lab.posttestMode ? null : cs.secondary;
     return Scaffold(
-      appBar: AppBar(
-          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
+      appBar: DoubleTitleBar(
+          title: widget.title, backRoute: '/labs', posttest: lab.posttestMode),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -2103,8 +2228,8 @@ class _LabDetailState extends State<LabDetailPage> {
       ],
     );
     return Scaffold(
-      appBar: AppBar(
-          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
+      appBar: DoubleTitleBar(
+          title: widget.title, backRoute: '/labs', posttest: lab.posttestMode),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -2335,7 +2460,7 @@ class _ReviewState extends State<SessionReviewPage> {
         'rubric_scores': {for (final e in scores.entries) e.key: e.value.round()},
         'notes': notes,
       });
-      setState(() => status = 'Revisión guardada ✓');
+      setState(() => status = 'Revisión guardada');
     } catch (e) {
       setState(() => status = 'Error: $e');
     }
@@ -2344,7 +2469,8 @@ class _ReviewState extends State<SessionReviewPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Revisar intentos')),
+      appBar: const DoubleTitleBar(
+          title: 'Revisar intentos', backRoute: '/instructor'),
       body: FutureBuilder<List<Attempt>>(
         future: _future,
         builder: (c, s) {
@@ -2391,19 +2517,36 @@ class _ReviewState extends State<SessionReviewPage> {
               ),
             );
           }
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text('${attempts.length} intento(s) para revisar',
-                  style: Theme.of(c).textTheme.titleSmall),
-              for (final a in attempts)
-                AttemptReviewCard(
-                  key: ValueKey(a.id),
-                  answer: a.answer,
-                  onSave: (scores, notes) => _send(a.id, scores, notes),
-                ),
-              StatusText(status),
-            ],
+          final n = attempts.length;
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  SectionCard(
+                    icon: Icons.rate_review_outlined,
+                    accent: Theme.of(c).colorScheme.tertiary,
+                    title: n == 1 ? '1 intento por revisar' : '$n intentos por revisar',
+                    children: const [
+                      Text('Valora cada criterio de 0 a 4 y guarda la revisión.'),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  for (final a in attempts)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: AttemptReviewCard(
+                        key: ValueKey(a.id),
+                        answer: a.answer,
+                        onSave: (scores, notes) => _send(a.id, scores, notes),
+                      ),
+                    ),
+                  StatusText(status),
+                ],
+              ),
+            ),
           );
         },
       ),
@@ -2425,6 +2568,7 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
   late TextEditingController notes;
   bool _saving = false;
   bool _saved = false;
+  String? _error;
   @override
   void initState() {
     super.initState();
@@ -2443,10 +2587,13 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
     setState(() {
       _saving = true;
       _saved = false;
+      _error = null;
     });
     try {
       await widget.onSave(scores, notes.text);
       if (mounted) setState(() => _saved = true);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'No se pudo guardar: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -2454,40 +2601,66 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.answer, style: const TextStyle(fontSize: 13)),
-            for (final crit in reviewCriteria)
-              Row(
-                children: [
-                  SizedBox(
-                      width: 150,
-                      child: Text(criterionLabel(crit),
-                          style: const TextStyle(fontSize: 12))),
-                  Expanded(
-                    child: Slider(
-                      value: scores[crit]!, min: 0, max: 4, divisions: 4,
-                      label: '${scores[crit]!.round()}',
-                      onChanged: (v) => setState(() => scores[crit] = v),
-                    ),
-                  ),
-                  SizedBox(
-                      width: 28,
-                      child: Text('${scores[crit]!.round()}',
-                          textAlign: TextAlign.end,
-                          style: const TextStyle(fontSize: 12))),
-                ],
+            Text('Respuesta del estudiante', style: text.labelMedium),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
               ),
+              child: Text(widget.answer, style: text.bodyMedium),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            Text('Rúbrica (0–4 por criterio)', style: text.labelMedium),
+            const SizedBox(height: 8),
+            for (final crit in reviewCriteria)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                            child: Text(criterionLabel(crit),
+                                style: text.bodyMedium)),
+                        Chip(
+                          label: Text('${scores[crit]!.round()}',
+                              style: const TextStyle(fontSize: 12)),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: scores[crit]!, min: 0, max: 4, divisions: 4,
+                      label: '${criterionLabel(crit)}: ${scores[crit]!.round()} de 4',
+                      onChanged: (v) => setState(() {
+                        scores[crit] = v;
+                        _saved = false;
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
             TextField(
               controller: notes,
               maxLines: 2,
               decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -2501,10 +2674,17 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
                   const Icon(Icons.check_circle,
                       size: 18, color: CognitiveColors.success),
                   const SizedBox(width: 4),
-                  const Text('Guardada ✓', style: TextStyle(fontSize: 12)),
+                  Text('Guardada', style: text.bodySmall),
                 ],
               ],
             ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Semantics(
+                liveRegion: true,
+                child: Text(_error!, style: text.bodySmall?.copyWith(color: cs.error)),
+              ),
+            ],
           ],
         ),
       ),
@@ -2784,8 +2964,8 @@ class _MonitorState extends State<MonitorLabPage> {
       ],
     );
     return Scaffold(
-      appBar: AppBar(
-          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
+      appBar: DoubleTitleBar(
+          title: widget.title, backRoute: '/labs', posttest: lab.posttestMode),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -2960,7 +3140,7 @@ class _ProgressState extends State<ProgressPage> {
               children: [
                 CircularProgressIndicator(),
                 SizedBox(height: 12),
-                Text('Cargando progreso…'),
+                Text('Cargando tu avance y evidencias…'),
               ],
             ),
           );
@@ -2976,8 +3156,15 @@ class _ProgressState extends State<ProgressPage> {
                   const SizedBox(height: 12),
                   Semantics(
                     liveRegion: true,
-                    child: Text('${Strings.noApi}: ${s.error}',
+                    child: Text('No se pudo cargar el progreso. Revisa tu conexión y reintenta.',
                         textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 4),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('${Strings.noApi}: ${s.error}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12)),
                   ),
                   const SizedBox(height: 12),
                   FilledButton.tonal(
@@ -3005,11 +3192,11 @@ class _ProgressState extends State<ProgressPage> {
                 children: [
                   const Icon(Icons.school_outlined, size: 40),
                   const SizedBox(height: 12),
-                  Text('Sin laboratorios todavía',
+                  Text('Todavía sin laboratorios asignados',
                       style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text(
-                      'Vuelve más tarde o avisa a tu instructor si esperabas contenido aquí.',
+                      'Si tu instructor te asignó un lab y no lo ves, avísale con el nombre del módulo.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium),
                 ],
@@ -3021,7 +3208,7 @@ class _ProgressState extends State<ProgressPage> {
         final dark = Theme.of(context).brightness == Brightness.dark;
         final routeLabel =
             AppLocalizations.of(context)?.routeProgress(done, labs.length) ??
-                'Ruta: ${_int.format(done)} de ${_int.format(labs.length)} labs completados';
+                'Avance: ${_int.format(done)} de ${_int.format(labs.length)} labs terminados';
         Color statusColor(String? st) => switch (st) {
               'done' =>
                 dark ? CognitiveColors.successDark : CognitiveColors.success,
@@ -3067,11 +3254,11 @@ class _ProgressState extends State<ProgressPage> {
                         labStatusLabel(statusMap[l.id] as String?),
                         progressLine((prog[l.id]?['baseline']) as Map?,
                                 (prog[l.id]?['posttest']) as Map?) ??
-                            'Sin evidencias comparables',
+                            'Sin evidencias todavía',
                         if (prog[l.id]?['pending_review'] == true)
                           'Pendiente de revisión'
                         else if (prog[l.id]?['reviewed'] == true)
-                          'Revisado',
+                          'Revisado por instructor',
                       ].join(' · ')),
                   children: [
                     if ((prog[l.id]?['baseline'] as Map?)?.isNotEmpty == true ||
@@ -3090,7 +3277,7 @@ class _ProgressState extends State<ProgressPage> {
                                 label: Text(
                                     '${criterionLabel('$cid')}: '
                                     '${(prog[l.id]?['baseline'] as Map?)?[cid] ?? '—'}'
-                                    '→${(prog[l.id]?['posttest'] as Map?)?[cid] ?? '—'}',
+                                    ' → ${(prog[l.id]?['posttest'] as Map?)?[cid] ?? '—'}',
                                     style: const TextStyle(fontSize: 12)),
                                 visualDensity: VisualDensity.compact,
                               ),
@@ -3100,8 +3287,11 @@ class _ProgressState extends State<ProgressPage> {
                     ListTile(
                       dense: true,
                       trailing: const Icon(Icons.chevron_right),
-                      title: const Text('Abrir laboratorio',
-                          style: TextStyle(fontSize: 13)),
+                      title: Text(
+                          statusMap[l.id] == null
+                              ? 'Abrir laboratorio'
+                              : 'Continuar laboratorio',
+                          style: const TextStyle(fontSize: 13)),
                       onTap: () => context.go(
                         '/labs/${l.id}',
                         extra: {'lab_type': l.labType, 'title': l.title},
@@ -3126,21 +3316,55 @@ class InstructorPage extends StatefulWidget {
 }
 
 class _InstructorState extends State<InstructorPage> {
-  late final _future =
+  late Future<List<dynamic>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<dynamic>> _load() =>
       Future.wait([fetchStudents(), fetchLabs(), fetchJson('/instructor/matrix')]);
+
+  void _retry() => setState(() => _future = _load());
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<dynamic>>(
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Cargando estudiantes…'),
+              ],
+            ),
+          );
         }
         if (s.hasError) {
           return Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Text('${Strings.noApi}: ${s.error}'),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('${Strings.noApi}: ${s.error}',
+                        textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _retry,
+                    child: const Text('Reintentar'),
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -3196,7 +3420,7 @@ class _InstructorState extends State<InstructorPage> {
   }
 }
 
-// P4.4: matriz por alumno — baseline→postest por lab, sin promediar personas.
+// P4.4: matriz por alumno — inicial→postest por lab, sin promediar personas.
 // ponytail: resumen de una línea para el subtítulo sin expandir.
 String _studentSummary(Map<String, Map>? labs) {
   if (labs == null || labs.isEmpty) return 'Sin actividad todavía';
@@ -3205,8 +3429,11 @@ String _studentSummary(Map<String, Map>? labs) {
     for (final e in labs.values)
       if (progressLine(e['baseline'] as Map?, e['posttest'] as Map?) != null) e
   ].length;
-  final labsBit = '$withEvidence de ${labs.length} con evidencias';
-  return pending > 0 ? '$labsBit · $pending pendiente(s) de revisión' : labsBit;
+  final labsBit = '$withEvidence de ${labs.length} labs con inicial y postest';
+  if (pending <= 0) return labsBit;
+  final reviewBit =
+      pending == 1 ? '1 pendiente de revisión' : '$pending pendientes de revisión';
+  return '$labsBit · $reviewBit';
 }
 
 class _MatrixCard extends StatelessWidget {
@@ -3216,38 +3443,50 @@ class _MatrixCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final entries = labs.entries.toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final e in labs.entries)
+        for (var i = 0; i < entries.length; i++) ...[
+          if (i > 0) const Divider(height: 17, indent: 0, endIndent: 0),
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
+            padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                    child: Text(labTitles[e.key] ?? e.key,
+                    child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(labTitles[entries[i].key] ?? entries[i].key,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13))),
-                Text(
-                    progressLine(e.value['baseline'] as Map?,
-                            e.value['posttest'] as Map?) ??
-                        'Sin evidencias',
-                    style: const TextStyle(fontSize: 12)),
-                if (e.value['pending_review'] == true) ...[
-                  const SizedBox(width: 6),
-                  Icon(Icons.mark_email_unread_outlined,
-                      size: 16, color: cs.tertiary),
-                  const SizedBox(width: 4),
-                  Semantics(
-                    label: 'Pendiente de revisión',
-                    child: Text('Pendiente de revisión',
-                        style: TextStyle(fontSize: 12, color: cs.tertiary)),
+                        style: const TextStyle(fontSize: 13)),
+                    const SizedBox(height: 2),
+                    Text(
+                        progressLine(entries[i].value['baseline'] as Map?,
+                                entries[i].value['posttest'] as Map?) ??
+                            'Sin evidencias todavía',
+                        style: TextStyle(
+                            fontSize: 12, color: cs.onSurfaceVariant)),
+                  ],
+                )),
+                const SizedBox(width: 8),
+                if (entries[i].value['pending_review'] == true)
+                  Chip(
+                    backgroundColor: cs.tertiaryContainer,
+                    side: BorderSide.none,
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(Icons.mark_email_unread_outlined,
+                        size: 14, color: cs.onTertiaryContainer),
+                    label: Text('Pendiente de revisión',
+                        style: TextStyle(
+                            fontSize: 11, color: cs.onTertiaryContainer)),
                   ),
-                ],
               ],
             ),
           ),
+        ],
       ],
     );
   }
@@ -3300,26 +3539,62 @@ class _SessionsDialogState extends State<_SessionsDialog> {
         }
         final sessions = s2.data!;
         if (sessions.isEmpty) return const Text('Sin sesiones');
-        return ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final se in sessions)
-                ListTile(
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final se in sessions)
+              Builder(builder: (context) {
+                final cs = Theme.of(context).colorScheme;
+                final (icon, fg, bg) = switch (se.status) {
+                  'done' => (
+                      Icons.check_circle,
+                      cs.onSecondaryContainer,
+                      cs.secondaryContainer
+                    ),
+                  'posttest' => (
+                      Icons.lock_outline,
+                      cs.onTertiaryContainer,
+                      cs.tertiaryContainer
+                    ),
+                  'active' => (
+                      Icons.play_arrow,
+                      cs.onPrimaryContainer,
+                      cs.primaryContainer
+                    ),
+                  _ => (
+                      Icons.circle_outlined,
+                      cs.onSurfaceVariant,
+                      cs.surfaceContainerHighest
+                    ),
+                };
+                return ListTile(
                   dense: true,
-                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(icon, size: 17, color: fg),
+                  ),
                   title: Text(
-                      '${widget.labTitles[se.labTemplateId] ?? se.labTemplateId} · '
-                      '${labStatusLabel(se.status)}',
+                      widget.labTitles[se.labTemplateId] ?? se.labTemplateId,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13)),
+                  subtitle: Text(labStatusLabel(se.status),
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+                  trailing: Icon(Icons.chevron_right,
+                      size: 18, color: cs.onSurfaceVariant),
                   onTap: () {
                     context.go('/instructor/session/${se.id}');
                   },
-                ),
-            ],
-          ),
+                );
+              }),
+          ],
         );
       },
     );

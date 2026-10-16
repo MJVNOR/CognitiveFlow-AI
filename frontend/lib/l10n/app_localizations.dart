@@ -227,7 +227,7 @@ abstract class AppLocalizations {
   /// No description provided for @routeProgress.
   ///
   /// In es, this message translates to:
-  /// **'Ruta: {done} de {total} labs completados'**
+  /// **'Avance: {done} de {total} labs terminados'**
   String routeProgress(int done, int total);
 }
 

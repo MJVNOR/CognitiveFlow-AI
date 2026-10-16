@@ -5,13 +5,13 @@ import 'package:cognitiveflow/main.dart';
 import 'package:cognitiveflow/session/lab_session.dart';
 
 void main() {
-  test('progressLine resume base y delta', () {
+  test('progressLine resume inicial y delta', () {
     expect(progressLine(null, null), isNull);
-    expect(progressLine({'a': 2}, null), 'Base 2.0 (sin postest)');
-    expect(progressLine(null, {'a': 3}), 'Postest 3.0 (sin base)');
+    expect(progressLine({'a': 2}, null), 'Inicial 2.0/4 · Postest pendiente');
+    expect(progressLine(null, {'a': 3}), 'Inicial sin registrar · Postest 3.0/4');
     expect(progressLine({'a': 2, 'b': 2}, {'a': 4, 'b': 2}),
-        'Base 2.0 → Postest 3.0 (+1.0)');
-    expect(progressLine({'a': 4}, {'a': 1}), 'Base 4.0 → Postest 1.0 (-3.0)');
+        'Inicial 2.0/4 → Postest 3.0/4 (+1.0)');
+    expect(progressLine({'a': 4}, {'a': 1}), 'Inicial 4.0/4 → Postest 1.0/4 (-3.0)');
   });
 
   testWidgets('reflexión muestra mejora y desafío honestos', (tester) async {
@@ -43,7 +43,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.textContaining('Mejora observada'), findsNothing);
-    expect(find.textContaining('sin evidencias comparables'), findsOneWidget);
+    expect(find.textContaining('sin evidencias para comparar'), findsOneWidget);
   });
 
   testWidgets('feedback con texto muestra tarjeta Tu avance', (tester) async {

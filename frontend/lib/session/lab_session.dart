@@ -233,7 +233,7 @@ const criterionLabels = {
 
 String criterionLabel(String id) => criterionLabels[id] ?? id;
 
-// P4.2: línea base→postest desde mapas {criterio: score}; null si no comparable.
+// P4.2: línea inicial→postest desde mapas {criterio: score 0-4}; null si no comparable.
 String? progressLine(Map? base, Map? post) {
   double? avg(Map? m) {
     if (m == null || m.isEmpty) return null;
@@ -248,8 +248,8 @@ String? progressLine(Map? base, Map? post) {
   final p = avg(post);
   String f(double v) => v.toStringAsFixed(1);
   if (b == null && p == null) return null;
-  if (b == null) return 'Postest ${f(p!)} (sin base)';
-  if (p == null) return 'Base ${f(b)} (sin postest)';
+  if (b == null) return 'Inicial sin registrar · Postest ${f(p!)}/4';
+  if (p == null) return 'Inicial ${f(b)}/4 · Postest pendiente';
   final d = p - b;
-  return 'Base ${f(b)} → Postest ${f(p)} (${d >= 0 ? '+' : ''}${f(d)})';
+  return 'Inicial ${f(b)}/4 → Postest ${f(p)}/4 (${d >= 0 ? '+' : ''}${f(d)})';
 }
