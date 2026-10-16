@@ -44,4 +44,53 @@ void main() {
     expect(find.textContaining('Mejora observada'), findsNothing);
     expect(find.textContaining('sin evidencias comparables'), findsOneWidget);
   });
+
+  testWidgets('feedback con texto muestra tarjeta Tu avance', (tester) async {
+    final lab = LabSession()
+      ..evalResult = {
+        'evaluator': 'gemini',
+        'status': 'evaluated',
+        'criteria': [
+          {'id': 'exactitud', 'score': 4},
+        ],
+      }
+      ..socraticQ = '¿Qué curva?'
+      ..feedback = {
+        'fortaleza': 'exactitud',
+        'brecha': 'evidencia',
+        'texto': 'Vas bien en exactitud; cita las curvas.',
+        'provider': 'gemini',
+      };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Tu avance'), findsOneWidget);
+    expect(find.text('Vas bien en exactitud; cita las curvas.'), findsOneWidget);
+  });
+
+  testWidgets('feedback mock sin texto no duplica el resumen', (tester) async {
+    final lab = LabSession()
+      ..evalResult = {
+        'evaluator': 'mock',
+        'status': 'evaluated',
+        'criteria': [
+          {'id': 'exactitud', 'score': 2},
+        ],
+      }
+      ..feedback = {'fortaleza': 'exactitud', 'brecha': null, 'texto': null};
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Tu avance'), findsNothing);
+  });
 }

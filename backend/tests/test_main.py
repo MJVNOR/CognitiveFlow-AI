@@ -662,6 +662,75 @@ def test_jev_live_opt_in():
     assert r["status"] in ("evaluated", "pending")
 
 
+# PR-06: feedback compuesto (fortaleza → brecha, con o sin Gemini)
+def test_feedback_mock_structured():
+    import asyncio
+    from app.socratic import feedback_text
+
+    fb = asyncio.run(feedback_text("x", [{"id": "a", "score": 4}, {"id": "b", "score": 0}], "¿q?"))
+    assert fb == {"fortaleza": "a", "brecha": "b", "texto": None,
+                  "prompt_version": "feedback-v1", "provider": "mock"}
+    same = asyncio.run(feedback_text("x", [{"id": "a", "score": 2}], "¿q?"))
+    assert same["fortaleza"] == "a" and same["brecha"] is None
+    empty = asyncio.run(feedback_text("x", [], "¿q?"))
+    assert empty["fortaleza"] is None and empty["brecha"] is None
+
+
+def test_socratic_carries_feedback(monkeypatch):
+    import httpx
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    sid, aid = _attempt_with_text("no sé")
+    r = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).json()
+    assert r["feedback"]["provider"] == "mock" and r["feedback"]["texto"] is None
+    assert r["feedback"]["prompt_version"] == "feedback-v1"
+
+
+def test_feedback_gemini_text_and_failure(monkeypatch):
+    import httpx
+
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"output_text": "Vas bien en X; te falta Y."}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    sid, aid = _attempt_with_text("algo")
+    r = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1).json()
+    assert r["provider"] == "gemini" and r["feedback"]["provider"] == "gemini"
+    assert r["feedback"]["texto"] == "Vas bien en X; te falta Y."
+
+    # fallo de red → mock sin texto (el intento se conserva)
+    def boom(*a, **k):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(httpx, "AsyncClient", boom)
+    import asyncio
+    from app.socratic import feedback_text
+
+    fb = asyncio.run(feedback_text("x", [], "¿q?"))
+    assert fb["provider"] == "mock" and fb["texto"] is None
+
+
 # PR-05 P4: variante nueva, progreso baseline→postest, matriz, resumen honesto
 def _full_ml_session(text="Hay overfit porque la validación sube con complejidad 7; "
                            "los datos generalizan mal y propongo regularizar; reviso mi hipótesis"):

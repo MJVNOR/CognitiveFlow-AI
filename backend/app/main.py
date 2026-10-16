@@ -14,7 +14,7 @@ from app.labs_ml import ml_curve
 from app.evaluation import mock_evaluate, mock_evaluate_data, mock_evaluate_monitor, jev_evaluate
 from app.labs_data import generate as generate_dataset
 from app.labs_monitor import generate as generate_monitor
-from app.socratic import socratic_question
+from app.socratic import socratic_question, feedback_text
 from app.interventions import select_intervention, validate_ui_spec, safe_intervention, CATALOG
 from app.interventions import SCHEMA_VERSION, ALLOWED_EVENTS, ALLOWED_BY_WIDGET
 from app.auth import current_user, require_instructor, session_for, new_token
@@ -516,11 +516,17 @@ async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user)
         .first()
     )
     weak = []
+    crits = []
     if ev:
         for c in json.loads(ev.normalized_scores_json).get("criteria", []):
+            crits.append(c)
             if c.get("score", 0) <= 2:
                 weak.append(c["id"])
-    q = await socratic_question(attempt.answer_text, weak, _lab_type(db, session_id))
+    lab_type = _lab_type(db, session_id)
+    q = await socratic_question(attempt.answer_text, weak, lab_type)
+    # P2.4: el feedback remite a la pregunta → secuencial (2 llamadas solo con Gemini)
+    fb = await feedback_text(attempt.answer_text, crits, q["question"])
+    q["feedback"] = fb
     # P3.3: la pregunta queda en ui_events → historial por sesión sin tabla nueva
     db.add(models.UiEvent(id=uuid.uuid4().hex[:8], session_id=session_id,
                           widget_type="SocraticQuestionCard", event_type="hintRequested",

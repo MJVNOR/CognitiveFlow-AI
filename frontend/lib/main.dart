@@ -876,6 +876,8 @@ class LabSession {
   bool done = false;
   // P3.3: historial de preguntas del tutor por sesión (GET tutor-history).
   List<Map<String, dynamic>> tutorHistory = [];
+  // PR-06: feedback compuesto fortaleza→brecha (texto Gemini o null en mock).
+  Map<String, dynamic>? feedback;
 
   /// 0 explorar, 1 evaluar, 2 intervenir, 3 postest.
   int get step => (posttestMode || posttestSent || done)
@@ -917,6 +919,8 @@ class LabSession {
       final sq =
           await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
       socraticQ = (sq['question'] ?? '') as String;
+      final fb = sq['feedback'];
+      feedback = fb is Map ? Map<String, dynamic>.from(fb) : null;
     } catch (e) {
       evalError = 'Evaluado ✓, pero la pregunta no llegó: $e';
     }
@@ -970,6 +974,7 @@ class LabSession {
       final le = det['last_eval'];
       evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
       socraticQ = '';
+      feedback = null;
       intervention = null;
       await loadHistory();
       return true;
@@ -1015,6 +1020,7 @@ Future<void> enterPosttest(LabSession lab, void Function(void Function()) setSta
       lab.evalResult = null;
       lab.intervention = null;
       lab.socraticQ = '';
+      lab.feedback = null;
       onVariant?.call();
     });
     await reload();
@@ -1487,6 +1493,35 @@ class ResultPanel extends StatelessWidget {
             ),
           ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
         ],
+        // PR-06: feedback compuesto (solo con texto Gemini; en mock manda el resumen).
+        if ((lab.feedback?['texto'] as String?)?.isNotEmpty == true)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              border: Border.all(color: cs.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.feedback_outlined, size: 16, color: cs.primary),
+                    const SizedBox(width: 6),
+                    Text('Tu avance',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, color: cs.primary)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text('${lab.feedback!['texto']}',
+                    style: const TextStyle(fontSize: 13)),
+              ],
+            ),
+          ).animate().fadeIn(duration: 300.ms),
         if (lab.tutorHistory.isNotEmpty)
           ExpansionTile(
             key: const ValueKey('tutor_history'),
