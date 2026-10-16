@@ -703,7 +703,7 @@ Si el tiempo aprieta, mantener **un único ML Experiment Lab perfectamente funci
 - [x] F3 UI planner con catálogo cerrado (12 widgets) + `validate_ui_spec` y fallback seguro.
 - [x] F4 Catálogo Flutter GenUI (`genui 0.10.4` fijado en `pubspec.lock`, `lib/genui/catalog.dart` con los 12 items = espejo exacto de `CATALOG` + test de render de los 12 vía `TutorSurface`; eventos nativos A2UI pendientes).
 - [x] F5 Flujo evento→backend→evaluación→intervención→GenUI→evento (`TutorSurface`: ui_spec→A2UI v0.9→`SurfaceController`→`Surface`, verificado con test).
-- [ ] F6 Fallback cuando falla LLM/Jev o el UI spec no valida.
+- [x] F6 Fallback cuando falla LLM/Jev o el UI spec no valida (`safe_intervention` + `validate_ui_spec` con tests; frontend separa try de evaluate/socratic con Reintentar y nunca deja el panel vacío).
 
 ### Épica G — Dos laboratorios adicionales
 

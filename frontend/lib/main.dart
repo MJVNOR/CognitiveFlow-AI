@@ -546,7 +546,7 @@ class AcademyPage extends StatefulWidget {
   State<AcademyPage> createState() => _AcademyState();
 }
 
-String _labStatusLabel(String? status) => switch (status) {
+String labStatusLabel(String? status) => switch (status) {
       'active' => 'En curso',
       'posttest' => 'En postest',
       'done' => 'Completado',
@@ -582,7 +582,7 @@ class _AcademyState extends State<AcademyPage> {
                 },
                 size: 14,
               ),
-              label: Text(_labStatusLabel(st),
+              label: Text(labStatusLabel(st),
                   style: const TextStyle(fontSize: 11)),
               visualDensity: VisualDensity.compact,
             ),
@@ -633,7 +633,7 @@ class _AcademyState extends State<AcademyPage> {
                 icon: Icons.track_changes,
                 title: 'Tu objetivo actual',
                 trailing: Chip(
-                  label: Text(_labStatusLabel(statusMap[cur['id']] as String?),
+                  label: Text(labStatusLabel(statusMap[cur['id']] as String?),
                       style: const TextStyle(fontSize: 11)),
                   visualDensity: VisualDensity.compact,
                 ),
@@ -2313,10 +2313,68 @@ class AccessibleHistChart extends StatelessWidget {
   }
 }
 
-class ProgressPage extends StatelessWidget {  const ProgressPage({super.key});
+class ProgressPage extends StatefulWidget {
+  const ProgressPage({super.key});
+  @override
+  State<ProgressPage> createState() => _ProgressState();
+}
+
+class _ProgressState extends State<ProgressPage> {
+  // ponytail: mismo Future.wait que Academia; sin endpoint nuevo.
+  late final _future = Future.wait([fetchJson('/labs'), fetchMap('/me/lab-status')]);
+
   @override
   Widget build(BuildContext context) {
-    return const Center(child: Text('Progreso por evidencias (siguiente slice)'));
+    return FutureBuilder<List<dynamic>>(
+      future: _future,
+      builder: (c, s) {
+        if (s.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (s.hasError) {
+          return Center(
+            child: Semantics(
+              liveRegion: true,
+              child: Text('${Strings.noApi}: ${s.error}'),
+            ),
+          );
+        }
+        final labs = s.data![0] as List;
+        final statusMap = s.data![1] as Map;
+        final done =
+            [for (final l in labs) if (statusMap[l['id']] == 'done') l].length;
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text('Ruta: $done de ${labs.length} labs completados',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: labs.isEmpty ? 0 : done / labs.length),
+            const SizedBox(height: 16),
+            for (final l in labs)
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    switch (statusMap[l['id']]) {
+                      'done' => Icons.check_circle,
+                      'posttest' => Icons.lock_outline,
+                      'active' => Icons.play_arrow,
+                      _ => Icons.circle_outlined,
+                    },
+                  ),
+                  title: Text(l['title']),
+                  subtitle: Text(labStatusLabel(statusMap[l['id']] as String?)),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => router.go(
+                    '/labs/${l['id']}',
+                    extra: {'lab_type': l['lab_type'], 'title': l['title']},
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 
