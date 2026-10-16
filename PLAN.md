@@ -98,11 +98,15 @@ flowchart TD
 
 ### P4 — Postest, dominio y progreso
 
-- [ ] **P4.1** Crear postest con **problema equivalente pero nuevo**, cerrado a ayudas en backend y UI. Evitar reutilizar exactamente la misma gráfica/solución.
-- [ ] **P4.2** Registrar baseline/pretest y postest, separar **progreso de actividad** de **dominio demostrado**. El tiempo, clics y porcentaje de finalización no equivalen a habilidades.
-- [ ] **P4.3** Panel estudiante: por habilidad, evolución de intentos, correcciones justificadas, evidencias y próximos temas. Distinguir resultados de modelo de evaluación humana.
-- [ ] **P4.4** Panel instructor: matriz de cuatro alumnos × competencias, errores conceptuales recurrentes, revisión y corrección de evaluaciones, actividad asignada, exportación anónima; permisos de instructor verificados por API.
-- [ ] **P4.5** Resumen de fin de sesión constructivo con pico-fin auténtico: una mejora observada + un siguiente desafío, sin felicitación automática a respuestas incorrectas.
+- [x] **P4.1** Crear postest con **problema equivalente pero nuevo**, cerrado a ayudas en backend y UI. Evitar reutilizar exactamente la misma gráfica/solución. ✅ 2026-10-16 PR-05 (`bfa2adf`): variante determinista por sesión (`seed` 100-899, complejidad 6-9, ruido 15-35) fijada por el servidor; begin idempotente + submit único (403 al segundo); sliders ML bloqueados en postest; mismo flujo en los 3 labs.
+- [x] **P4.2** Registrar baseline/pretest y postest, separar **progreso de actividad** de **dominio demostrado**. El tiempo, clics y porcentaje de finalización no equivalen a habilidades. ✅ `GET /me/progress` (baseline primer intento vs postest, por criterio) + auto-evaluación del postest guardada sin mostrarse; `ProgressPage` muestra Base→Postest por habilidad.
+- [x] **P4.3** Panel estudiante: por habilidad, evolución de intentos, correcciones justificadas, evidencias y próximos temas. Distinguir resultados de modelo de evaluación humana. ✅ chips por criterio base→postest + `reviewed`/`pending_review` en progreso; próximos temas fuera de alcance (sin grafo curricular).
+- [x] **P4.4** Panel instructor: matriz de cuatro alumnos × competencias, errores conceptuales recurrentes, revisión y corrección de evaluaciones, actividad asignada, exportación anónima; permisos de instructor verificados por API. ✅ `GET /instructor/matrix` (403 estudiante) + `_MatrixCard` por alumno con deltas y aviso de revisión pendiente; export anónimo ya existía; `GET /instructor/agreement` mide acuerdo Jev-humano por criterio.
+- [x] **P4.5** Resumen de fin de sesión constructivo con pico-fin auténtico: una mejora observada + un siguiente desafío, sin felicitación automática a respuestas incorrectas. ✅ `reflection` devuelve `summary {mejora, desafio}` desde deltas reales (`mejora: null` si empeora); UI lo muestra con etiquetas humanas.
+- [x] **P1.6** Estados resilientes: loading, reconnect, widget desconocido, formato inválido, falta de conexión, reintento seguro, reanudación tras recargar. ✅ PR-05b (`56c45c1`): `GET /me/sessions` + `last_eval`/`variant` en detalle → `LabSession.resume()` reanuda sin re-evaluar (cero créditos) en los 3 labs; borradores ya persistían; errores de red muestran mensaje + reintento.
+- [x] **Raw Jev + audit trail**: `raw_answers` saneados en cada evaluación Jev; `intervention_log` append-only + `GET /sessions/{id}/interventions` (estrategia por intento).
+- [x] **Estrategia `simplify`**: primer intento débil simplifica antes de pedir evidencia (test de dos pasos).
+- [ ] **Calibración 0–4 con humanos**: instrumento listo (`/instructor/agreement`); la validación real exige datos del piloto P7.
 
 **Aceptación:** postest no permite pista mediante llamada directa HTTP; el instructor visualiza evidencias de antes/después y puede auditar cambios.
 
