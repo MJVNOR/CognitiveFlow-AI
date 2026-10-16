@@ -60,6 +60,13 @@ flutter analyze --no-pub; flutter test; flutter build web
   borradores en `SharedPreferences` (`draft:<labId>:<campo>`, se limpian al
   cerrar la reflexión). No meter labs/GenUI/fetch en providers sin motivo.
 
+## MCPs disponibles (usar sin pedir permiso)
+
+- `dart`: hot reload/restart tras cambios Dart/Flutter; `roots` para explorar paquetes.
+- `marionette`: controlar la app Flutter en debug (VM service URI + `connect`,
+  `get_interactive_elements`, `tap`/`enter_text`/`scroll`, screenshots, `get_logs`).
+- `obscura`: abrir links y verificar en browser real (navegar, recargar, screenshots).
+
 ## Smoke servers
 
 - Puertos efímeros (8001+) con `Start-Job`; matar con `Remove-Job` + buscar el
