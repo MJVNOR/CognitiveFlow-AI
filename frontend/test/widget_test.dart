@@ -1,26 +1,33 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cognitiveflow/main.dart';
+import 'package:cognitiveflow/state/app_state.dart';
+
+Future<void> _pump(WidgetTester tester, AuthState? auth) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        authProvider.overrideWith(() => AuthNotifier(auth)),
+      ],
+      child: const CognitiveFlowApp(),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
 
 void main() {
-  testWidgets('login y luego tabs con go_router', (tester) async {
-    apiToken = null;
-    apiRole = null;
-    authRefresh.value++;
-    router.go('/login');
-    await tester.pumpWidget(const CognitiveFlowApp());
-    await tester.pumpAndSettle();
+  testWidgets('sin auth muestra login', (tester) async {
+    await _pump(tester, null);
     expect(find.text('Entrar'), findsOneWidget);
+  });
 
-    apiToken = 'test-token';
-    apiRole = 'student';
-    authRefresh.value++;
-    router.go('/academy');
-    await tester.pumpWidget(const CognitiveFlowApp());
-    await tester.pumpAndSettle();
+  testWidgets('con auth muestra tabs', (tester) async {
+    await _pump(
+      tester,
+      const AuthState(token: 'test-token', userId: 's1', role: 'student'),
+    );
     expect(find.text('Academia'), findsOneWidget);
     expect(find.text('Instructor'), findsOneWidget);
-    apiToken = null;
-    apiRole = null;
   });
 }

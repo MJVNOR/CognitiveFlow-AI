@@ -1,0 +1,31 @@
+{
+  "@@locale": "en",
+  "appTitle": "CognitiveFlow AI",
+  "loginHint": "Demo login (s1-s4 student, i1 instructor)",
+  "loginUserId": "user_id",
+  "loginEnter": "Sign in",
+  "tabAcademy": "Academy",
+  "tabLabs": "Lab",
+  "tabProgress": "Progress",
+  "tabInstructor": "Instructor",
+  "noApi": "No API connection",
+  "sendAttempt": "Submit attempt",
+  "deliverPosttest": "Submit posttest",
+  "retry": "Retry",
+  "goPosttest": "Go to posttest (new table, no help)",
+  "goPosttestNoAI": "Go to posttest (no AI help)",
+  "chartDataTable": "View data as table",
+  "scrollHint": "Swipe → to see all columns",
+  "legendTrain": "Training (solid line)",
+  "legendVal": "Validation (dashed line)",
+  "legendRef": "Reference (left bar)",
+  "legendCur": "Current (right bar)",
+  "simulated": "Synthetic curves (simulation)",
+  "@routeProgress": {
+    "placeholders": {
+      "done": { "type": "int" },
+      "total": { "type": "int" }
+    }
+  },
+  "routeProgress": "Path: {done} of {total} labs completed"
+}

@@ -1,7 +1,9 @@
 // Catálogo GenUI cerrado (genui 0.10.4, ver pubspec.lock).
 // Espejo exacto del backend (app/interventions.py CATALOG).
 // ponytail: sin eventos GenUI nativos aún; el loop usa nuestros eventos REST (verificado E2E).
+import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:genui/genui.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
 
@@ -35,8 +37,10 @@ Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
                   child: BoundString(
                     dataContext: ctx.dataContext,
                     value: data[titleKey],
-                    builder: (c, v) =>
-                        Text(v ?? '', style: Theme.of(c).textTheme.titleSmall),
+                    builder: (c, v) => AutoSizeText(v ?? '',
+                        maxLines: 1,
+                        minFontSize: 12,
+                        style: Theme.of(c).textTheme.titleSmall),
                   ),
                 ),
               ],
@@ -44,13 +48,14 @@ Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
             BoundString(
               dataContext: ctx.dataContext,
               value: data[bodyKey],
-              builder: (c, v) => Text(v ?? ''),
+              builder: (c, v) => AutoSizeText(v ?? '',
+                  maxLines: 3, minFontSize: 11, overflow: TextOverflow.ellipsis),
             ),
           ],
         ),
       ),
     );
-  });
+  }).animate().fadeIn(duration: 250.ms);
 }
 
 final socraticQuestionCard = CatalogItem(

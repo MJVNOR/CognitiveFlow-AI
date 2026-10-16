@@ -57,5 +57,7 @@ void main() {
       ),
     );
     expect(find.text('¿Qué observas?'), findsOneWidget);
+    // flutter_animate deja un timer (fadeIn 250ms); drenarlo o el test falla.
+    await tester.pump(const Duration(milliseconds: 300));
   });
 }

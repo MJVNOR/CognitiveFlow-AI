@@ -1,13 +1,25 @@
 import 'dart:convert';
+import 'package:auto_size_text/auto_size_text.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:marionette_flutter/marionette_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'genui/tutor_surface.dart';
+import 'l10n/app_localizations.dart';
+import 'models/models.dart';
+import 'state/app_state.dart';
+
+// Formato numérico/cadenas vía intl + ARB (l10n/app_*.arb); Strings queda
+// como fallback ES hasta migrar cada pantalla a AppLocalizations.of.
+final _num2 = NumberFormat('0.00', 'es');
+final _int = NumberFormat.decimalPattern('es');
 
 const apiBase = String.fromEnvironment(
   'API_BASE_URL',
@@ -39,33 +51,6 @@ abstract final class Strings {
   static const simulated = 'Curvas sintéticas (simulación)';
 }
 
-String? apiToken;
-String? apiRole; // student|instructor (lo dice /auth/login y /auth/me)
-String? apiUserId;
-
-/// Tema claro/oscuro (DESIGN.md §3: no invertir mecánicamente).
-/// Persistido en SharedPreferences ('themeMode': light|dark|system).
-final themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
-
-Future<void> _restoreTheme() async {
-  final prefs = await SharedPreferences.getInstance();
-  themeModeNotifier.value = switch (prefs.getString('themeMode')) {
-    'light' => ThemeMode.light,
-    'dark' => ThemeMode.dark,
-    _ => ThemeMode.system,
-  };
-}
-
-Future<void> toggleTheme() async {
-  final next = themeModeNotifier.value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-  themeModeNotifier.value = next;
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('themeMode', next == ThemeMode.dark ? 'dark' : 'light');
-}
-
-/// Notifica a GoRouter cuando cambia el estado de auth (login/logout).
-final authRefresh = ValueNotifier<int>(0);
-
 Map<String, String> _headers([bool json = false]) => {
       if (apiToken != null) 'Authorization': 'Bearer $apiToken',
       if (json) 'Content-Type': 'application/json',
@@ -88,61 +73,41 @@ class StatusText extends StatelessWidget {
   }
 }
 
-Future<void> _persistAuth(String token, String userId, String role) async {
-  apiToken = token;
-  apiUserId = userId;
-  apiRole = role;
-  authRefresh.value++;
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('apiToken', token);
-  await prefs.setString('apiUserId', userId);
-  await prefs.setString('apiRole', role);
-}
-
-Future<void> _restoreAuth() async {
-  final prefs = await SharedPreferences.getInstance();
-  apiToken = prefs.getString('apiToken');
-  apiUserId = prefs.getString('apiUserId');
-  apiRole = prefs.getString('apiRole');
-}
-
-Future<void> _clearAuth() async {
-  apiToken = null;
-  apiUserId = null;
-  apiRole = null;
-  authRefresh.value++;
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.remove('apiToken');
-  await prefs.remove('apiUserId');
-  await prefs.remove('apiRole');
-}
-
 Future<void> main() async {
   if (kDebugMode) {
     MarionetteBinding.ensureInitialized();
   } else {
     WidgetsFlutterBinding.ensureInitialized();
   }
-  await _restoreAuth();
-  await _restoreTheme();
-  runApp(const CognitiveFlowApp());
+  final initial = await loadInitialState();
+  runApp(
+    ProviderScope(
+      overrides: [
+        authProvider.overrideWith(() => AuthNotifier(initial.auth)),
+        themeModeProvider.overrideWith(() => ThemeNotifier(initial.theme)),
+      ],
+      child: const CognitiveFlowApp(),
+    ),
+  );
 }
 
-final router = GoRouter(
-  initialLocation: '/academy',
-  refreshListenable: authRefresh,
-  redirect: (context, state) {
-    final logged = apiToken != null;
-    final loggingIn = state.matchedLocation == '/login';
-    if (!logged && !loggingIn) return '/login';
-    if (logged && loggingIn) return '/academy';
-    // Guardia de rol: instructor/* solo para instructor.
-    if (state.matchedLocation.startsWith('/instructor') && apiRole == 'student') {
-      return '/academy';
-    }
-    return null;
-  },
-  routes: [
+/// Router recreado al cambiar auth (sin refreshListenable: el watch basta).
+final routerProvider = Provider<GoRouter>((ref) {
+  final auth = ref.watch(authProvider);
+  return GoRouter(
+    initialLocation: '/academy',
+    redirect: (context, state) {
+      final loggingIn = state.matchedLocation == '/login';
+      if (auth == null && !loggingIn) return '/login';
+      if (auth != null && loggingIn) return '/academy';
+      // Guardia de rol: instructor/* solo para instructor.
+      if (state.matchedLocation.startsWith('/instructor') &&
+          (auth?.isStudent ?? false)) {
+        return '/academy';
+      }
+      return null;
+    },
+    routes: [
     GoRoute(path: '/login', builder: (c, s) => const SelectionArea(child: LoginPage())),
     ShellRoute(
       builder: (c, s, child) => SelectionArea(child: Shell(location: s.matchedLocation, child: child)),
@@ -170,8 +135,9 @@ final router = GoRouter(
         ),
       ],
     ),
-  ],
-);
+    ],
+  );
+});
 
 abstract final class CognitiveColors {
   static const blue = Color(0xFF2457C5);
@@ -331,40 +297,42 @@ ThemeData buildCognitiveDarkTheme() {
   );
 }
 
-class ThemeToggleButton extends StatelessWidget {
+class ThemeToggleButton extends ConsumerWidget {
   const ThemeToggleButton({super.key});
   @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeModeNotifier,
-      builder: (c, mode, _) {
-        final dark = mode == ThemeMode.dark ||
-            (mode == ThemeMode.system &&
-                MediaQuery.platformBrightnessOf(c) == Brightness.dark);
-        return IconButton(
-          key: const ValueKey('theme_toggle'),
-          tooltip: dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro',
-          icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
-          onPressed: toggleTheme,
-        );
-      },
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(themeModeProvider);
+    final dark = mode == ThemeMode.dark ||
+        (mode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+    return IconButton(
+      key: const ValueKey('theme_toggle'),
+      tooltip: dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro',
+      icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
+      onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
     );
   }
 }
 
-class CognitiveFlowApp extends StatelessWidget {
+class CognitiveFlowApp extends ConsumerWidget {
   const CognitiveFlowApp({super.key});
   @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeModeNotifier,
-      builder: (c, mode, _) => MaterialApp.router(
-        title: Strings.appTitle,
-        theme: buildCognitiveLightTheme(),
-        darkTheme: buildCognitiveDarkTheme(),
-        themeMode: mode,
-        routerConfig: router,
-      ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    return MaterialApp.router(
+      debugShowCheckedModeBanner: false,
+      title: Strings.appTitle,
+      theme: buildCognitiveLightTheme(),
+      darkTheme: buildCognitiveDarkTheme(),
+      themeMode: ref.watch(themeModeProvider),
+      routerConfig: ref.watch(routerProvider),
+      locale: const Locale('es'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
     );
   }
 }
@@ -373,13 +341,13 @@ class CognitiveFlowApp extends StatelessWidget {
 // rutas (bajo el Overlay del Navigator); en MaterialApp.builder revienta
 // (No Overlay widget found) porque corre por encima del Navigator.
 
-class LoginPage extends StatefulWidget {
+class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
   @override
-  State<LoginPage> createState() => _LoginState();
+  ConsumerState<LoginPage> createState() => _LoginState();
 }
 
-class _LoginState extends State<LoginPage> {
+class _LoginState extends ConsumerState<LoginPage> {
   final userId = TextEditingController(text: 's1');
   String status = '';
 
@@ -392,12 +360,12 @@ class _LoginState extends State<LoginPage> {
       );
       if (r.statusCode != 200) throw Exception('${r.statusCode} usuario desconocido');
       final body = jsonDecode(r.body) as Map;
-      await _persistAuth(
-        body['token'] as String,
-        (body['user_id'] ?? userId.text.trim()) as String,
-        (body['role'] ?? 'student') as String,
-      );
-      if (mounted) router.go('/academy');
+      await ref.read(authProvider.notifier).login(
+            body['token'] as String,
+            (body['user_id'] ?? userId.text.trim()) as String,
+            (body['role'] ?? 'student') as String,
+          );
+      if (mounted) context.go('/academy');
     } catch (e) {
       setState(() => status = 'Error: $e');
     }
@@ -430,7 +398,7 @@ class _LoginState extends State<LoginPage> {
 
 const _shellTabs = ['/academy', '/labs', '/progress', '/instructor'];
 
-class Shell extends StatelessWidget {
+class Shell extends ConsumerWidget {
   final String location;
   final Widget child;
   const Shell({super.key, required this.location, required this.child});
@@ -443,11 +411,16 @@ class Shell extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    Future<void> logout() async {
+      await ref.read(authProvider.notifier).logout();
+      if (context.mounted) context.go('/login');
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        void go(int i) => router.go(_shellTabs[i]);
+        void go(int i) => context.go(_shellTabs[i]);
         final rail = NavigationRail(
           selectedIndex: _index,
           onDestinationSelected: go,
@@ -466,10 +439,7 @@ class Shell extends StatelessWidget {
                 child: IconButton(
                   tooltip: 'Salir',
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    await _clearAuth();
-                    router.go('/login');
-                  },
+                  onPressed: logout,
                 ),
               ),
             ),
@@ -484,10 +454,7 @@ class Shell extends StatelessWidget {
                 IconButton(
                   tooltip: 'Salir',
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    await _clearAuth();
-                    router.go('/login');
-                  },
+                  onPressed: logout,
                 ),
             ],
           ),
@@ -534,6 +501,15 @@ Future<Map<String, dynamic>> postJson(String path, Map<String, dynamic> body) as
   return jsonDecode(r.body) as Map<String, dynamic>;
 }
 
+Future<List<Module>> fetchModules() async => parseModules(await fetchJson('/modules'));
+Future<List<Lab>> fetchLabs() async => parseLabs(await fetchJson('/labs'));
+Future<List<Student>> fetchStudents() async =>
+    parseStudents(await fetchJson('/instructor/students'));
+Future<List<SessionInfo>> fetchSessions(String studentId) async =>
+    parseSessions(await fetchJson('/instructor/students/$studentId/sessions'));
+Future<List<Attempt>> fetchAttempts(String sessionId) async =>
+    parseAttempts(await fetchJson('/sessions/$sessionId/attempts'));
+
 class AcademyPage extends StatefulWidget {
   const AcademyPage({super.key});
   @override
@@ -550,19 +526,20 @@ String labStatusLabel(String? status) => switch (status) {
 class _AcademyState extends State<AcademyPage> {
   // ponytail: un solo Future.wait; tres GET en paralelo, un solo spinner.
   late final _future =
-      Future.wait([fetchJson('/modules'), fetchJson('/labs'), fetchMap('/me/lab-status')]);
+      Future.wait([fetchModules(), fetchLabs(), fetchMap('/me/lab-status')]);
 
-  void _goLab(Map l) => router.go(
-        '/labs/${l['id']}',
-        extra: {'lab_type': l['lab_type'], 'title': l['title']},
+  void _goLab(BuildContext context, Lab l) => context.go(
+        '/labs/${l.id}',
+        extra: {'lab_type': l.labType, 'title': l.title},
       );
 
-  Widget _labCard(Map l, Map statusMap) {
-    final st = statusMap[l['id']] as String?;
+  Widget _labCard(BuildContext context, Lab l, Map statusMap) {
+    final st = statusMap[l.id] as String?;
     return Card(
       child: ListTile(
-        title: Text(l['title']),
-        subtitle: Text('${l['description'] ?? ''}'),
+        title: AutoSizeText(l.title, maxLines: 1, minFontSize: 12),
+        subtitle: AutoSizeText(l.description,
+            maxLines: 2, minFontSize: 11, overflow: TextOverflow.ellipsis),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -583,7 +560,7 @@ class _AcademyState extends State<AcademyPage> {
             const Icon(Icons.chevron_right),
           ],
         ),
-        onTap: () => _goLab(l),
+        onTap: () => _goLab(context, l),
       ),
     );
   }
@@ -604,20 +581,20 @@ class _AcademyState extends State<AcademyPage> {
             ),
           );
         }
-        final modules = s.data![0] as List;
-        final labs = s.data![1] as List;
+        final modules = s.data![0] as List<Module>;
+        final labs = s.data![1] as List<Lab>;
         final statusMap = s.data![2] as Map;
-        final orphans = [for (final l in labs) if ((l['module_id'] ?? '') == '') l];
+        final orphans = [for (final l in labs) if (l.moduleId == '') l];
         // Objetivo actual: lo en curso primero, si no lo siguiente sin iniciar.
-        Map? current;
+        Lab? current;
         for (final l in labs) {
-          if (statusMap[l['id']] == 'active' || statusMap[l['id']] == 'posttest') {
-            current = l as Map;
+          if (statusMap[l.id] == 'active' || statusMap[l.id] == 'posttest') {
+            current = l;
             break;
           }
         }
-        current ??= [for (final l in labs) if ((statusMap[l['id']] as String?) == null) l]
-            .firstOrNull as Map?;
+        current ??= [for (final l in labs) if ((statusMap[l.id] as String?) == null) l]
+            .firstOrNull;
         final cur = current;
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -627,22 +604,27 @@ class _AcademyState extends State<AcademyPage> {
                 icon: Icons.track_changes,
                 title: 'Tu objetivo actual',
                 trailing: Chip(
-                  label: Text(labStatusLabel(statusMap[cur['id']] as String?),
+                  label: Text(labStatusLabel(statusMap[cur.id] as String?),
                       style: const TextStyle(fontSize: 11)),
                   visualDensity: VisualDensity.compact,
                 ),
                 children: [
-                  Text('${cur['title']}',
+                  AutoSizeText(cur.title,
+                      maxLines: 1,
+                      minFontSize: 13,
                       style: Theme.of(context).textTheme.titleSmall),
-                  if ('${cur['description'] ?? ''}'.isNotEmpty)
-                    Text('${cur['description']}'),
+                  if (cur.description.isNotEmpty)
+                    AutoSizeText(cur.description,
+                        maxLines: 2,
+                        minFontSize: 11,
+                        overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 8),
                   FilledButton(
-                    onPressed: () => _goLab(cur),
+                    onPressed: () => _goLab(context, cur),
                     child: const Text('Continuar'),
                   ),
                 ],
-              ),
+              ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
               const SizedBox(height: 12),
             ],
             for (final m in modules) ...[
@@ -650,11 +632,11 @@ class _AcademyState extends State<AcademyPage> {
                 padding: const EdgeInsets.only(top: 8, bottom: 4),
                 child: Semantics(
                     header: true,
-                    child: Text('${m['title']}',
+                    child: Text(m.title,
                         style: Theme.of(context).textTheme.titleMedium)),
               ),
               for (final l in labs)
-                if (l['module_id'] == m['id']) _labCard(l, statusMap),
+                if (l.moduleId == m.id) _labCard(context, l, statusMap),
             ],
             if (orphans.isNotEmpty) ...[
               Padding(
@@ -664,7 +646,7 @@ class _AcademyState extends State<AcademyPage> {
                     child: Text('Otros',
                         style: Theme.of(context).textTheme.titleMedium)),
               ),
-              for (final l in orphans) _labCard(l, statusMap),
+              for (final l in orphans) _labCard(context, l, statusMap),
             ],
           ],
         );
@@ -680,10 +662,10 @@ class LabsPage extends StatefulWidget {
 }
 
 class _LabsState extends State<LabsPage> {
-  late final _future = fetchJson('/labs');
+  late final _future = fetchLabs();
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
+    return FutureBuilder<List<Lab>>(
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
@@ -702,12 +684,13 @@ class _LabsState extends State<LabsPage> {
           children: [
             for (final l in labs)
               ListTile(
-                title: Text(l['title']),
-                subtitle: Text(l['lab_type']),
+                title: AutoSizeText(l.title,
+                    maxLines: 1, minFontSize: 12),
+                subtitle: Text(l.labType),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => router.go(
-                  '/labs/${l['id']}',
-                  extra: {'lab_type': l['lab_type'], 'title': l['title']},
+                onTap: () => context.go(
+                  '/labs/${l.id}',
+                  extra: {'lab_type': l.labType, 'title': l.title},
                 ),
               ),
           ],
@@ -889,7 +872,9 @@ class SectionCard extends StatelessWidget {
                 Icon(icon, size: 18, color: ac),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(title,
+                  child: AutoSizeText(title,
+                      maxLines: 1,
+                      minFontSize: 12,
                       style: Theme.of(context)
                           .textTheme
                           .titleSmall
@@ -970,25 +955,26 @@ class NextLabButton extends StatefulWidget {
 }
 
 class _NextLabButtonState extends State<NextLabButton> {
-  late final _future = fetchJson('/labs');
+  late final _future = fetchLabs();
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
+    return FutureBuilder<List<Lab>>(
       future: _future,
       builder: (c, s) {
         if (!s.hasData) return const SizedBox.shrink();
         final labs = s.data!;
-        final i = labs.indexWhere((l) => l['id'] == widget.labId);
+        final i = labs.indexWhere((l) => l.id == widget.labId);
         if (i < 0 || i + 1 >= labs.length) {
           return const Text('Último lab de la ruta ✓');
         }
         final n = labs[i + 1];
         return FilledButton.tonal(
-          onPressed: () => router.go(
-            '/labs/${n['id']}',
-            extra: {'lab_type': n['lab_type'], 'title': n['title']},
+          onPressed: () => context.go(
+            '/labs/${n.id}',
+            extra: {'lab_type': n.labType, 'title': n.title},
           ),
-          child: Text('Siguiente lab: ${n['title']}'),
+          child: AutoSizeText('Siguiente lab: ${n.title}',
+              maxLines: 1, minFontSize: 12),
         );
       },
     );
@@ -1086,7 +1072,7 @@ class ResultPanel extends StatelessWidget {
               SizedBox(width: 8),
               Text('Evaluando…'),
             ],
-          ),
+          ).animate().fadeIn(duration: 200.ms).shimmer(duration: 1200.ms),
         if (lab.evalError != null) ...[
           Semantics(
             liveRegion: true,
@@ -1120,7 +1106,7 @@ class ResultPanel extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                 ),
             ],
-          ),
+          ).animate().fadeIn(duration: 250.ms),
           const SizedBox(height: 4),
           const Text(
             'Evidencia orientativa, revisable por tu instructor.',
@@ -1157,7 +1143,7 @@ class ResultPanel extends StatelessWidget {
                     style: const TextStyle(fontStyle: FontStyle.italic)),
               ],
             ),
-          ),
+          ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
           FilledButton.tonal(
             onPressed: lab.nextBusy ? null : onNext,
             style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
@@ -1187,7 +1173,7 @@ class ResultPanel extends StatelessWidget {
                 Text('Trayendo actividad…'),
               ],
             ),
-          ),
+          ).animate().fadeIn(duration: 200.ms).shimmer(duration: 1200.ms),
         if (lab.nextError != null) ...[
           Semantics(
             liveRegion: true,
@@ -1225,6 +1211,8 @@ class _DataLabState extends State<DataLabPage> {
   @override
   void initState() {
     super.initState();
+    justification.addListener(
+        () => saveDraft(widget.labId, 'justification', justification.text));
     _init();
   }
 
@@ -1235,6 +1223,17 @@ class _DataLabState extends State<DataLabPage> {
       return;
     }
     await _loadTable();
+    // Borrador previo (si salió del lab sin entregar).
+    final f = await loadDraft(widget.labId, 'flagged');
+    final j = await loadDraft(widget.labId, 'justification');
+    if (!mounted) return;
+    setState(() {
+      if (f != null && f.isNotEmpty) {
+        flagged.addAll(
+            [for (final p in f.split(',')) int.tryParse(p)].whereType<int>());
+      }
+      if (j != null) justification.text = j;
+    });
   }
 
   Future<void> _loadTable() async {
@@ -1351,11 +1350,15 @@ class _DataLabState extends State<DataLabPage> {
                       for (final r in rows)
                         DataRow(
                           selected: flagged.contains(r['id']),
-                          onSelectChanged: (_) => setState(() {
-                            flagged.contains(r['id'])
-                                ? flagged.remove(r['id'])
-                                : flagged.add(r['id'] as int);
-                          }),
+                          onSelectChanged: (_) {
+                            setState(() {
+                              flagged.contains(r['id'])
+                                  ? flagged.remove(r['id'])
+                                  : flagged.add(r['id'] as int);
+                            });
+                            saveDraft(widget.labId, 'flagged',
+                                flagged.map((e) => '$e').join(','));
+                          },
                           cells: [for (final c in columns) DataCell(Text('${r['$c'] ?? '—'}'))],
                         ),
                     ],
@@ -1392,7 +1395,14 @@ class _DataLabState extends State<DataLabPage> {
             ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
           if (lab.posttestMode && lab.posttestSent)
             PosttestReflection(
-                lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+                lab: lab,
+                labId: widget.labId,
+                onUpdate: () {
+                  if (lab.done) {
+                    clearDrafts(widget.labId, const ['flagged', 'justification']);
+                  }
+                  setState(() {});
+                }),
           StatusText(lab.status),
             ],
           ),
@@ -1422,6 +1432,7 @@ class _LabDetailState extends State<LabDetailPage> {
   @override
   void initState() {
     super.initState();
+    hypo.addListener(() => saveDraft(widget.labId, 'hypo', hypo.text));
     _init();
   }
 
@@ -1432,6 +1443,16 @@ class _LabDetailState extends State<LabDetailPage> {
       return;
     }
     await _loadCurve();
+    final cx = await loadDraft(widget.labId, 'complexity');
+    final nz = await loadDraft(widget.labId, 'noise');
+    final h = await loadDraft(widget.labId, 'hypo');
+    if (!mounted) return;
+    setState(() {
+      if (cx != null) complexity = double.tryParse(cx) ?? complexity;
+      if (nz != null) noise = double.tryParse(nz) ?? noise;
+      if (h != null) hypo.text = h;
+    });
+    if (cx != null || nz != null) await _loadCurve();
   }
 
   Future<void> _loadCurve() async {
@@ -1565,7 +1586,12 @@ class _LabDetailState extends State<LabDetailPage> {
             max: 10,
             divisions: 9,
             onChanged: sent ? null : (v) => setState(() => complexity = v),
-            onChangeEnd: sent ? null : (_) => _loadCurve(),
+            onChangeEnd: sent
+                ? null
+                : (_) {
+                    _loadCurve();
+                    saveDraft(widget.labId, 'complexity', '$complexity');
+                  },
           ),
           ParamSlider(
             label: 'Ruido en los datos',
@@ -1576,7 +1602,12 @@ class _LabDetailState extends State<LabDetailPage> {
             max: 50,
             divisions: 10,
             onChanged: sent ? null : (v) => setState(() => noise = v),
-            onChangeEnd: sent ? null : (_) => _loadCurve(),
+            onChangeEnd: sent
+                ? null
+                : (_) {
+                    _loadCurve();
+                    saveDraft(widget.labId, 'noise', '$noise');
+                  },
           ),
         ],
       ),
@@ -1655,7 +1686,14 @@ class _LabDetailState extends State<LabDetailPage> {
           ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
         if (lab.posttestMode && sent)
           PosttestReflection(
-              lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+              lab: lab,
+              labId: widget.labId,
+              onUpdate: () {
+                if (lab.done) {
+                  clearDrafts(widget.labId, const ['complexity', 'noise', 'hypo']);
+                }
+                setState(() {});
+              }),
         StatusText(lab.status),
       ],
     );
@@ -1787,8 +1825,8 @@ class AccessibleCurveChart extends StatelessWidget {
     if (ys.isEmpty) return 'sin datos';
     final min = ys.reduce((a, b) => a < b ? a : b);
     final max = ys.reduce((a, b) => a > b ? a : b);
-    return '${ys.length} puntos, mín ${min.toStringAsFixed(2)}, máx ${max.toStringAsFixed(2)}, '
-        'último ${ys.last.toStringAsFixed(2)}';
+    return '${ys.length} puntos, mín ${_num2.format(min)}, máx ${_num2.format(max)}, '
+        'último ${_num2.format(ys.last)}';
   }
 
   @override
@@ -1877,7 +1915,7 @@ class SessionReviewPage extends StatefulWidget {
 
 class _ReviewState extends State<SessionReviewPage> {
   String status = '';
-  late final _future = fetchJson('/sessions/${widget.sessionId}/attempts');
+  late final _future = fetchAttempts(widget.sessionId);
 
   Future<void> _send(String attemptId, Map<String, double> scores, String notes) async {
     try {
@@ -1895,7 +1933,7 @@ class _ReviewState extends State<SessionReviewPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Revisar intentos')),
-      body: FutureBuilder<List<dynamic>>(
+      body: FutureBuilder<List<Attempt>>(
         future: _future,
         builder: (c, s) {
           if (s.connectionState == ConnectionState.waiting) {
@@ -1912,9 +1950,9 @@ class _ReviewState extends State<SessionReviewPage> {
             children: [
               for (final a in attempts)
                 AttemptReviewCard(
-                  key: ValueKey(a['id']),
-                  answer: '${a['answer']}',
-                  onSave: (scores, notes) => _send(a['id'], scores, notes),
+                  key: ValueKey(a.id),
+                  answer: a.answer,
+                  onSave: (scores, notes) => _send(a.id, scores, notes),
                 ),
               StatusText(status),
             ],
@@ -2012,6 +2050,7 @@ class _MonitorState extends State<MonitorLabPage> {
   @override
   void initState() {
     super.initState();
+    answer.addListener(() => saveDraft(widget.labId, 'answer', answer.text));
     _init();
   }
 
@@ -2022,6 +2061,15 @@ class _MonitorState extends State<MonitorLabPage> {
       return;
     }
     await _load();
+    final ft = await loadDraft(widget.labId, 'feature');
+    final cp = await loadDraft(widget.labId, 'changepoint');
+    final an = await loadDraft(widget.labId, 'answer');
+    if (!mounted) return;
+    setState(() {
+      if (ft != null && ft.isNotEmpty) feature = ft;
+      if (cp != null) changepoint = double.tryParse(cp) ?? changepoint;
+      if (an != null) answer.text = an;
+    });
   }
 
   Future<void> _load() async {
@@ -2113,7 +2161,10 @@ class _MonitorState extends State<MonitorLabPage> {
             if (feats.isEmpty)
               DropdownMenuItem(value: feature, child: Text(feature)),
           ],
-          onChanged: (v) => setState(() => feature = v ?? feature),
+          onChanged: (v) {
+            setState(() => feature = v ?? feature);
+            saveDraft(widget.labId, 'feature', feature);
+          },
         ),
       ),
       AccessibleHistChart(ref: ref, cur: cur, label: 'Distribución $feature'),
@@ -2123,7 +2174,10 @@ class _MonitorState extends State<MonitorLabPage> {
       Slider(
         value: changepoint, min: 0, max: 179, divisions: 179,
         label: 'Cambio en t=${changepoint.round()}',
-        onChanged: (v) => setState(() => changepoint = v),
+        onChanged: (v) {
+          setState(() => changepoint = v);
+          saveDraft(widget.labId, 'changepoint', '$changepoint');
+        },
       ),
       TextField(
         controller: answer, maxLines: 3,
@@ -2158,7 +2212,14 @@ class _MonitorState extends State<MonitorLabPage> {
           ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
         if (lab.posttestMode && lab.posttestSent)
           PosttestReflection(
-              lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+              lab: lab,
+              labId: widget.labId,
+              onUpdate: () {
+                if (lab.done) {
+                  clearDrafts(widget.labId, const ['feature', 'changepoint', 'answer']);
+                }
+                setState(() {});
+              }),
         StatusText(lab.status),
       ],
     );
@@ -2315,7 +2376,7 @@ class ProgressPage extends StatefulWidget {
 
 class _ProgressState extends State<ProgressPage> {
   // ponytail: mismo Future.wait que Academia; sin endpoint nuevo.
-  late final _future = Future.wait([fetchJson('/labs'), fetchMap('/me/lab-status')]);
+  late final _future = Future.wait([fetchLabs(), fetchMap('/me/lab-status')]);
 
   @override
   Widget build(BuildContext context) {
@@ -2333,14 +2394,19 @@ class _ProgressState extends State<ProgressPage> {
             ),
           );
         }
-        final labs = s.data![0] as List;
+        final labs = s.data![0] as List<Lab>;
         final statusMap = s.data![1] as Map;
         final done =
-            [for (final l in labs) if (statusMap[l['id']] == 'done') l].length;
+            [for (final l in labs) if (statusMap[l.id] == 'done') l].length;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Ruta: $done de ${labs.length} labs completados',
+            Text(
+                AppLocalizations.of(context)?.routeProgress(
+                      done,
+                      labs.length,
+                    ) ??
+                    'Ruta: ${_int.format(done)} de ${_int.format(labs.length)} labs completados',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             LinearProgressIndicator(value: labs.isEmpty ? 0 : done / labs.length),
@@ -2349,19 +2415,20 @@ class _ProgressState extends State<ProgressPage> {
               Card(
                 child: ListTile(
                   leading: Icon(
-                    switch (statusMap[l['id']]) {
+                    switch (statusMap[l.id]) {
                       'done' => Icons.check_circle,
                       'posttest' => Icons.lock_outline,
                       'active' => Icons.play_arrow,
                       _ => Icons.circle_outlined,
                     },
                   ),
-                  title: Text(l['title']),
-                  subtitle: Text(labStatusLabel(statusMap[l['id']] as String?)),
+                  title: AutoSizeText(l.title,
+                      maxLines: 1, minFontSize: 12),
+                  subtitle: Text(labStatusLabel(statusMap[l.id] as String?)),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => router.go(
-                    '/labs/${l['id']}',
-                    extra: {'lab_type': l['lab_type'], 'title': l['title']},
+                  onTap: () => context.go(
+                    '/labs/${l.id}',
+                    extra: {'lab_type': l.labType, 'title': l.title},
                   ),
                 ),
               ),
@@ -2379,10 +2446,10 @@ class InstructorPage extends StatefulWidget {
 }
 
 class _InstructorState extends State<InstructorPage> {
-  late final _future = fetchJson('/instructor/students');
+  late final _future = fetchStudents();
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
+    return FutureBuilder<List<Student>>(
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
@@ -2412,11 +2479,12 @@ class _InstructorState extends State<InstructorPage> {
               Card(
                 child: ExpansionTile(
                   leading: const Icon(Icons.person_outline),
-                  title: Text(st['display_name']),
+                  title: AutoSizeText(st.displayName,
+                      maxLines: 1, minFontSize: 12),
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: _SessionsDialog(studentId: '${st['id']}'),
+                      child: _SessionsDialog(studentId: st.id),
                     ),
                   ],
                 ),
@@ -2437,10 +2505,10 @@ class _SessionsDialog extends StatefulWidget {
 }
 
 class _SessionsDialogState extends State<_SessionsDialog> {
-  late final _future = fetchJson('/instructor/students/${widget.studentId}/sessions');
+  late final _future = fetchSessions(widget.studentId);
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
+    return FutureBuilder<List<SessionInfo>>(
       future: _future,
       builder: (c2, s2) {
         if (!s2.hasData) return const LinearProgressIndicator();
@@ -2454,10 +2522,10 @@ class _SessionsDialogState extends State<_SessionsDialog> {
               for (final se in sessions)
                 ListTile(
                   dense: true,
-                  title: Text('${se['lab_template_id']} · ${se['status']}'),
+                  title: Text('${se.labTemplateId} · ${se.status}'),
                   onTap: () {
                     Navigator.pop(context);
-                    router.go('/instructor/session/${se['id']}');
+                    context.go('/instructor/session/${se.id}');
                   },
                 ),
             ],

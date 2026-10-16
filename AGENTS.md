@@ -54,6 +54,11 @@ flutter analyze --no-pub; flutter test; flutter build web
 - `genui 0.10.4` fijado en `pubspec.lock`; builders usan `BoundString` +
   `CatalogItemContext`; `Surface` se obtiene con `controller.contextFor(id)`.
 - Backend sin `CORSMiddleware` ⇒ el login web falla (preflight `OPTIONS` 404).
+- **Estado global con Riverpod (`flutter_riverpod`):** `lib/state/app_state.dart`
+  (`authProvider`, `themeModeProvider`; `routerProvider` en `main.dart` se
+  recrea al cambiar auth). Lo local de labs/charts/forms sigue en `setState`;
+  borradores en `SharedPreferences` (`draft:<labId>:<campo>`, se limpian al
+  cerrar la reflexión). No meter labs/GenUI/fetch en providers sin motivo.
 
 ## Smoke servers
 
