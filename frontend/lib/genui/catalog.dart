@@ -1,32 +1,56 @@
 // Catálogo GenUI cerrado (genui 0.10.4, ver pubspec.lock).
-// Subconjunto activo del backend (app/interventions.py CATALOG).
+// Espejo exacto del backend (app/interventions.py CATALOG).
 // ponytail: sin eventos GenUI nativos aún; el loop usa nuestros eventos REST (verificado E2E).
 import 'package:flutter/material.dart';
 import 'package:genui/genui.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
 
-Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey) {
+Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
+    {IconData? icon, Color Function(ColorScheme cs)? accent}) {
   final data = ctx.data as Map;
-  return Card(
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          BoundString(
-            dataContext: ctx.dataContext,
-            value: data[titleKey],
-            builder: (c, v) => Text(v ?? '', style: Theme.of(c).textTheme.titleSmall),
-          ),
-          BoundString(
-            dataContext: ctx.dataContext,
-            value: data[bodyKey],
-            builder: (c, v) => Text(v ?? ''),
-          ),
-        ],
+  // ponytail: Builder para Theme real (ctx.buildContext es mock en tests).
+  return Builder(builder: (context) {
+    final cs = Theme.of(context).colorScheme;
+    final ac = accent?.call(cs);
+    return Card(
+      shape: ac == null
+          ? null
+          : RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: ac),
+            ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: ac),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: BoundString(
+                    dataContext: ctx.dataContext,
+                    value: data[titleKey],
+                    builder: (c, v) =>
+                        Text(v ?? '', style: Theme.of(c).textTheme.titleSmall),
+                  ),
+                ),
+              ],
+            ),
+            BoundString(
+              dataContext: ctx.dataContext,
+              value: data[bodyKey],
+              builder: (c, v) => Text(v ?? ''),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  });
 }
 
 final socraticQuestionCard = CatalogItem(
@@ -42,7 +66,8 @@ final socraticQuestionCard = CatalogItem(
     () => '[{"id": "root", "component": "SocraticQuestionCard", '
         '"title": "Pregunta", "question": "¿Qué observas?"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'question'),
+  widgetBuilder: (ctx) => _card(ctx, 'title', 'question',
+      icon: Icons.help_outline, accent: (cs) => cs.tertiary),
 );
 
 final evidenceComparison = CatalogItem(
@@ -58,7 +83,8 @@ final evidenceComparison = CatalogItem(
     () => '[{"id": "root", "component": "EvidenceComparison", '
         '"title": "Compara", "evidence": "curva de validación"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'evidence'),
+  widgetBuilder: (ctx) => _card(ctx, 'title', 'evidence',
+      icon: Icons.compare_arrows, accent: (cs) => cs.tertiary),
 );
 
 final hypothesisEditor = CatalogItem(
@@ -90,7 +116,8 @@ final driftDistributionExplorer = CatalogItem(
     () => '[{"id": "root", "component": "DriftDistributionExplorer", '
         '"title": "Deriva", "hint": "Compara referencia vs actual"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'hint'),
+  widgetBuilder: (ctx) => _card(ctx, 'title', 'hint',
+      icon: Icons.science, accent: (cs) => cs.secondary),
 );
 
 final dataTableExplorer = CatalogItem(
@@ -106,16 +133,64 @@ final dataTableExplorer = CatalogItem(
     () => '[{"id": "root", "component": "DataTableExplorer", '
         '"title": "Explora", "hint": "Busca anomalías"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'hint'),
+  widgetBuilder: (ctx) => _card(ctx, 'title', 'hint',
+      icon: Icons.table_chart, accent: (cs) => cs.secondary),
 );
 
-/// Nombres que el backend puede pedir (subconjunto de CATALOG).
+// ponytail: los 7 restantes del CATALOG comparten forma título+pregunta;
+// un solo helper en vez de 7 clases casi idénticas.
+// ponytail: LearningCurveSimulator es experiment (teal); resto neutral.
+CatalogItem _simpleCard(String name, String titleEx, String bodyEx,
+    {bool experiment = false}) {
+  return CatalogItem(
+    name: name,
+    dataSchema: S.object(
+      properties: {
+        'title': S.string(description: 'Título de la tarjeta'),
+        'question': S.string(description: 'Consigna o pregunta'),
+      },
+      required: ['question'],
+    ),
+    exampleData: [
+      () => '[{"id": "root", "component": "$name", '
+          '"title": "$titleEx", "question": "$bodyEx"}]',
+    ],
+    widgetBuilder: (ctx) => _card(ctx, 'title', 'question',
+        icon: experiment ? Icons.science : null,
+        accent: experiment ? (cs) => cs.secondary : null),
+  );
+}
+
+final choiceReasoningWidget =
+    _simpleCard('ChoiceReasoningWidget', 'Elige y razona', '¿Qué opción y por qué?');
+final sqlQueryWorkbench =
+    _simpleCard('SqlQueryWorkbench', 'Consulta', '¿Qué consulta responde esto?');
+final learningCurveSimulator = _simpleCard(
+    'LearningCurveSimulator', 'Simula', '¿Qué pasa si subes la complejidad?',
+    experiment: true);
+final conceptMapBuilder =
+    _simpleCard('ConceptMapBuilder', 'Mapa', '¿Cómo se conectan estos conceptos?');
+final pipelineDAGBuilder =
+    _simpleCard('PipelineDAGBuilder', 'Pipeline', '¿En qué orden van las etapas?');
+final rubricFeedbackCard =
+    _simpleCard('RubricFeedbackCard', 'Rúbrica', '¿En qué criterio estás más débil?');
+final reflectionSummary =
+    _simpleCard('ReflectionSummary', 'Reflexión', '¿Qué aprendiste?');
+
+/// Nombres que el backend puede pedir (= CATALOG en app/interventions.py).
 const cognitiveFlowWidgets = {
   'SocraticQuestionCard',
   'EvidenceComparison',
   'HypothesisEditor',
   'DataTableExplorer',
   'DriftDistributionExplorer',
+  'ChoiceReasoningWidget',
+  'SqlQueryWorkbench',
+  'LearningCurveSimulator',
+  'ConceptMapBuilder',
+  'PipelineDAGBuilder',
+  'RubricFeedbackCard',
+  'ReflectionSummary',
 };
 
 final cognitiveFlowCatalog = [
@@ -124,4 +199,11 @@ final cognitiveFlowCatalog = [
   hypothesisEditor,
   dataTableExplorer,
   driftDistributionExplorer,
+  choiceReasoningWidget,
+  sqlQueryWorkbench,
+  learningCurveSimulator,
+  conceptMapBuilder,
+  pipelineDAGBuilder,
+  rubricFeedbackCard,
+  reflectionSummary,
 ];

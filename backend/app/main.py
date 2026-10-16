@@ -32,7 +32,8 @@ app = FastAPI(title="CognitiveFlow AI", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o for o in os.getenv("CORS_ORIGINS", "http://localhost:8080").split(",") if o],
+    allow_origins=[o for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",") if o],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -72,8 +73,19 @@ def list_modules(db: Session = Depends(get_db)):
 
 @app.get("/labs")
 def list_labs(db: Session = Depends(get_db)):
-    rows = db.query(models.LabTemplate).all()
-    return [{"id": l.id, "title": l.title, "lab_type": l.lab_type} for l in rows]
+    rows = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
+    return [{"id": l.id, "title": l.title, "lab_type": l.lab_type,
+             "description": l.description or "", "order_index": l.order_index,
+             "module_id": l.module_id or ""} for l in rows]
+
+
+@app.get("/me/lab-status")
+def my_lab_status(user=Depends(current_user), db: Session = Depends(get_db)):
+    # Última sesión por lab (orden de inserción); sin sesiones → {}.
+    status = {}
+    for s in db.query(models.LearningSession).filter_by(student_id=user.id).all():
+        status[s.lab_template_id] = s.status
+    return status
 
 
 @app.get("/instructor/students")

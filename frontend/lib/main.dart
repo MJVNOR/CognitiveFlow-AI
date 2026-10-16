@@ -27,6 +27,7 @@ abstract final class Strings {
   static const noApi = 'Sin conexión API';
   static const sendAttempt = 'Enviar intento';
   static const deliverPosttest = 'Entregar postest';
+  static const retry = 'Reintentar';
   static const goPosttest = 'Ir al postest (tabla nueva, sin ayuda)';
   static const goPosttestNoAI = 'Ir al postest (sin ayuda de IA)';
   static const chartDataTable = 'Ver datos como tabla';
@@ -41,6 +42,26 @@ abstract final class Strings {
 String? apiToken;
 String? apiRole; // student|instructor (lo dice /auth/login y /auth/me)
 String? apiUserId;
+
+/// Tema claro/oscuro (DESIGN.md §3: no invertir mecánicamente).
+/// Persistido en SharedPreferences ('themeMode': light|dark|system).
+final themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
+
+Future<void> _restoreTheme() async {
+  final prefs = await SharedPreferences.getInstance();
+  themeModeNotifier.value = switch (prefs.getString('themeMode')) {
+    'light' => ThemeMode.light,
+    'dark' => ThemeMode.dark,
+    _ => ThemeMode.system,
+  };
+}
+
+Future<void> toggleTheme() async {
+  final next = themeModeNotifier.value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+  themeModeNotifier.value = next;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('themeMode', next == ThemeMode.dark ? 'dark' : 'light');
+}
 
 /// Notifica a GoRouter cuando cambia el estado de auth (login/logout).
 final authRefresh = ValueNotifier<int>(0);
@@ -103,6 +124,7 @@ Future<void> main() async {
     WidgetsFlutterBinding.ensureInitialized();
   }
   await _restoreAuth();
+  await _restoreTheme();
   runApp(const CognitiveFlowApp());
 }
 
@@ -140,13 +162,6 @@ final router = GoRouter(
             };
           },
         ),
-        GoRoute(
-          path: '/labs/:labId/posttest/:sid',
-          builder: (c, s) => PosttestPage(
-            labId: s.pathParameters['labId']!,
-            sessionId: s.pathParameters['sid']!,
-          ),
-        ),
         GoRoute(path: '/progress', builder: (c, s) => const ProgressPage()),
         GoRoute(path: '/instructor', builder: (c, s) => const InstructorPage()),
         GoRoute(
@@ -158,21 +173,198 @@ final router = GoRouter(
   ],
 );
 
+abstract final class CognitiveColors {
+  static const blue = Color(0xFF2457C5);
+  static const teal = Color(0xFF0F766E);
+  static const amber = Color(0xFFA65B00);
+  static const background = Color(0xFFF8FAFC);
+  static const surface = Color(0xFFFFFFFF);
+  static const surfaceMuted = Color(0xFFF1F5F9);
+  static const ink = Color(0xFF0F172A);
+  static const inkSecondary = Color(0xFF475569);
+  static const border = Color(0xFFCBD5E1);
+  static const blueSoft = Color(0xFFE8EEFF);
+  static const tealSoft = Color(0xFFE4F4F0);
+  static const amberSoft = Color(0xFFFFF3D6);
+  static const error = Color(0xFFB42318);
+  static const errorSoft = Color(0xFFFEECEB);
+  static const success = Color(0xFF166534);
+  static const successSoft = Color(0xFFDCFCE7);
+  static const focus = Color(0xFF2457C5);
+
+  // Dark: variantes claras de marca sobre superficies oscuras (WCAG AA).
+  // Blanco sobre blue/teal/amber originales pasa en botones, pero como
+  // texto/gráfica sobre fondo oscuro no llega a 3:1 → se aclaran.
+  static const backgroundDark = Color(0xFF0F172A);
+  static const surfaceDark = Color(0xFF1E293B);
+  static const surfaceMutedDark = Color(0xFF273549);
+  static const inkDark = Color(0xFFF1F5F9);
+  static const inkSecondaryDark = Color(0xFFCBD5E1);
+  static const borderDark = Color(0xFF334155);
+  static const blueDark = Color(0xFF8AA8FF); // 6.36:1 sobre surfaceDark
+  static const tealDark = Color(0xFF2DD4BF); // 7.86:1 sobre surfaceDark
+  static const amberDark = Color(0xFFFBBF24); // 8.76:1 sobre surfaceDark
+  static const blueSoftDark = Color(0xFF1E2F5E);
+  static const tealSoftDark = Color(0xFF0B3532);
+  static const amberSoftDark = Color(0xFF451A03);
+  static const errorDark = Color(0xFFFFB4AB);
+  static const errorSoftDark = Color(0xFF5A1510);
+  static const successDark = Color(0xFF86EFAC);
+  static const successSoftDark = Color(0xFF052E16);
+}
+
+ThemeData buildCognitiveLightTheme() {
+  const scheme = ColorScheme.light(
+    primary: CognitiveColors.blue,
+    onPrimary: Colors.white,
+    primaryContainer: CognitiveColors.blueSoft,
+    onPrimaryContainer: CognitiveColors.blue,
+    secondary: CognitiveColors.teal,
+    onSecondary: Colors.white,
+    secondaryContainer: CognitiveColors.tealSoft,
+    onSecondaryContainer: CognitiveColors.teal,
+    tertiary: CognitiveColors.amber,
+    onTertiary: Colors.white,
+    tertiaryContainer: CognitiveColors.amberSoft,
+    onTertiaryContainer: CognitiveColors.amber,
+    surface: CognitiveColors.surface,
+    onSurface: CognitiveColors.ink,
+    surfaceContainerHighest: CognitiveColors.surfaceMuted,
+    onSurfaceVariant: CognitiveColors.inkSecondary,
+    outlineVariant: CognitiveColors.border,
+    error: CognitiveColors.error,
+    onError: Colors.white,
+    errorContainer: CognitiveColors.errorSoft,
+    onErrorContainer: CognitiveColors.error,
+  );
+  return ThemeData(
+    colorScheme: scheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: CognitiveColors.background,
+    appBarTheme: const AppBarTheme(
+      backgroundColor: CognitiveColors.surface,
+      foregroundColor: CognitiveColors.ink,
+    ),
+    cardTheme: CardThemeData(
+      color: CognitiveColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: CognitiveColors.border),
+      ),
+    ),
+    inputDecorationTheme: const InputDecorationTheme(
+      border: OutlineInputBorder(),
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: CognitiveColors.focus, width: 2),
+      ),
+    ),
+    sliderTheme: const SliderThemeData(
+      activeTrackColor: CognitiveColors.teal,
+      thumbColor: CognitiveColors.teal,
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: CognitiveColors.surfaceMuted,
+      labelStyle: const TextStyle(color: CognitiveColors.ink),
+      side: const BorderSide(color: CognitiveColors.border),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ),
+    dividerColor: CognitiveColors.border,
+  );
+}
+
+ThemeData buildCognitiveDarkTheme() {
+  const scheme = ColorScheme.dark(
+    primary: CognitiveColors.blueDark,
+    onPrimary: CognitiveColors.backgroundDark,
+    primaryContainer: CognitiveColors.blueSoftDark,
+    onPrimaryContainer: CognitiveColors.blueDark,
+    secondary: CognitiveColors.tealDark,
+    onSecondary: CognitiveColors.backgroundDark,
+    secondaryContainer: CognitiveColors.tealSoftDark,
+    onSecondaryContainer: CognitiveColors.tealDark,
+    tertiary: CognitiveColors.amberDark,
+    onTertiary: CognitiveColors.backgroundDark,
+    tertiaryContainer: CognitiveColors.amberSoftDark,
+    onTertiaryContainer: CognitiveColors.amberDark,
+    surface: CognitiveColors.surfaceDark,
+    onSurface: CognitiveColors.inkDark,
+    surfaceContainerHighest: CognitiveColors.surfaceMutedDark,
+    onSurfaceVariant: CognitiveColors.inkSecondaryDark,
+    outlineVariant: CognitiveColors.borderDark,
+    error: CognitiveColors.errorDark,
+    onError: CognitiveColors.backgroundDark,
+    errorContainer: CognitiveColors.errorSoftDark,
+    onErrorContainer: CognitiveColors.errorDark,
+  );
+  return ThemeData(
+    colorScheme: scheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: CognitiveColors.backgroundDark,
+    appBarTheme: const AppBarTheme(
+      backgroundColor: CognitiveColors.surfaceDark,
+      foregroundColor: CognitiveColors.inkDark,
+    ),
+    cardTheme: CardThemeData(
+      color: CognitiveColors.surfaceDark,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: CognitiveColors.borderDark),
+      ),
+    ),
+    inputDecorationTheme: const InputDecorationTheme(
+      border: OutlineInputBorder(),
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: CognitiveColors.blueDark, width: 2),
+      ),
+    ),
+    sliderTheme: const SliderThemeData(
+      activeTrackColor: CognitiveColors.tealDark,
+      thumbColor: CognitiveColors.tealDark,
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: CognitiveColors.surfaceMutedDark,
+      labelStyle: const TextStyle(color: CognitiveColors.inkDark),
+      side: const BorderSide(color: CognitiveColors.borderDark),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ),
+    dividerColor: CognitiveColors.borderDark,
+  );
+}
+
+class ThemeToggleButton extends StatelessWidget {
+  const ThemeToggleButton({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (c, mode, _) {
+        final dark = mode == ThemeMode.dark ||
+            (mode == ThemeMode.system &&
+                MediaQuery.platformBrightnessOf(c) == Brightness.dark);
+        return IconButton(
+          key: const ValueKey('theme_toggle'),
+          tooltip: dark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro',
+          icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
+          onPressed: toggleTheme,
+        );
+      },
+    );
+  }
+}
+
 class CognitiveFlowApp extends StatelessWidget {
   const CognitiveFlowApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: Strings.appTitle,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (c, mode, _) => MaterialApp.router(
+        title: Strings.appTitle,
+        theme: buildCognitiveLightTheme(),
+        darkTheme: buildCognitiveDarkTheme(),
+        themeMode: mode,
+        routerConfig: router,
       ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo, brightness: Brightness.dark),
-        useMaterial3: true,
-      ),
-      routerConfig: router,
     );
   }
 }
@@ -271,13 +463,19 @@ class Shell extends StatelessWidget {
               alignment: Alignment.bottomCenter,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: IconButton(
-                  tooltip: 'Salir',
-                  icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    await _clearAuth();
-                    router.go('/login');
-                  },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const ThemeToggleButton(),
+                    IconButton(
+                      tooltip: 'Salir',
+                      icon: const Icon(Icons.logout),
+                      onPressed: () async {
+                        await _clearAuth();
+                        router.go('/login');
+                      },
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -287,6 +485,7 @@ class Shell extends StatelessWidget {
           appBar: AppBar(
             title: const Text(Strings.appTitle),
             actions: [
+              const ThemeToggleButton(),
               if (!wide)
                 IconButton(
                   tooltip: 'Salir',
@@ -347,9 +546,44 @@ class AcademyPage extends StatefulWidget {
   State<AcademyPage> createState() => _AcademyState();
 }
 
+String _labStatusLabel(String? status) => switch (status) {
+      'active' => 'En curso',
+      'posttest' => 'En postest',
+      'done' => 'Completado',
+      _ => 'No iniciado',
+    };
+
 class _AcademyState extends State<AcademyPage> {
-  // ponytail: hoisted from build; recreating future per build refired GET on every setState.
-  late final _future = fetchJson('/modules');
+  // ponytail: un solo Future.wait; tres GET en paralelo, un solo spinner.
+  late final _future =
+      Future.wait([fetchJson('/modules'), fetchJson('/labs'), fetchMap('/me/lab-status')]);
+
+  void _goLab(Map l) => router.go(
+        '/labs/${l['id']}',
+        extra: {'lab_type': l['lab_type'], 'title': l['title']},
+      );
+
+  Widget _labCard(Map l, Map statusMap) {
+    return Card(
+      child: ListTile(
+        title: Text(l['title']),
+        subtitle: Text('${l['description'] ?? ''}'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Chip(
+              label: Text(_labStatusLabel(statusMap[l['id']] as String?),
+                  style: const TextStyle(fontSize: 11)),
+              visualDensity: VisualDensity.compact,
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+        onTap: () => _goLab(l),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<dynamic>>(
@@ -366,9 +600,35 @@ class _AcademyState extends State<AcademyPage> {
             ),
           );
         }
-        final modules = s.data!;
+        final modules = s.data![0] as List;
+        final labs = s.data![1] as List;
+        final statusMap = s.data![2] as Map;
+        final orphans = [for (final l in labs) if ((l['module_id'] ?? '') == '') l];
         return ListView(
-          children: [for (final m in modules) ListTile(title: Text(m['title']))],
+          padding: const EdgeInsets.all(16),
+          children: [
+            for (final m in modules) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: Semantics(
+                    header: true,
+                    child: Text('${m['title']}',
+                        style: Theme.of(context).textTheme.titleMedium)),
+              ),
+              for (final l in labs)
+                if (l['module_id'] == m['id']) _labCard(l, statusMap),
+            ],
+            if (orphans.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: Semantics(
+                    header: true,
+                    child: Text('Otros',
+                        style: Theme.of(context).textTheme.titleMedium)),
+              ),
+              for (final l in orphans) _labCard(l, statusMap),
+            ],
+          ],
         );
       },
     );
@@ -419,38 +679,352 @@ class _LabsState extends State<LabsPage> {
   }
 }
 
-/// Panel compartido: evaluación + socrática + siguiente intervención GenUI.
-class ResultPanel extends StatelessWidget {
-  final Map<String, dynamic>? evalResult;
-  final String socraticQ;
-  final Map? intervention;
-  final VoidCallback onNext;
-  const ResultPanel({
-    super.key,
-    required this.evalResult,
-    required this.socraticQ,
-    required this.intervention,
-    required this.onNext,
-  });
+/// Ciclo compartido de un lab: sesión → intento → evaluar → intervenir → postest.
+/// La página envuelve cada llamada en setState (esta clase no notifica sola).
+class LabSession {
+  String? sessionId;
+  String? attemptId;
+  Map<String, dynamic>? evalResult;
+  String socraticQ = '';
+  Map? intervention;
+  String status = '';
+  bool evaluating = false;
+  bool nextBusy = false;
+  String? evalError;
+  String? nextError;
+  bool posttestMode = false;
+  bool posttestSent = false;
+  bool done = false;
+
+  /// 0 explorar, 1 evaluar, 2 intervenir, 3 postest.
+  int get step => (posttestMode || posttestSent || done)
+      ? 3
+      : intervention != null
+          ? 2
+          : evalResult != null
+              ? 1
+              : 0;
+
+  Future<void> init(String labId) async {
+    try {
+      // ponytail: student_id derived server-side from token (main.py:159); don't send it.
+      final s = await postJson('/sessions', {'lab_template_id': labId});
+      sessionId = s['id'] as String;
+    } catch (e) {
+      status = 'Error API: $e';
+    }
+  }
+
+  Future<void> send(Map<String, dynamic> body, {required bool posttest}) async {
+    final path = posttest ? 'posttest' : 'attempts';
+    final a = await postJson('/sessions/$sessionId/$path', body);
+    attemptId = a['id'] as String;
+  }
+
+  /// evaluate y socratic en try separados: si la pregunta falla, la
+  /// evaluación se conserva y se puede reintentar solo la pregunta.
+  Future<void> evaluate() async {
+    evalError = null;
+    try {
+      evalResult =
+          await postJson('/sessions/$sessionId/evaluate', {'attempt_id': attemptId});
+    } catch (e) {
+      evalError = 'No se pudo evaluar: $e';
+      return;
+    }
+    try {
+      final sq =
+          await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
+      socraticQ = (sq['question'] ?? '') as String;
+    } catch (e) {
+      evalError = 'Evaluado ✓, pero la pregunta no llegó: $e';
+    }
+  }
+
+  Future<void> next() async {
+    nextError = null;
+    try {
+      intervention = await postJson(
+          '/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
+    } catch (e) {
+      nextError = 'No llegó la actividad: $e';
+    }
+  }
+
+  Future<void> reflect(String text) async {
+    await postJson('/sessions/$sessionId/reflection', {'text': text});
+    done = true;
+  }
+}
+
+const labStepLabels = ['Explorar', 'Evaluar', 'Intervenir', 'Postest'];
+
+/// Pasos del lab (misma cabecera en los 3 labs: así se blendean).
+class LabSteps extends StatelessWidget {
+  final int current;
+  const LabSteps({super.key, required this.current});
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (var i = 0; i < labStepLabels.length; i++) ...[
+          if (i > 0) SizedBox(width: 16, child: Divider(color: cs.outlineVariant)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  i <= current ? Icons.check_circle : Icons.circle_outlined,
+                  size: 16,
+                  color: i <= current ? cs.primary : cs.outline,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  labStepLabels[i],
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: i == current ? FontWeight.bold : null,
+                    color: i <= current ? null : cs.outline,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Cabecera común: objetivo del lab + pasos. Va arriba del contenido propio.
+class LabHeader extends StatelessWidget {
+  final String objective;
+  final int step;
+  const LabHeader({super.key, required this.objective, required this.step});
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (evalResult != null)
+        Text(objective, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        LabSteps(current: step),
+        const Divider(),
+      ],
+    );
+  }
+}
+
+/// Botón al siguiente lab de la ruta (por order_index). Nada que enlazar → texto.
+class NextLabButton extends StatefulWidget {
+  final String labId;
+  const NextLabButton(this.labId, {super.key});
+  @override
+  State<NextLabButton> createState() => _NextLabButtonState();
+}
+
+class _NextLabButtonState extends State<NextLabButton> {
+  late final _future = fetchJson('/labs');
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<dynamic>>(
+      future: _future,
+      builder: (c, s) {
+        if (!s.hasData) return const SizedBox.shrink();
+        final labs = s.data!;
+        final i = labs.indexWhere((l) => l['id'] == widget.labId);
+        if (i < 0 || i + 1 >= labs.length) {
+          return const Text('Último lab de la ruta ✓');
+        }
+        final n = labs[i + 1];
+        return FilledButton.tonal(
+          onPressed: () => router.go(
+            '/labs/${n['id']}',
+            extra: {'lab_type': n['lab_type'], 'title': n['title']},
+          ),
+          child: Text('Siguiente lab: ${n['title']}'),
+        );
+      },
+    );
+  }
+}
+
+/// Reflexión de cierre + done + enlace al siguiente lab (postest unificado).
+class PosttestReflection extends StatefulWidget {
+  final LabSession lab;
+  final String labId;
+  final VoidCallback onUpdate;
+  const PosttestReflection(
+      {super.key, required this.lab, required this.labId, required this.onUpdate});
+  @override
+  State<PosttestReflection> createState() => _PosttestReflectionState();
+}
+
+class _PosttestReflectionState extends State<PosttestReflection> {
+  final reflection = TextEditingController();
+  bool busy = false;
+
+  @override
+  void dispose() {
+    reflection.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    setState(() => busy = true);
+    try {
+      await widget.lab.reflect(reflection.text);
+    } catch (e) {
+      widget.lab.status = 'Error: $e';
+    }
+    setState(() => busy = false);
+    widget.onUpdate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.lab.done) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: reflection,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Reflexión: ¿qué aprendiste?',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: busy ? null : _send,
+            child: const Text('Enviar reflexión y cerrar'),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Sesión cerrada. Gracias por tu reflexión.'),
+        const SizedBox(height: 8),
+        NextLabButton(widget.labId),
+      ],
+    );
+  }
+}
+
+/// Panel compartido: evaluación + socrática + siguiente intervención GenUI.
+/// Siempre visible tras el primer envío, con estados (nunca vacío silencioso).
+class ResultPanel extends StatelessWidget {
+  final LabSession lab;
+  final VoidCallback onNext;
+  final VoidCallback onRetry;
+  const ResultPanel({
+    super.key,
+    required this.lab,
+    required this.onNext,
+    required this.onRetry,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (lab.evaluating)
+          const Row(
+            children: [
+              SizedBox(
+                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('Evaluando…'),
+            ],
+          ),
+        if (lab.evalError != null) ...[
+          Semantics(
+            liveRegion: true,
+            child: Text(lab.evalError!, style: const TextStyle(fontSize: 12)),
+          ),
+          TextButton(onPressed: onRetry, child: const Text(Strings.retry)),
+        ],
+        if (lab.evalResult != null)
           Text(
-            'Evaluación (${evalResult!['evaluator']}): '
-            '${(evalResult!['criteria'] as List).map((c) => "${c['id']}=${c['score']}").join(', ')}',
+            'Evaluación (${lab.evalResult!['evaluator']}): '
+            '${(lab.evalResult!['criteria'] as List).map((c) => "${c['id']}=${c['score']}").join(', ')}',
             style: const TextStyle(fontSize: 12),
           ),
-        if (socraticQ.isNotEmpty) ...[
+        if (lab.socraticQ.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text('Tutor: $socraticQ', style: const TextStyle(fontStyle: FontStyle.italic)),
-          FilledButton.tonal(onPressed: onNext, child: const Text('Siguiente actividad')),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.tertiaryContainer,
+              border: Border.all(color: cs.tertiary),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.help_outline,
+                        size: 16, color: cs.onTertiaryContainer),
+                    const SizedBox(width: 6),
+                    Text('¿Qué evidencia respalda tu hipótesis?',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: cs.onTertiaryContainer)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text('Tutor: ${lab.socraticQ}',
+                    style: const TextStyle(fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+          FilledButton.tonal(
+            onPressed: lab.nextBusy ? null : onNext,
+            child: const Text('Siguiente actividad'),
+          ),
+        ] else if (lab.evalResult != null && !lab.evaluating && lab.evalError == null) ...[
+          const SizedBox(height: 8),
+          FilledButton.tonal(
+              onPressed: null, child: const Text('Siguiente actividad')),
+          const Text('Esperando la pregunta del tutor…',
+              style: TextStyle(fontSize: 12)),
         ],
-        if (intervention != null) ...[
+        if (lab.nextBusy)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Row(
+              children: [
+                SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+                SizedBox(width: 8),
+                Text('Trayendo actividad…'),
+              ],
+            ),
+          ),
+        if (lab.nextError != null) ...[
+          Semantics(
+            liveRegion: true,
+            child: Text(lab.nextError!, style: const TextStyle(fontSize: 12)),
+          ),
+          TextButton(onPressed: onNext, child: const Text(Strings.retry)),
+        ],
+        if (lab.intervention != null) ...[
           const SizedBox(height: 8),
-          TutorSurface(intervention: intervention!),
+          TutorSurface(intervention: lab.intervention!),
         ],
       ],
     );
@@ -467,19 +1041,13 @@ class DataLabPage extends StatefulWidget {
 }
 
 class _DataLabState extends State<DataLabPage> {
-  String? sessionId;
-  String? attemptId;
+  final lab = LabSession();
   List columns = [];
   List rows = [];
   final flagged = <int>{};
   final justification = TextEditingController();
-  Map<String, dynamic>? evalResult;
-  Map? intervention;
-  String socraticQ = '';
-  String status = '';
-  bool posttestMode = false;
 
-  int get seed => posttestMode ? 99 : 1;
+  int get seed => lab.posttestMode ? 99 : 1;
 
   @override
   void initState() {
@@ -488,16 +1056,12 @@ class _DataLabState extends State<DataLabPage> {
   }
 
   Future<void> _init() async {
-    try {
-      // ponytail: student_id derived server-side from token (main.py:159); don't send it.
-      final s = await postJson('/sessions', {
-        'lab_template_id': widget.labId,
-      });
-      sessionId = s['id'] as String;
-      await _loadTable();
-    } catch (e) {
-      setState(() => status = 'Error API: $e');
+    await lab.init(widget.labId);
+    if (lab.sessionId == null) {
+      setState(() {});
+      return;
     }
+    await _loadTable();
   }
 
   Future<void> _loadTable() async {
@@ -509,52 +1073,57 @@ class _DataLabState extends State<DataLabPage> {
         flagged.clear();
       });
     } catch (e) {
-      setState(() => status = 'Error tabla: $e');
+      setState(() => lab.status = 'Error tabla: $e');
     }
   }
 
   Future<void> _send() async {
-    if (sessionId == null) return;
+    if (lab.sessionId == null || lab.evaluating) return;
     if (justification.text.trim().isEmpty) {
-      setState(() => status = 'La justificación es obligatoria');
+      setState(() => lab.status = 'La justificación es obligatoria');
       return;
     }
+    setState(() {
+      lab.evaluating = true;
+      lab.status = '';
+    });
     try {
-      final path = posttestMode ? 'posttest' : 'attempts';
-      final a = await postJson('/sessions/$sessionId/$path', {
+      await lab.send({
         'seed': seed,
         'flags': flagged.toList(),
         'answer_text': justification.text,
+      }, posttest: lab.posttestMode);
+      setState(() {
+        lab.evaluating = false;
+        if (lab.posttestMode) {
+          lab.posttestSent = true;
+          lab.status = 'Postest entregado (sin ayuda)';
+        } else {
+          lab.status = 'Guardado ✓';
+        }
       });
-      attemptId = a['id'] as String;
-      setState(() => status = posttestMode ? 'Postest entregado (sin ayuda)' : 'Guardado ✓');
-      if (!posttestMode) await _evaluate();
+      if (!lab.posttestMode) {
+        await lab.evaluate();
+        setState(() {});
+      }
     } catch (e) {
-      setState(() => status = 'Error envío: $e');
+      setState(() {
+        lab.evaluating = false;
+        lab.status = 'Error envío: $e';
+      });
     }
   }
 
-  Future<void> _evaluate() async {
-    try {
-      final ev = await postJson('/sessions/$sessionId/evaluate', {'attempt_id': attemptId});
-      final sq = await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
-      setState(() {
-        evalResult = ev;
-        socraticQ = (sq['question'] ?? '') as String;
-      });
-    } catch (e) {
-      setState(() => status = 'Error evaluación: $e');
-    }
+  Future<void> _retry() async {
+    setState(() => lab.evaluating = true);
+    await lab.evaluate();
+    setState(() => lab.evaluating = false);
   }
 
   Future<void> _next() async {
-    try {
-      final iv = await postJson(
-          '/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
-      setState(() => intervention = iv);
-    } catch (e) {
-      setState(() => status = 'Error siguiente: $e');
-    }
+    setState(() => lab.nextBusy = true);
+    await lab.next();
+    setState(() => lab.nextBusy = false);
   }
 
   final scrollCtrl = ScrollController();
@@ -571,7 +1140,8 @@ class _DataLabState extends State<DataLabPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(posttestMode ? '${widget.title} (postest)' : widget.title)),
+      appBar: AppBar(
+          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -579,12 +1149,15 @@ class _DataLabState extends State<DataLabPage> {
             padding: const EdgeInsets.all(16),
             controller: scrollCtrl,
             children: [
-              Text(posttestMode
-                  ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
-                  : 'Marca las filas con anomalías y justifica tu plan de limpieza.'),
+              LabHeader(
+                objective: lab.posttestMode
+                    ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
+                    : 'Marca las filas con anomalías y justifica tu plan de limpieza.',
+                step: lab.step,
+              ),
               const SizedBox(height: 8),
               const Text(Strings.scrollHint, style: TextStyle(fontSize: 12)),
-              if (columns.isEmpty && status.isEmpty)
+              if (columns.isEmpty && lab.status.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(24),
                   child: Center(child: CircularProgressIndicator()),
@@ -598,6 +1171,8 @@ class _DataLabState extends State<DataLabPage> {
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
                     showCheckboxColumn: true,
+                    // ponytail: filas ≥44px (WCAG 2.5.8).
+                    dataRowMinHeight: 44,
                     columns: [for (final c in columns) DataColumn(label: Text('$c'))],
                     rows: [
                       for (final r in rows)
@@ -624,30 +1199,28 @@ class _DataLabState extends State<DataLabPage> {
           ),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: _send,
-            child: Text(posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+            onPressed: lab.evaluating ? null : _send,
+            child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
           ),
-          if (!posttestMode)
+          if (!lab.posttestMode)
             TextButton(
-              onPressed: sessionId == null
+              onPressed: lab.sessionId == null
                   ? null
                   : () => setState(() {
-                        posttestMode = true;
-                        evalResult = null;
-                        intervention = null;
-                        socraticQ = '';
+                        lab.posttestMode = true;
+                        lab.evalResult = null;
+                        lab.intervention = null;
+                        lab.socraticQ = '';
                         _loadTable();
                       }),
               child: const Text(Strings.goPosttest),
             ),
-          if (!posttestMode)
-            ResultPanel(
-              evalResult: evalResult,
-              socraticQ: socraticQ,
-              intervention: intervention,
-              onNext: _next,
-            ),
-          StatusText(status),
+          if (!lab.posttestMode)
+            ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+          if (lab.posttestMode && lab.posttestSent)
+            PosttestReflection(
+                lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+          StatusText(lab.status),
             ],
           ),
         ),
@@ -665,16 +1238,13 @@ class LabDetailPage extends StatefulWidget {
 }
 
 class _LabDetailState extends State<LabDetailPage> {
+  final lab = LabSession();
   double complexity = 5;
   double noise = 20;
   final hypo = TextEditingController();
-  String? sessionId;
-  String? attemptId;
   Map<String, dynamic>? curve;
-  Map<String, dynamic>? evalResult;
-  Map<String, dynamic>? intervention;
-  String socraticQ = '';
-  String status = '';
+
+  int get seed => lab.posttestMode ? 99 : 1;
 
   @override
   void initState() {
@@ -683,127 +1253,161 @@ class _LabDetailState extends State<LabDetailPage> {
   }
 
   Future<void> _init() async {
-    try {
-      // ponytail: student_id derived server-side from token; don't send it.
-      final s = await postJson('/sessions', {
-        'lab_template_id': widget.labId,
-      });
-      sessionId = s['id'] as String;
-      await _loadCurve();
-    } catch (e) {
-      setState(() => status = 'Error API: $e');
+    await lab.init(widget.labId);
+    if (lab.sessionId == null) {
+      setState(() {});
+      return;
     }
+    await _loadCurve();
   }
 
   Future<void> _loadCurve() async {
     try {
       final c = await fetchMap(
-        '/labs/${widget.labId}/curve?complexity=${complexity.round()}&noise_pct=${noise.round()}&seed=1',
+        '/labs/${widget.labId}/curve?complexity=${complexity.round()}&noise_pct=${noise.round()}&seed=$seed',
       );
       setState(() => curve = c);
     } catch (e) {
-      setState(() => status = 'Error curva: $e');
+      setState(() => lab.status = 'Error curva: $e');
     }
   }
 
   Future<void> _send() async {
-    if (sessionId == null) return;
+    if (lab.sessionId == null || lab.evaluating) return;
     if (hypo.text.trim().isEmpty) {
-      setState(() => status = 'La hipótesis es obligatoria');
+      setState(() => lab.status =
+          lab.posttestMode ? 'El diagnóstico es obligatorio' : 'La hipótesis es obligatoria');
       return;
     }
+    setState(() {
+      lab.evaluating = true;
+      lab.status = '';
+    });
     try {
-      final a = await postJson('/sessions/$sessionId/attempts', {
+      await lab.send({
         'complexity': complexity.round(),
         'noise_pct': noise.round(),
-        'seed': 1,
+        'seed': seed,
         'answer_text': hypo.text,
+      }, posttest: lab.posttestMode);
+      setState(() {
+        lab.evaluating = false;
+        if (lab.posttestMode) {
+          lab.posttestSent = true;
+          lab.status = 'Postest entregado (sin ayuda de IA)';
+        } else {
+          lab.status = 'Guardado ✓ (simulación, sin IA)';
+        }
       });
-      attemptId = a['id'] as String;
-      setState(() => status = 'Guardado ✓ (simulación, sin IA)');
-      await _evaluate();
+      if (!lab.posttestMode) {
+        await lab.evaluate();
+        setState(() {});
+      }
     } catch (e) {
-      setState(() => status = 'Error envío: $e');
+      setState(() {
+        lab.evaluating = false;
+        lab.status = 'Error envío: $e';
+      });
     }
   }
 
-  Future<void> _evaluate() async {
-    if (sessionId == null || attemptId == null) return;
-    try {
-      final ev = await postJson('/sessions/$sessionId/evaluate', {'attempt_id': attemptId});
-      final sq = await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
-      setState(() {
-        evalResult = ev;
-        socraticQ = (sq['question'] ?? '') as String;
-      });
-    } catch (e) {
-      setState(() => status = 'Error evaluación: $e');
-    }
+  Future<void> _retry() async {
+    setState(() => lab.evaluating = true);
+    await lab.evaluate();
+    setState(() => lab.evaluating = false);
   }
 
   Future<void> _next() async {
-    if (sessionId == null || attemptId == null) return;
-    try {
-      final iv = await postJson('/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
-      setState(() => intervention = iv);
-    } catch (e) {
-      setState(() => status = 'Error siguiente: $e');
-    }
+    setState(() => lab.nextBusy = true);
+    await lab.next();
+    setState(() => lab.nextBusy = false);
+  }
+
+  @override
+  void dispose() {
+    hypo.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
+    final sent = lab.posttestSent;
     final controls = [
-      const Text('Predice el efecto de la complejidad y justifica por qué'),
+      LabHeader(
+        objective: lab.posttestMode
+            ? 'Variante nueva. Sin pistas ni tutor hasta entregar.'
+            : 'Predice el efecto de la complejidad y justifica por qué',
+        step: lab.step,
+      ),
       const SizedBox(height: 12),
-      AccessibleCurveChart(train: train, val: val, label: 'Curvas de pérdida'),
+      AccessibleCurveChart(
+          train: train,
+          val: val,
+          label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida'),
       if (curve?['simulated'] == true)
         const Text(Strings.simulated, style: TextStyle(fontSize: 12)),
       Slider(
         value: complexity, min: 1, max: 10, divisions: 9,
         label: 'Complejidad ${complexity.round()}',
-        onChanged: (v) => setState(() => complexity = v),
-        onChangeEnd: (_) => _loadCurve(),
+        onChanged: sent ? null : (v) => setState(() => complexity = v),
+        onChangeEnd: sent ? null : (_) => _loadCurve(),
       ),
+      Text('Complejidad: ${complexity.round()}', style: const TextStyle(fontSize: 12)),
       Slider(
         value: noise, min: 0, max: 50, divisions: 10,
         label: 'Ruido ${noise.round()}%',
-        onChanged: (v) => setState(() => noise = v),
-        onChangeEnd: (_) => _loadCurve(),
+        onChanged: sent ? null : (v) => setState(() => noise = v),
+        onChangeEnd: sent ? null : (_) => _loadCurve(),
       ),
+      Text('Ruido: ${noise.round()}%', style: const TextStyle(fontSize: 12)),
       TextField(
         controller: hypo,
         maxLines: 3,
-        decoration: const InputDecoration(
-          labelText: 'Hipótesis / justificación (obligatoria)',
-          border: OutlineInputBorder(),
+        enabled: !sent,
+        decoration: InputDecoration(
+          labelText: lab.posttestMode
+              ? 'Tu diagnóstico y justificación *'
+              : 'Hipótesis / justificación (obligatoria)',
+          border: const OutlineInputBorder(),
         ),
       ),
       const SizedBox(height: 12),
-      FilledButton(onPressed: _send, child: const Text(Strings.sendAttempt)),
+      if (!sent)
+        FilledButton(
+          onPressed: lab.evaluating ? null : _send,
+          child: Text(
+              lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+        ),
     ];
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ResultPanel(
-          evalResult: evalResult,
-          socraticQ: socraticQ,
-          intervention: intervention,
-          onNext: _next,
-        ),
-        TextButton(
-          onPressed: sessionId == null
-              ? null
-              : () => router.go('/labs/${widget.labId}/posttest/$sessionId'),
-          child: const Text(Strings.goPosttestNoAI),
-        ),
-        StatusText(status),
+        if (!lab.posttestMode)
+          TextButton(
+            onPressed: lab.sessionId == null
+                ? null
+                : () => setState(() {
+                      lab.posttestMode = true;
+                      lab.evalResult = null;
+                      lab.intervention = null;
+                      lab.socraticQ = '';
+                      _loadCurve();
+                    }),
+            child: const Text(Strings.goPosttestNoAI),
+          ),
+        if (!lab.posttestMode)
+          ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+        if (lab.posttestMode && sent)
+          PosttestReflection(
+              lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+        StatusText(lab.status),
       ],
     );
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -823,130 +1427,6 @@ class _LabDetailState extends State<LabDetailPage> {
               }
               return ListView(padding: const EdgeInsets.all(16), children: [...controls, result]);
             },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// D4: variante nueva (seed 99), sin pistas ni tutor; luego reflexión honesta.
-class PosttestPage extends StatefulWidget {
-  final String labId;
-  final String sessionId;
-  const PosttestPage({super.key, required this.labId, required this.sessionId});
-  @override
-  State<PosttestPage> createState() => _PosttestState();
-}
-
-class _PosttestState extends State<PosttestPage> {
-  double complexity = 6;
-  double noise = 20;
-  final answer = TextEditingController();
-  final reflection = TextEditingController();
-  Map<String, dynamic>? curve;
-  String status = '';
-  bool sent = false;
-  bool done = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCurve();
-  }
-
-  Future<void> _loadCurve() async {
-    try {
-      final c = await fetchMap(
-        '/labs/${widget.labId}/curve?complexity=${complexity.round()}&noise_pct=${noise.round()}&seed=99',
-      );
-      setState(() => curve = c);
-    } catch (e) {
-      setState(() => status = 'Error curva: $e');
-    }
-  }
-
-  Future<void> _sendPosttest() async {
-    if (answer.text.trim().isEmpty) {
-      setState(() => status = 'El diagnóstico es obligatorio');
-      return;
-    }
-    try {
-      await postJson('/sessions/${widget.sessionId}/posttest', {
-        'complexity': complexity.round(),
-        'noise_pct': noise.round(),
-        'answer_text': answer.text,
-      });
-      setState(() {
-        sent = true;
-        status = 'Postest entregado (sin ayuda de IA)';
-      });
-    } catch (e) {
-      setState(() => status = 'Error: $e');
-    }
-  }
-
-  Future<void> _sendReflection() async {
-    try {
-      await postJson('/sessions/${widget.sessionId}/reflection', {'text': reflection.text});
-      setState(() {
-        done = true;
-        status = 'Sesión cerrada. Gracias por tu reflexión.';
-      });
-    } catch (e) {
-      setState(() => status = 'Error: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final train = (curve?['train'] as List?)?.cast<num>() ?? [];
-    final val = (curve?['val'] as List?)?.cast<num>() ?? [];
-    return Scaffold(
-      appBar: AppBar(title: const Text('Postest (sin ayuda)')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 800),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text('Variante nueva. Sin pistas ni tutor hasta entregar.'),
-              const SizedBox(height: 12),
-              AccessibleCurveChart(train: train, val: val, label: 'Curvas del postest'),
-              Slider(
-                value: complexity, min: 1, max: 10, divisions: 9,
-                label: 'Complejidad ${complexity.round()}',
-                onChanged: sent ? null : (v) => setState(() => complexity = v),
-                onChangeEnd: sent ? null : (_) => _loadCurve(),
-              ),
-              Slider(
-                value: noise, min: 0, max: 50, divisions: 10,
-                label: 'Ruido ${noise.round()}%',
-                onChanged: sent ? null : (v) => setState(() => noise = v),
-                onChangeEnd: sent ? null : (_) => _loadCurve(),
-              ),
-              TextField(
-                controller: answer, maxLines: 3, enabled: !sent,
-                decoration: const InputDecoration(
-                  labelText: 'Tu diagnóstico y justificación *',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (!sent) FilledButton(onPressed: _sendPosttest, child: const Text(Strings.deliverPosttest)),
-              if (sent && !done) ...[
-                TextField(
-                  controller: reflection, maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Reflexión: ¿qué aprendiste?',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton(onPressed: _sendReflection, child: const Text('Enviar reflexión y cerrar')),
-              ],
-              StatusText(status),
-            ],
           ),
         ),
       ),
@@ -1007,6 +1487,9 @@ class CurvePainter extends StatelessWidget {
 
 /// Gráfico de curvas con alternativa textual (WCAG 1.1.1) y leyenda sin
 /// nombres de color.
+// ponytail: sin animaciones propias; solo transiciones M3 por defecto
+// (ExpansionTile, navegación), ninguna bloquea tareas ni transmite
+// información solo por movimiento.
 class AccessibleCurveChart extends StatelessWidget {
   final List<num> train;
   final List<num> val;
@@ -1043,8 +1526,20 @@ class AccessibleCurveChart extends StatelessWidget {
               const SizedBox(width: 6),
               const Text(Strings.legendTrain, style: TextStyle(fontSize: 12)),
             ]),
+            // ponytail: muestra discontinua = redundancia no-cromática (WCAG 1.4.1);
+            // la curva real ya usa dashArray [6,4].
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(width: 24, height: 3, color: cs.tertiary),
+              SizedBox(
+                width: 24,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < 3; i++) ...[
+                      if (i > 0) const SizedBox(width: 2),
+                      Container(width: 6, height: 3, color: cs.tertiary),
+                    ],
+                  ],
+                ),
+              ),
               const SizedBox(width: 6),
               const Text(Strings.legendVal, style: TextStyle(fontSize: 12)),
             ]),
@@ -1057,6 +1552,7 @@ class AccessibleCurveChart extends StatelessWidget {
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
+                dataRowMinHeight: 44,
                 columns: const [
                   DataColumn(label: Text('i')),
                   DataColumn(label: Text('entrenamiento')),
@@ -1187,6 +1683,10 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
                       onChanged: (v) => setState(() => scores[crit] = v),
                     ),
                   ),
+                  SizedBox(
+                      width: 16,
+                      child: Text('${scores[crit]!.round()}',
+                          style: const TextStyle(fontSize: 12))),
                 ],
               ),
             TextField(
@@ -1214,19 +1714,13 @@ class MonitorLabPage extends StatefulWidget {
 }
 
 class _MonitorState extends State<MonitorLabPage> {
-  String? sessionId;
-  String? attemptId;
+  final lab = LabSession();
   String feature = 'temp';
   double changepoint = 90;
   final answer = TextEditingController();
   Map<String, dynamic>? dist;
-  Map<String, dynamic>? evalResult;
-  Map? intervention;
-  String socraticQ = '';
-  String status = '';
-  bool posttestMode = false;
 
-  int get seed => posttestMode ? 99 : 1;
+  int get seed => lab.posttestMode ? 99 : 1;
 
   @override
   void initState() {
@@ -1235,16 +1729,12 @@ class _MonitorState extends State<MonitorLabPage> {
   }
 
   Future<void> _init() async {
-    try {
-      // ponytail: student_id derived server-side from token; don't send it.
-      final s = await postJson('/sessions', {
-        'lab_template_id': widget.labId,
-      });
-      sessionId = s['id'] as String;
-      await _load();
-    } catch (e) {
-      setState(() => status = 'Error API: $e');
+    await lab.init(widget.labId);
+    if (lab.sessionId == null) {
+      setState(() {});
+      return;
     }
+    await _load();
   }
 
   Future<void> _load() async {
@@ -1252,52 +1742,63 @@ class _MonitorState extends State<MonitorLabPage> {
       final d = await fetchMap('/labs/${widget.labId}/distributions?seed=$seed');
       setState(() => dist = d);
     } catch (e) {
-      setState(() => status = 'Error datos: $e');
+      setState(() => lab.status = 'Error datos: $e');
     }
   }
 
   Future<void> _send() async {
-    if (sessionId == null) return;
+    if (lab.sessionId == null || lab.evaluating) return;
     if (answer.text.trim().isEmpty) {
-      setState(() => status = 'La hipótesis es obligatoria');
+      setState(() => lab.status = 'La hipótesis es obligatoria');
       return;
     }
+    setState(() {
+      lab.evaluating = true;
+      lab.status = '';
+    });
     try {
-      final path = posttestMode ? 'posttest' : 'attempts';
-      final a = await postJson('/sessions/$sessionId/$path', {
+      await lab.send({
         'seed': seed,
         'extra': {'feature': feature, 'changepoint': changepoint.round()},
         'answer_text': answer.text,
+      }, posttest: lab.posttestMode);
+      setState(() {
+        lab.evaluating = false;
+        if (lab.posttestMode) {
+          lab.posttestSent = true;
+          lab.status = 'Postest entregado (sin ayuda)';
+        } else {
+          lab.status = 'Guardado ✓';
+        }
       });
-      attemptId = a['id'] as String;
-      setState(() => status = posttestMode ? 'Postest entregado (sin ayuda)' : 'Guardado ✓');
-      if (!posttestMode) await _evaluate();
+      if (!lab.posttestMode) {
+        await lab.evaluate();
+        setState(() {});
+      }
     } catch (e) {
-      setState(() => status = 'Error envío: $e');
+      setState(() {
+        lab.evaluating = false;
+        lab.status = 'Error envío: $e';
+      });
     }
   }
 
-  Future<void> _evaluate() async {
-    try {
-      final ev = await postJson('/sessions/$sessionId/evaluate', {'attempt_id': attemptId});
-      final sq = await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
-      setState(() {
-        evalResult = ev;
-        socraticQ = (sq['question'] ?? '') as String;
-      });
-    } catch (e) {
-      setState(() => status = 'Error evaluación: $e');
-    }
+  Future<void> _retry() async {
+    setState(() => lab.evaluating = true);
+    await lab.evaluate();
+    setState(() => lab.evaluating = false);
   }
 
   Future<void> _next() async {
-    try {
-      final iv = await postJson(
-          '/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
-      setState(() => intervention = iv);
-    } catch (e) {
-      setState(() => status = 'Error siguiente: $e');
-    }
+    setState(() => lab.nextBusy = true);
+    await lab.next();
+    setState(() => lab.nextBusy = false);
+  }
+
+  @override
+  void dispose() {
+    answer.dispose();
+    super.dispose();
   }
 
   @override
@@ -1308,9 +1809,12 @@ class _MonitorState extends State<MonitorLabPage> {
     final cur = (sel['cur'] as List?)?.cast<num>() ?? [];
     final series = (dist?['series'] as List?)?.cast<num>() ?? [];
     final controls = [
-      Text(posttestMode
-          ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
-          : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.'),
+      LabHeader(
+        objective: lab.posttestMode
+            ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
+            : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.',
+        step: lab.step,
+      ),
       Semantics(
         label: '¿Qué feature deriva?',
         child: DropdownButton<String>(
@@ -1327,6 +1831,8 @@ class _MonitorState extends State<MonitorLabPage> {
       ),
       AccessibleHistChart(ref: ref, cur: cur, label: 'Distribución $feature'),
       AccessibleCurveChart(train: series, val: const [], label: 'Serie temporal'),
+      Text('Punto de cambio: t=${changepoint.round()}',
+          style: const TextStyle(fontSize: 12)),
       Slider(
         value: changepoint, min: 0, max: 179, divisions: 179,
         label: 'Cambio en t=${changepoint.round()}',
@@ -1341,38 +1847,37 @@ class _MonitorState extends State<MonitorLabPage> {
       ),
       const SizedBox(height: 12),
       FilledButton(
-        onPressed: _send,
-        child: Text(posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+        onPressed: lab.evaluating ? null : _send,
+        child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
       ),
     ];
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!posttestMode)
+        if (!lab.posttestMode)
           TextButton(
-            onPressed: sessionId == null
+            onPressed: lab.sessionId == null
                 ? null
                 : () => setState(() {
-                      posttestMode = true;
-                      evalResult = null;
-                      intervention = null;
-                      socraticQ = '';
+                      lab.posttestMode = true;
+                      lab.evalResult = null;
+                      lab.intervention = null;
+                      lab.socraticQ = '';
                       _load();
                     }),
             child: const Text(Strings.goPosttest),
           ),
-        if (!posttestMode)
-          ResultPanel(
-            evalResult: evalResult,
-            socraticQ: socraticQ,
-            intervention: intervention,
-            onNext: _next,
-          ),
-        StatusText(status),
+        if (!lab.posttestMode)
+          ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+        if (lab.posttestMode && lab.posttestSent)
+          PosttestReflection(
+              lab: lab, labId: widget.labId, onUpdate: () => setState(() {})),
+        StatusText(lab.status),
       ],
     );
     return Scaffold(
-      appBar: AppBar(title: Text(posttestMode ? '${widget.title} (postest)' : widget.title)),
+      appBar: AppBar(
+          title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
@@ -1458,7 +1963,7 @@ class AccessibleHistChart extends StatelessWidget {
               'actual ${cur.fold<num>(0, (a, b) => a + b).toStringAsFixed(2)}.',
           child: SizedBox(
             height: 120,
-            child: HistPainter(ref, cur, refColor: cs.primary, curColor: cs.tertiary),
+            child: HistPainter(ref, cur, refColor: cs.primary, curColor: cs.secondary),
           ),
         ),
         const SizedBox(height: 4),
@@ -1470,8 +1975,16 @@ class AccessibleHistChart extends StatelessWidget {
               const SizedBox(width: 6),
               const Text(Strings.legendRef, style: TextStyle(fontSize: 12)),
             ]),
+            // ponytail: actual hueco vs referencia sólida = distinción por forma,
+            // no solo color (WCAG 1.4.1); texto ya dice izquierda/derecha.
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(width: 12, height: 12, color: cs.tertiary),
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  border: Border.all(color: cs.secondary, width: 2),
+                ),
+              ),
               const SizedBox(width: 6),
               const Text(Strings.legendCur, style: TextStyle(fontSize: 12)),
             ]),
@@ -1484,6 +1997,7 @@ class AccessibleHistChart extends StatelessWidget {
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
+                dataRowMinHeight: 44,
                 columns: const [
                   DataColumn(label: Text('bin')),
                   DataColumn(label: Text('referencia')),
@@ -1584,8 +2098,8 @@ class _SessionsDialogState extends State<_SessionsDialog> {
         if (!s2.hasData) return const LinearProgressIndicator();
         final sessions = s2.data!;
         if (sessions.isEmpty) return const Text('Sin sesiones');
-        return SizedBox(
-          width: 320,
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
