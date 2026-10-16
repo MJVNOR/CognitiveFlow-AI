@@ -355,44 +355,110 @@ class LoginPage extends ConsumerStatefulWidget {
 class _LoginState extends ConsumerState<LoginPage> {
   final userId = TextEditingController(text: 's1');
   String status = '';
+  bool busy = false;
+
+  @override
+  void dispose() {
+    userId.dispose();
+    super.dispose();
+  }
 
   Future<void> _login() async {
+    final id = userId.text.trim();
+    if (id.isEmpty) {
+      setState(() => status = 'Escribe tu user_id demo (p. ej. s1).');
+      return;
+    }
+    if (busy) return;
+    setState(() {
+      busy = true;
+      status = '';
+    });
     try {
       final r = await http.post(
         Uri.parse('$apiBase/auth/login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'user_id': userId.text.trim()}),
+        body: jsonEncode({'user_id': id}),
       );
       if (r.statusCode != 200) throw Exception('${r.statusCode} usuario desconocido');
       final body = jsonDecode(r.body) as Map;
       await ref.read(authProvider.notifier).login(
             body['token'] as String,
-            (body['user_id'] ?? userId.text.trim()) as String,
+            (body['user_id'] ?? id) as String,
             (body['role'] ?? 'student') as String,
           );
       if (mounted) context.go('/academy');
     } catch (e) {
-      setState(() => status = 'Error: $e');
+      final msg = '$e';
+      setState(() => status = msg.contains('usuario desconocido')
+          ? 'No se pudo entrar: usuario desconocido (usa s1-s4 o i1).'
+          : 'No se pudo entrar: sin conexión con la API. Reintenta.');
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text(Strings.appTitle)),
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                const Text(Strings.loginHint),
-                TextField(controller: userId, decoration: const InputDecoration(labelText: Strings.loginUserId), onSubmitted: (_) => _login()),
-                const SizedBox(height: 12),
-                FilledButton(onPressed: _login, child: const Text(Strings.loginEnter)),
-                StatusText(status),
-              ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      Strings.loginHint,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      key: const ValueKey('login_user'),
+                      controller: userId,
+                      enabled: !busy,
+                      autofocus: true,
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(labelText: Strings.loginUserId),
+                      onSubmitted: (_) => _login(),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      key: const ValueKey('login_submit'),
+                      onPressed: busy ? null : _login,
+                      child: busy
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text(Strings.loginEnter),
+                    ),
+                    if (status.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.error_outline, size: 20, color: scheme.error),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: StatusText(status),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -2254,7 +2320,14 @@ class SessionReviewPage extends StatefulWidget {
 
 class _ReviewState extends State<SessionReviewPage> {
   String status = '';
-  late final _future = fetchAttempts(widget.sessionId);
+  late Future<List<Attempt>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future = fetchAttempts(widget.sessionId);
+  }
+
+  void _retry() => setState(() => _future = fetchAttempts(widget.sessionId));
 
   Future<void> _send(String attemptId, Map<String, double> scores, String notes) async {
     try {
@@ -2276,17 +2349,53 @@ class _ReviewState extends State<SessionReviewPage> {
         future: _future,
         builder: (c, s) {
           if (s.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('Cargando intentos…'),
+                ],
+              ),
+            );
           }
           if (s.hasError) {
             return Center(
-              child: Semantics(liveRegion: true, child: Text('Error: ${s.error}')),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Semantics(
+                        liveRegion: true,
+                        child: Text('No se pudieron cargar los intentos: ${s.error}',
+                            textAlign: TextAlign.center)),
+                    const SizedBox(height: 12),
+                    FilledButton.tonal(
+                      onPressed: _retry,
+                      child: const Text('Reintentar'),
+                    ),
+                  ],
+                ),
+              ),
             );
           }
           final attempts = s.data!;
+          if (attempts.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Sin intentos todavía en esta sesión.',
+                    textAlign: TextAlign.center),
+              ),
+            );
+          }
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              Text('${attempts.length} intento(s) para revisar',
+                  style: Theme.of(c).textTheme.titleSmall),
               for (final a in attempts)
                 AttemptReviewCard(
                   key: ValueKey(a.id),
@@ -2305,7 +2414,7 @@ class _ReviewState extends State<SessionReviewPage> {
 // ponytail: per-attempt state; shared map+controller contaminated grades across cards.
 class AttemptReviewCard extends StatefulWidget {
   final String answer;
-  final void Function(Map<String, double> scores, String notes) onSave;
+  final Future<void> Function(Map<String, double> scores, String notes) onSave;
   const AttemptReviewCard({super.key, required this.answer, required this.onSave});
   @override
   State<AttemptReviewCard> createState() => _AttemptReviewCardState();
@@ -2314,6 +2423,8 @@ class AttemptReviewCard extends StatefulWidget {
 class _AttemptReviewCardState extends State<AttemptReviewCard> {
   late Map<String, double> scores;
   late TextEditingController notes;
+  bool _saving = false;
+  bool _saved = false;
   @override
   void initState() {
     super.initState();
@@ -2325,6 +2436,20 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
   void dispose() {
     notes.dispose();
     super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _saved = false;
+    });
+    try {
+      await widget.onSave(scores, notes.text);
+      if (mounted) setState(() => _saved = true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -2339,7 +2464,10 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
             for (final crit in reviewCriteria)
               Row(
                 children: [
-                  SizedBox(width: 110, child: Text(crit, style: const TextStyle(fontSize: 12))),
+                  SizedBox(
+                      width: 150,
+                      child: Text(criterionLabel(crit),
+                          style: const TextStyle(fontSize: 12))),
                   Expanded(
                     child: Slider(
                       value: scores[crit]!, min: 0, max: 4, divisions: 4,
@@ -2348,18 +2476,34 @@ class _AttemptReviewCardState extends State<AttemptReviewCard> {
                     ),
                   ),
                   SizedBox(
-                      width: 16,
+                      width: 28,
                       child: Text('${scores[crit]!.round()}',
+                          textAlign: TextAlign.end,
                           style: const TextStyle(fontSize: 12))),
                 ],
               ),
             TextField(
               controller: notes,
+              maxLines: 2,
               decoration: const InputDecoration(labelText: 'Notas', border: OutlineInputBorder()),
             ),
-            FilledButton(
-              onPressed: () => widget.onSave(scores, notes.text),
-              child: const Text('Guardar revisión'),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: Text(_saving ? 'Guardando…' : 'Guardar revisión'),
+                  ),
+                ),
+                if (_saved) ...[
+                  const SizedBox(width: 8),
+                  const Icon(Icons.check_circle,
+                      size: 18, color: CognitiveColors.success),
+                  const SizedBox(width: 4),
+                  const Text('Guardada ✓', style: TextStyle(fontSize: 12)),
+                ],
+              ],
             ),
           ],
         ),
@@ -2792,8 +2936,17 @@ class ProgressPage extends StatefulWidget {
 
 class _ProgressState extends State<ProgressPage> {
   // ponytail: mismo Future.wait que Academia + GET /me/progress medido.
-  late final _future =
-      Future.wait([fetchLabs(), fetchMap('/me/lab-status'), fetchJson('/me/progress')]);
+  late Future<List<dynamic>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<dynamic>> _load() => Future.wait(
+      [fetchLabs(), fetchMap('/me/lab-status'), fetchJson('/me/progress')]);
+
+  void _retry() => setState(() => _future = _load());
 
   @override
   Widget build(BuildContext context) {
@@ -2801,13 +2954,38 @@ class _ProgressState extends State<ProgressPage> {
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Cargando progreso…'),
+              ],
+            ),
+          );
         }
         if (s.hasError) {
           return Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Text('${Strings.noApi}: ${s.error}'),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('${Strings.noApi}: ${s.error}',
+                        textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _retry,
+                    child: const Text('Reintentar'),
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -2818,38 +2996,83 @@ class _ProgressState extends State<ProgressPage> {
         };
         final done =
             [for (final l in labs) if (statusMap[l.id] == 'done') l].length;
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-                AppLocalizations.of(context)?.routeProgress(
-                      done,
-                      labs.length,
-                    ) ??
-                    'Ruta: ${_int.format(done)} de ${_int.format(labs.length)} labs completados',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: labs.isEmpty ? 0 : done / labs.length),
-            const SizedBox(height: 16),
-            for (final l in labs)
-              Card(
-                child: ExpansionTile(
-                  leading: Icon(
-                    switch (statusMap[l.id]) {
-                      'done' => Icons.check_circle,
-                      'posttest' => Icons.lock_outline,
-                      'active' => Icons.play_arrow,
-                      _ => Icons.circle_outlined,
-                    },
-                  ),
-                  title: AutoSizeText(l.title,
-                      maxLines: 1, minFontSize: 12),
-                  subtitle: Text([
-                    labStatusLabel(statusMap[l.id] as String?),
-                    progressLine((prog[l.id]?['baseline']) as Map?,
-                            (prog[l.id]?['posttest']) as Map?) ??
-                        'Sin evidencias comparables',
-                  ].join(' · ')),
+        if (labs.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.school_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Text('Sin laboratorios todavía',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                      'Vuelve más tarde o avisa a tu instructor si esperabas contenido aquí.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            ),
+          );
+        }
+        final cs = Theme.of(context).colorScheme;
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        final routeLabel =
+            AppLocalizations.of(context)?.routeProgress(done, labs.length) ??
+                'Ruta: ${_int.format(done)} de ${_int.format(labs.length)} labs completados';
+        Color statusColor(String? st) => switch (st) {
+              'done' =>
+                dark ? CognitiveColors.successDark : CognitiveColors.success,
+              'active' => cs.primary,
+              'posttest' => cs.tertiary,
+              _ => cs.outline,
+            };
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: [
+                Semantics(
+                    header: true,
+                    child: Text(routeLabel,
+                        style: Theme.of(context).textTheme.titleMedium)),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: done / labs.length,
+                  semanticsLabel: routeLabel,
+                  semanticsValue: '${((done / labs.length) * 100).round()}%',
+                ),
+                const SizedBox(height: 16),
+                for (final l in labs)
+                  Card(
+                    child: ExpansionTile(
+                      leading: Icon(
+                        switch (statusMap[l.id]) {
+                          'done' => Icons.check_circle,
+                          'posttest' => Icons.lock_outline,
+                          'active' => Icons.play_arrow,
+                          _ => Icons.circle_outlined,
+                        },
+                        color: statusColor(statusMap[l.id] as String?),
+                        semanticLabel:
+                            labStatusLabel(statusMap[l.id] as String?),
+                      ),
+                      title: AutoSizeText(l.title,
+                          maxLines: 1, minFontSize: 12),
+                      subtitle: Text([
+                        labStatusLabel(statusMap[l.id] as String?),
+                        progressLine((prog[l.id]?['baseline']) as Map?,
+                                (prog[l.id]?['posttest']) as Map?) ??
+                            'Sin evidencias comparables',
+                        if (prog[l.id]?['pending_review'] == true)
+                          'Pendiente de revisión'
+                        else if (prog[l.id]?['reviewed'] == true)
+                          'Revisado',
+                      ].join(' · ')),
                   children: [
                     if ((prog[l.id]?['baseline'] as Map?)?.isNotEmpty == true ||
                         (prog[l.id]?['posttest'] as Map?)?.isNotEmpty == true)
@@ -2887,7 +3110,9 @@ class _ProgressState extends State<ProgressPage> {
                   ],
                 ),
               ),
-          ],
+              ],
+            ),
+          ),
         );
       },
     );
@@ -2943,6 +3168,11 @@ class _InstructorState extends State<InstructorPage> {
                   leading: const Icon(Icons.person_outline),
                   title: AutoSizeText(st.displayName,
                       maxLines: 1, minFontSize: 12),
+                  subtitle: Text(
+                    _studentSummary(
+                        (matrix[st.id]?['labs'] as Map?)?.cast<String, Map>()),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   children: [
                     if (matrix[st.id] != null)
                       Padding(
@@ -2967,12 +3197,25 @@ class _InstructorState extends State<InstructorPage> {
 }
 
 // P4.4: matriz por alumno — baseline→postest por lab, sin promediar personas.
+// ponytail: resumen de una línea para el subtítulo sin expandir.
+String _studentSummary(Map<String, Map>? labs) {
+  if (labs == null || labs.isEmpty) return 'Sin actividad todavía';
+  final pending = [for (final e in labs.values) if (e['pending_review'] == true) e].length;
+  final withEvidence = [
+    for (final e in labs.values)
+      if (progressLine(e['baseline'] as Map?, e['posttest'] as Map?) != null) e
+  ].length;
+  final labsBit = '$withEvidence de ${labs.length} con evidencias';
+  return pending > 0 ? '$labsBit · $pending pendiente(s) de revisión' : labsBit;
+}
+
 class _MatrixCard extends StatelessWidget {
   final Map<String, String> labTitles;
   final Map<String, Map> labs;
   const _MatrixCard({required this.labTitles, required this.labs});
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2993,7 +3236,14 @@ class _MatrixCard extends StatelessWidget {
                     style: const TextStyle(fontSize: 12)),
                 if (e.value['pending_review'] == true) ...[
                   const SizedBox(width: 6),
-                  const Icon(Icons.mark_email_unread_outlined, size: 16),
+                  Icon(Icons.mark_email_unread_outlined,
+                      size: 16, color: cs.tertiary),
+                  const SizedBox(width: 4),
+                  Semantics(
+                    label: 'Pendiente de revisión',
+                    child: Text('Pendiente de revisión',
+                        style: TextStyle(fontSize: 12, color: cs.tertiary)),
+                  ),
                 ],
               ],
             ),
@@ -3012,14 +3262,42 @@ class _SessionsDialog extends StatefulWidget {
   State<_SessionsDialog> createState() => _SessionsDialogState();
 }
 
+// ponytail: future recreable para reintentar tras error de red.
 class _SessionsDialogState extends State<_SessionsDialog> {
-  late final _future = fetchSessions(widget.studentId);
+  late Future<List<SessionInfo>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future = fetchSessions(widget.studentId);
+  }
+
+  void _retry() => setState(() => _future = fetchSessions(widget.studentId));
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<SessionInfo>>(
       future: _future,
       builder: (c2, s2) {
-        if (!s2.hasData) return const LinearProgressIndicator();
+        if (s2.connectionState == ConnectionState.waiting) {
+          return Semantics(
+            liveRegion: true,
+            child: const LinearProgressIndicator(),
+          );
+        }
+        if (s2.hasError) {
+          return Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text('No se pudieron cargar las sesiones: ${s2.error}',
+                      style: const TextStyle(fontSize: 12)),
+                ),
+              ),
+              TextButton(onPressed: _retry, child: const Text('Reintentar')),
+            ],
+          );
+        }
         final sessions = s2.data!;
         if (sessions.isEmpty) return const Text('Sin sesiones');
         return ConstrainedBox(
@@ -3030,6 +3308,7 @@ class _SessionsDialogState extends State<_SessionsDialog> {
               for (final se in sessions)
                 ListTile(
                   dense: true,
+                  trailing: const Icon(Icons.chevron_right, size: 18),
                   title: Text(
                       '${widget.labTitles[se.labTemplateId] ?? se.labTemplateId} · '
                       '${labStatusLabel(se.status)}',
