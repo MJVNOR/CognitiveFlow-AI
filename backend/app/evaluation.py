@@ -1,11 +1,39 @@
-"""Rúbrica overfitting v1 + evaluadores mock/Jev (etiquetados)."""
+"""Rúbrica overfitting v1 + evaluadores mock/Jev (etiquetados).
+
+Proveedor Jev: jev-api.org (doc: https://jev-api.org/jev-python, 2026-10-09).
+POST {base}/v1/systemone con {model, state, questions}; claves JEV_API_KEY
+o TYPESAFE_API_KEY (dashboard jev-api.org, no valen las de TypeSafe console).
+Sin key o ante cualquier fallo: pending con criteria [], jamás scores.
+"""
 import os
+import time
 
 import httpx
 
 RUBRIC_VERSION = "ml-overfitting-v1"
 DATA_RUBRIC_VERSION = "data-cleaning-v1"
 JEV_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CognitiveFlow/0.1"}
+JEV_MODEL_DEFAULT = "jev-latest"  # default del proveedor; override con JEV_MODEL
+
+
+def _jev_key() -> str:
+    return os.getenv("JEV_API_KEY", "") or os.getenv("TYPESAFE_API_KEY", "")
+
+
+def _jev_base() -> str:
+    return (
+        os.getenv("JEV_BASE_URL", "")
+        or os.getenv("TYPESAFE_BASE_URL", "")
+        or "https://jev-api.org"
+    ).rstrip("/")
+
+
+def _jev_model() -> str:
+    return (
+        os.getenv("JEV_MODEL", "")
+        or os.getenv("TYPESAFE_DEFAULT_MODEL", "")
+        or JEV_MODEL_DEFAULT
+    )
 
 # E4: cada criterio → una pregunta noul (5 ≤ límite 8 de Jev)
 JEV_QUESTIONS = {
@@ -73,31 +101,49 @@ def _pending(reason: str) -> dict:    # Nunca puntuar ante fallo: pending/error 
 
 
 def jev_evaluate(answer_text: str, input_state: dict) -> dict:
-    key = os.getenv("JEV_API_KEY", "")
+    key = _jev_key()
     if not key:
         return _pending("sin JEV_API_KEY")
-    base = os.getenv("JEV_BASE_URL", "https://jev-api.org").rstrip("/")
     state = (
         f"complexity={input_state.get('complexity')} "
         f"noise={input_state.get('noise_pct')} answer: {(answer_text or '')[:6000]}"
     )
-    try:
-        r = httpx.post(
-            f"{base}/v1/systemone",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", **JEV_UA},
-            json={
-                "state": state,
-                "questions": {
-                    cid: {"type": "noul", "instructions": q}
-                    for cid, q in JEV_QUESTIONS.items()
-                },
-            },
-            timeout=25,
-        )
-        r.raise_for_status()
-        return jev_to_internal(r.json()["answers"])
-    except Exception as e:
-        return _pending(f"{type(e).__name__}")
+    body = {
+        "model": _jev_model(),
+        "state": state,
+        "questions": {
+            cid: {"type": "noul", "instructions": q} for cid, q in JEV_QUESTIONS.items()
+        },
+    }
+    url = f"{_jev_base()}/v1/systemone"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", **JEV_UA}
+    # ponytail: sin sleep entre reintentos; el endpoint es síncrono y bloquea el worker.
+    last = "error desconocido"
+    start = time.monotonic()
+    for _ in (0, 1):
+        try:
+            r = httpx.post(url, headers=headers, json=body, timeout=25)
+            if r.status_code in (429, 502):
+                last = f"Jev {r.status_code}: transitorio, reintentable"
+                continue
+            if r.status_code == 401:
+                return _pending("Jev 401: API key ausente o rechazada")
+            if r.status_code == 402:
+                return _pending("Jev 402: sin créditos")
+            if r.status_code == 422:
+                return _pending("Jev 422: cuerpo inválido")
+            r.raise_for_status()
+            out = jev_to_internal(r.json()["answers"])
+            out["provider"] = "jev-api.org"
+            out["model"] = _jev_model()
+            out["latency_ms"] = int((time.monotonic() - start) * 1000)
+            return out
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last = f"{type(e).__name__} (transitorio)"
+            continue
+        except Exception as e:
+            return _pending(f"{type(e).__name__}")
+    return _pending(last)
 
 
 MONITOR_RUBRIC_VERSION = "drift-v1"

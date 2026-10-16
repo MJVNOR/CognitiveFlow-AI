@@ -1207,6 +1207,17 @@ class _PosttestReflectionState extends State<PosttestReflection> {
   }
 }
 
+/// P2.4: etiquetas humanas para criterios Jev — nunca solo `id · score`.
+const criterionLabels = {
+  'exactitud': 'Exactitud conceptual',
+  'evidencia': 'Uso de evidencia',
+  'causal': 'Causalidad',
+  'alternativas': 'Alternativas',
+  'metacognicion': 'Revisión',
+};
+
+String criterionLabel(String id) => criterionLabels[id] ?? id;
+
 /// Panel compartido: evaluación + socrática + siguiente intervención GenUI.
 /// Siempre visible tras el primer envío, con estados (nunca vacío silencioso).
 class ResultPanel extends StatelessWidget {
@@ -1242,37 +1253,78 @@ class ResultPanel extends StatelessWidget {
           TextButton(onPressed: onRetry, child: const Text(Strings.retry)),
         ],
         if (lab.evalResult != null) ...[
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Chip(
-                label: Text(
-                  'Evaluación: ${lab.evalResult!['evaluator']}',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                visualDensity: VisualDensity.compact,
-              ),
-              for (final c in (lab.evalResult!['criteria'] as List))
-                Chip(
-                  avatar: Icon(
-                    (c['score'] as num) >= 2
-                        ? Icons.check_circle
-                        : Icons.error_outline,
-                    size: 16,
+          Builder(builder: (context) {
+            final r = lab.evalResult!;
+            final isJev = r['evaluator'] == 'jev';
+            if (r['status'] == 'pending') {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Chip(
+                    label: Text(
+                      isJev ? 'Evaluación Jev pendiente' : 'Evaluación pendiente',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    visualDensity: VisualDensity.compact,
                   ),
-                  label: Text('${c['id']} · ${c['score']}',
-                      style: const TextStyle(fontSize: 12)),
-                  visualDensity: VisualDensity.compact,
+                  const SizedBox(height: 4),
+                  Text(
+                    'Jev no devolvió diagnóstico'
+                    '${r['reason'] != null ? ': ${r['reason']}' : ''}. '
+                    'No es una nota; tu intento está guardado.',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  TextButton(onPressed: onRetry, child: const Text(Strings.retry)),
+                ],
+              ).animate().fadeIn(duration: 250.ms);
+            }
+            final crits = (r['criteria'] as List).cast<Map>();
+            crits.sort((a, b) =>
+                ((b['score'] as num)).compareTo((a['score'] as num)));
+            final summary = crits.isEmpty
+                ? null
+                : 'Fortaleza: ${criterionLabel('${crits.first['id']}')}'
+                    '${crits.length > 1 ? ' · A trabajar: ${criterionLabel('${crits.last['id']}')}' : ''}';
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Chip(
+                      label: Text(
+                        isJev ? 'Evaluación Jev' : 'Evaluación simulada',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    for (final c in crits)
+                      Chip(
+                        avatar: Icon(
+                          (c['score'] as num) >= 2
+                              ? Icons.check_circle
+                              : Icons.error_outline,
+                          size: 16,
+                        ),
+                        label: Text(
+                            '${criterionLabel('${c['id']}')} · ${c['score']}',
+                            style: const TextStyle(fontSize: 12)),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
+                ).animate().fadeIn(duration: 250.ms),
+                const SizedBox(height: 4),
+                if (summary != null)
+                  Text(summary, style: const TextStyle(fontSize: 12)),
+                const Text(
+                  'Evidencia orientativa, revisable por tu instructor.',
+                  style: TextStyle(fontSize: 12),
                 ),
-            ],
-          ).animate().fadeIn(duration: 250.ms),
-          const SizedBox(height: 4),
-          const Text(
-            'Evidencia orientativa, revisable por tu instructor.',
-            style: TextStyle(fontSize: 12),
-          ),
+              ],
+            );
+          }),
         ],
         if (lab.socraticQ.isNotEmpty) ...[
           const SizedBox(height: 8),
