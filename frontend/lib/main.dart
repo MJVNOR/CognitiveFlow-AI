@@ -498,6 +498,14 @@ String labStatusLabel(String? status) => switch (status) {
       _ => 'No iniciado',
     };
 
+// P6.1: nada de ids crudos visibles (jerga de dominio, no de producto).
+String labTypeLabel(String? t) => switch (t) {
+      'data_detective' => 'Datos tabulares',
+      'ml_experiment' => 'Overfitting y generalización',
+      'model_monitoring' => 'Deriva y monitoreo',
+      _ => t ?? '',
+    };
+
 class _AcademyState extends State<AcademyPage> {
   // ponytail: un solo Future.wait; tres GET en paralelo, un solo spinner.
   late Future<List<dynamic>> _future;
@@ -777,7 +785,14 @@ class LabsPage extends StatefulWidget {
 }
 
 class _LabsState extends State<LabsPage> {
-  late final _future = fetchLabs();
+  late Future<List<Lab>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future = fetchLabs();
+  }
+
+  void _retry() => setState(() => _future = fetchLabs());
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<Lab>>(
@@ -788,27 +803,59 @@ class _LabsState extends State<LabsPage> {
         }
         if (s.hasError) {
           return Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Text('${Strings.noApi}: ${s.error}'),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('${Strings.noApi}: ${s.error}',
+                        textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _retry,
+                    child: const Text(Strings.retry),
+                  ),
+                ],
+              ),
             ),
           );
         }
         final labs = s.data!;
-        return ListView(
-          children: [
-            for (final l in labs)
-              ListTile(
-                title: AutoSizeText(l.title,
-                    maxLines: 1, minFontSize: 12),
-                subtitle: Text(l.labType),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => context.go(
-                  '/labs/${l.id}',
-                  extra: {'lab_type': l.labType, 'title': l.title},
-                ),
-              ),
-          ],
+        if (labs.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('Sin laboratorios todavía',
+                  textAlign: TextAlign.center),
+            ),
+          );
+        }
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: [
+                for (final l in labs)
+                  Card(
+                    child: ListTile(
+                      title: AutoSizeText(l.title,
+                          maxLines: 1, minFontSize: 12),
+                      subtitle: Text(labTypeLabel(l.labType)),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go(
+                        '/labs/${l.id}',
+                        extra: {'lab_type': l.labType, 'title': l.title},
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -841,7 +888,7 @@ class LabSteps extends StatelessWidget {
                 Icon(
                   i <= current ? Icons.check_circle : Icons.circle_outlined,
                   size: 16,
-                  color: i <= current ? cs.primary : cs.outline,
+                  color: i <= current ? cs.primary : cs.onSurfaceVariant,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -849,7 +896,7 @@ class LabSteps extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: i == current ? FontWeight.bold : null,
-                    color: i <= current ? null : cs.outline,
+                    color: i <= current ? null : cs.onSurfaceVariant,
                   ),
                 ),
               ],
@@ -1312,10 +1359,15 @@ class ResultPanel extends StatelessWidget {
               style: TextStyle(fontSize: 12)),
         ] else if (lab.evalResult != null && !lab.evaluating && lab.evalError == null) ...[
           const SizedBox(height: 8),
-          FilledButton.tonal(
-              onPressed: null, child: const Text('Siguiente actividad')),
-          const Text('Esperando la pregunta del tutor…',
-              style: TextStyle(fontSize: 12)),
+          const Row(
+            children: [
+              SizedBox(
+                  width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('Esperando la pregunta del tutor…',
+                  style: TextStyle(fontSize: 12)),
+            ],
+          ),
         ],
         if (lab.nextBusy)
           const Padding(
@@ -1486,24 +1538,51 @@ class _DataLabState extends State<DataLabPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final experimentAccent = lab.posttestMode ? null : cs.secondary;
     return Scaffold(
       appBar: AppBar(
           title: Text(lab.posttestMode ? '${widget.title} (postest)' : widget.title)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            controller: scrollCtrl,
-            children: [
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // P6.2: mismo split desktop que ML/Monitor (actividad | tutor).
+              final controls = <Widget>[
               LabHeader(
                 objective: lab.posttestMode
                     ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
                     : 'Marca las filas con anomalías y justifica tu plan de limpieza.',
                 step: lab.step,
               ),
-              const SizedBox(height: 8),
-              const Text(Strings.scrollHint, style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 12),
+              if (lab.posttestMode)
+                Card(
+                  color: cs.surfaceContainerHighest,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_outline, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Modo postest — sin pistas, sin tutor, sin evaluación hasta entregar.',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (lab.posttestMode) const SizedBox(height: 12),
+              SectionCard(
+                icon: Icons.science,
+                title: '1 · Explora la tabla',
+                accent: experimentAccent,
+                children: [
+              if (columns.isNotEmpty)
+                const Text(Strings.scrollHint, style: TextStyle(fontSize: 12)),
               if (columns.isEmpty && lab.status.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(24),
@@ -1547,6 +1626,14 @@ class _DataLabState extends State<DataLabPage> {
                   ),
                 ),
               ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SectionCard(
+                icon: Icons.edit_note,
+                title: '2 · Justifica tu plan',
+                accent: lab.posttestMode ? null : cs.tertiary,
+                children: [
           TextField(
             key: const ValueKey('data_justification'),
             controller: justification,
@@ -1557,11 +1644,24 @@ class _DataLabState extends State<DataLabPage> {
             ),
           ),
           const SizedBox(height: 12),
-          FilledButton(
-            key: const ValueKey('data_send'),
-            onPressed: lab.evaluating ? null : _send,
-            child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              key: const ValueKey('data_send'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 48),
+              ),
+              onPressed: lab.evaluating ? null : _send,
+              child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+            ),
           ),
+                ],
+              ),
+              const SizedBox(height: 12),
+          ];
+          final result = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
           if (!lab.posttestMode)
             TextButton(
               key: const ValueKey('go_posttest'),
@@ -1570,7 +1670,23 @@ class _DataLabState extends State<DataLabPage> {
                   : () => enterPosttest(lab, setState, _loadTable),
               child: const Text(Strings.goPosttest),
             ),
-          if (!lab.posttestMode)
+          if (!lab.posttestMode &&
+              (lab.evalResult != null ||
+                  lab.evaluating ||
+                  lab.evalError != null ||
+                  lab.intervention != null))
+            SectionCard(
+              icon: Icons.fact_check,
+              title: '3 · Evidencia y siguiente paso',
+              children: [
+                ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+              ],
+            ),
+          if (!lab.posttestMode &&
+              lab.evalResult == null &&
+              !lab.evaluating &&
+              lab.evalError == null &&
+              lab.intervention == null)
             ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
           if (lab.posttestMode && lab.posttestSent)
             PosttestReflection(
@@ -1584,6 +1700,30 @@ class _DataLabState extends State<DataLabPage> {
                 }),
           StatusText(lab.status, key: statusKey),
             ],
+          );
+              if (constraints.maxWidth >= 1024) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                        child: ListView(
+                            padding: const EdgeInsets.all(16),
+                            controller: scrollCtrl,
+                            children: controls)),
+                    SizedBox(
+                      width: (constraints.maxWidth * 0.35).clamp(320.0, 420.0),
+                      child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [result]),
+                    ),
+                  ],
+                );
+              }
+              return ListView(
+                  padding: const EdgeInsets.all(16),
+                  controller: scrollCtrl,
+                  children: [...controls, result]);
+            },
           ),
         ),
       ),
@@ -2346,6 +2486,9 @@ class _MonitorState extends State<MonitorLabPage> {
     final ref = (sel['ref'] as List?)?.cast<num>() ?? [];
     final cur = (sel['cur'] as List?)?.cast<num>() ?? [];
     final series = (dist?['series'] as List?)?.cast<num>() ?? [];
+    final cs = Theme.of(context).colorScheme;
+    final experimentAccent = lab.posttestMode ? null : cs.secondary;
+    final locked = lab.posttestSent || lab.posttestMode;
     final controls = [
       LabHeader(
         objective: lab.posttestMode
@@ -2353,49 +2496,106 @@ class _MonitorState extends State<MonitorLabPage> {
             : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.',
         step: lab.step,
       ),
-      Semantics(
-        label: '¿Qué feature deriva?',
-        child: DropdownButton<String>(
-          value: feats.containsKey(feature) ? feature : (feats.keys.firstOrNull as String? ?? feature),
-          hint: const Text('¿Qué feature deriva?'),
-          items: [
-            for (final k in feats.keys.cast<String>())
-              DropdownMenuItem(value: k, child: Text(k)),
-            if (feats.isEmpty)
-              DropdownMenuItem(value: feature, child: Text(feature)),
-          ],
-          onChanged: (v) {
-            setState(() => feature = v ?? feature);
-            saveDraft(widget.labId, 'feature', feature);
-          },
+      const SizedBox(height: 12),
+      if (lab.posttestMode)
+        Card(
+          color: cs.surfaceContainerHighest,
+          child: const Padding(
+            padding: EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(Icons.lock_outline, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Modo postest — sin pistas, sin tutor, sin evaluación hasta entregar.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      if (lab.posttestMode) const SizedBox(height: 12),
+      SectionCard(
+        icon: Icons.science,
+        title: '1 · Compara distribuciones',
+        accent: experimentAccent,
+        children: [
+      InputDecorator(
+        decoration: const InputDecoration(
+          labelText: '¿Qué feature deriva?',
+          border: OutlineInputBorder(),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: feats.containsKey(feature) ? feature : (feats.keys.firstOrNull as String? ?? feature),
+            isDense: true,
+            isExpanded: true,
+            items: [
+              for (final k in feats.keys.cast<String>())
+                DropdownMenuItem(value: k, child: Text(k)),
+              if (feats.isEmpty)
+                DropdownMenuItem(value: feature, child: Text(feature)),
+            ],
+            onChanged: locked
+                ? null
+                : (v) {
+                    setState(() => feature = v ?? feature);
+                    saveDraft(widget.labId, 'feature', feature);
+                  },
+          ),
         ),
       ),
+      const SizedBox(height: 12),
       AccessibleHistChart(ref: ref, cur: cur, label: 'Distribución $feature'),
       AccessibleCurveChart(train: series, val: const [], label: 'Serie temporal'),
-      Text('Punto de cambio: t=${changepoint.round()}',
-          style: const TextStyle(fontSize: 12)),
-      Slider(
-        value: changepoint, min: 0, max: 179, divisions: 179,
-        label: 'Cambio en t=${changepoint.round()}',
-        onChanged: (v) {
-          setState(() => changepoint = v);
-          saveDraft(widget.labId, 'changepoint', '$changepoint');
-        },
+      const SizedBox(height: 12),
+      ParamSlider(
+        label: 'Punto de cambio',
+        value: 't=${changepoint.round()}',
+        help: 'Mueve el punto y mira dónde la serie actual se separa.',
+        current: changepoint,
+        min: 0,
+        max: 179,
+        divisions: 179,
+        onChanged: locked ? null : (v) => setState(() => changepoint = v),
+        onChangeEnd: locked
+            ? null
+            : (_) => saveDraft(widget.labId, 'changepoint', '$changepoint'),
       ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      SectionCard(
+        icon: Icons.edit_note,
+        title: '2 · Hipótesis y decisión',
+        accent: lab.posttestMode ? null : cs.tertiary,
+        children: [
       TextField(
         key: const ValueKey('monitor_answer'),
         controller: answer, maxLines: 3,
+        enabled: !lab.posttestSent,
         decoration: const InputDecoration(
           labelText: 'Hipótesis de deriva y decisión *',
           border: OutlineInputBorder(),
         ),
       ),
       const SizedBox(height: 12),
-      FilledButton(
-        key: const ValueKey('monitor_send'),
-        onPressed: lab.evaluating ? null : _send,
-        child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+      if (!lab.posttestSent)
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            key: const ValueKey('monitor_send'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 48),
+            ),
+            onPressed: lab.evaluating ? null : _send,
+            child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
+          ),
+        ),
+        ],
       ),
+      const SizedBox(height: 12),
     ];
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2408,7 +2608,23 @@ class _MonitorState extends State<MonitorLabPage> {
                 : () => enterPosttest(lab, setState, _load),
             child: const Text(Strings.goPosttest),
           ),
-        if (!lab.posttestMode)
+        if (!lab.posttestMode &&
+            (lab.evalResult != null ||
+                lab.evaluating ||
+                lab.evalError != null ||
+                lab.intervention != null))
+          SectionCard(
+            icon: Icons.fact_check,
+            title: '3 · Evidencia y siguiente paso',
+            children: [
+              ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+            ],
+          ),
+        if (!lab.posttestMode &&
+            lab.evalResult == null &&
+            !lab.evaluating &&
+            lab.evalError == null &&
+            lab.intervention == null)
           ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
         if (lab.posttestMode && lab.posttestSent)
           PosttestReflection(
@@ -2577,7 +2793,7 @@ class ProgressPage extends StatefulWidget {
 class _ProgressState extends State<ProgressPage> {
   // ponytail: mismo Future.wait que Academia + GET /me/progress medido.
   late final _future =
-      Future.wait([fetchLabs(), fetchMap('/me/lab-status'), fetchMap('/me/progress')]);
+      Future.wait([fetchLabs(), fetchMap('/me/lab-status'), fetchJson('/me/progress')]);
 
   @override
   Widget build(BuildContext context) {
@@ -2686,7 +2902,7 @@ class InstructorPage extends StatefulWidget {
 
 class _InstructorState extends State<InstructorPage> {
   late final _future =
-      Future.wait([fetchStudents(), fetchLabs(), fetchMap('/instructor/matrix')]);
+      Future.wait([fetchStudents(), fetchLabs(), fetchJson('/instructor/matrix')]);
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<dynamic>>(
@@ -2737,7 +2953,8 @@ class _InstructorState extends State<InstructorPage> {
                       ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: _SessionsDialog(studentId: st.id),
+                      child: _SessionsDialog(
+                          studentId: st.id, labTitles: labTitles),
                     ),
                   ],
                 ),
@@ -2789,7 +3006,8 @@ class _MatrixCard extends StatelessWidget {
 // ponytail: future hoisted to dialog state so rebuilds don't refetch.
 class _SessionsDialog extends StatefulWidget {
   final String studentId;
-  const _SessionsDialog({required this.studentId});
+  final Map<String, String> labTitles;
+  const _SessionsDialog({required this.studentId, required this.labTitles});
   @override
   State<_SessionsDialog> createState() => _SessionsDialogState();
 }
@@ -2812,7 +3030,11 @@ class _SessionsDialogState extends State<_SessionsDialog> {
               for (final se in sessions)
                 ListTile(
                   dense: true,
-                  title: Text('${se.labTemplateId} · ${se.status}'),
+                  title: Text(
+                      '${widget.labTitles[se.labTemplateId] ?? se.labTemplateId} · '
+                      '${labStatusLabel(se.status)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
                   onTap: () {
                     Navigator.pop(context);
                     context.go('/instructor/session/${se.id}');
