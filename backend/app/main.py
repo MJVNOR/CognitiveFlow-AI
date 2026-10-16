@@ -16,6 +16,7 @@ from app.labs_data import generate as generate_dataset
 from app.labs_monitor import generate as generate_monitor
 from app.socratic import socratic_question
 from app.interventions import select_intervention, validate_ui_spec, safe_intervention, CATALOG
+from app.interventions import SCHEMA_VERSION, ALLOWED_EVENTS, ALLOWED_BY_WIDGET
 from app.auth import current_user, require_instructor, session_for, new_token
 
 load_dotenv()
@@ -221,6 +222,47 @@ class AttemptIn(BaseModel):
     extra: dict = {}  # monitor: {feature, changepoint}
 
 
+class EventIn(BaseModel):
+    client_event_id: str
+    widget_type: str
+    event_type: str
+    payload: dict = {}
+
+
+@app.post("/sessions/{session_id}/events")
+def record_event(session_id: str, body: EventIn, user=Depends(current_user),
+                 db: Session = Depends(get_db)):
+    # P1.5: canal bidireccional — ownership primero, nunca score/cliente como verdad.
+    session_for(user, db, session_id)
+    if body.widget_type not in CATALOG:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, f"widget_type desconocido: {body.widget_type}")
+    if body.event_type not in ALLOWED_EVENTS:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, f"event_type desconocido: {body.event_type}")
+    if body.event_type not in ALLOWED_BY_WIDGET.get(body.widget_type, []):
+        from fastapi import HTTPException
+
+        raise HTTPException(422, f"{body.event_type} no permitido en {body.widget_type}")
+    # ponytail: dedup por PK (client_event_id) — reintento seguro, un solo registro
+    existing = db.query(models.UiEvent).filter_by(id=body.client_event_id).first()
+    if existing:
+        return {"id": existing.id, "deduped": True}
+    db.add(
+        models.UiEvent(
+            id=body.client_event_id,
+            session_id=session_id,
+            widget_type=body.widget_type,
+            event_type=body.event_type,
+            payload_json=json.dumps(body.payload),
+        )
+    )
+    db.commit()
+    return {"id": body.client_event_id, "deduped": False}
+
+
 @app.post("/sessions/{session_id}/attempts")
 def create_attempt(session_id: str, body: AttemptIn, user=Depends(current_user),
                    db: Session = Depends(get_db)):
@@ -387,6 +429,9 @@ def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_us
     )
     if errors or intervention["widget_type"] not in CATALOG:
         return safe_intervention(f"ui_spec inválida: {errors}")
+    # P1.1: contrato versionado — el cliente valida tipo, versión y eventos.
+    intervention["schema_version"] = SCHEMA_VERSION
+    intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])
     return intervention
 
 

@@ -7,6 +7,58 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:genui/genui.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
 
+// P1.5: sink de eventos widget → backend. TutorSurface lo cablea a
+// POST /sessions/{id}/events; null en tests unitarios del catálogo.
+// ponytail: un static, no InheritedWidget para un solo callback.
+abstract final class TutorEvents {
+  static void Function(String widgetType, String eventType, Map<String, Object?> payload)? emit;
+  static void send(String w, String e, [Map<String, Object?> p = const {}]) =>
+      emit?.call(w, e, p);
+}
+
+double? _numProp(Map data, String key) {
+  final v = data[key];
+  return v is num ? v.toDouble() : null;
+}
+
+Widget _titledCard(BuildContext context, String title, String body,
+    {IconData? icon, Color? accent, List<Widget> children = const []}) {
+  return Card(
+    shape: accent == null
+        ? null
+        : RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: accent),
+          ),
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: accent),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall),
+              ),
+            ],
+          ),
+          Text(body, style: Theme.of(context).textTheme.bodyMedium),
+          ...children,
+        ],
+      ),
+    ),
+  ).animate().fadeIn(duration: 250.ms);
+}
+
 Widget _card(CatalogItemContext ctx, String titleKey, String bodyKey,
     {IconData? icon, Color Function(ColorScheme cs)? accent}) {
   final data = ctx.data as Map;
@@ -88,9 +140,92 @@ final evidenceComparison = CatalogItem(
     () => '[{"id": "root", "component": "EvidenceComparison", '
         '"title": "Compara", "evidence": "curva de validación"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'evidence',
-      icon: Icons.compare_arrows, accent: (cs) => cs.tertiary),
+  widgetBuilder: (ctx) => _EvidenceComparison(ctx),
 );
+
+/// P1.3: qué curva apoya tu conclusión + argumento; emite
+/// evidenceSelected y argumentSubmitted (POST /sessions/{id}/events).
+class _EvidenceComparison extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _EvidenceComparison(this.ctx);
+  @override
+  State<_EvidenceComparison> createState() => _EvidenceComparisonState();
+}
+
+class _EvidenceComparisonState extends State<_EvidenceComparison> {
+  String? selection;
+  final argument = TextEditingController();
+  bool sent = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // ponytail: el botón se habilita al escribir; sin esto queda muerto.
+    argument.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    argument.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    final cs = Theme.of(context).colorScheme;
+    return _titledCard(context, '${data['title'] ?? 'Compara'}',
+        '${data['evidence'] ?? ''}',
+        icon: Icons.compare_arrows,
+        accent: cs.tertiary,
+        children: [
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final o in const [
+                ('train', 'Entrenamiento'),
+                ('val', 'Validación'),
+                ('both', 'Ambas'),
+              ])
+                ChoiceChip(
+                  key: ValueKey('ec_${o.$1}'),
+                  label: Text(o.$2),
+                  selected: selection == o.$1,
+                  onSelected: (_) {
+                    setState(() => selection = o.$1);
+                    TutorEvents.send('EvidenceComparison', 'evidenceSelected',
+                        {'selection': o.$1});
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('ec_argument'),
+            controller: argument,
+            maxLines: 3,
+            minLines: 2,
+            decoration: const InputDecoration(
+              labelText: 'Tu argumento (cita las curvas)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.tonal(
+            key: const ValueKey('ec_send'),
+            onPressed: argument.text.trim().isEmpty
+                ? null
+                : () {
+                    TutorEvents.send('EvidenceComparison', 'argumentSubmitted',
+                        {'argument': argument.text, 'selection': selection ?? ''});
+                    setState(() => sent = true);
+                  },
+            child: Text(sent ? 'Argumento enviado ✓' : 'Enviar argumento'),
+          ),
+        ]);
+  }
+}
 
 final hypothesisEditor = CatalogItem(
   name: 'HypothesisEditor',
@@ -105,8 +240,72 @@ final hypothesisEditor = CatalogItem(
     () => '[{"id": "root", "component": "HypothesisEditor", '
         '"title": "Hipótesis", "hypothesis": "Creo que…"}]',
   ],
-  widgetBuilder: (ctx) => _card(ctx, 'title', 'hypothesis'),
+  widgetBuilder: (ctx) => _HypothesisEditor(ctx),
 );
+
+/// P1.4: hipótesis inicial + revisión justificada; cada guardado emite
+/// hypothesisSubmitted con revision N (historial sin filtrar soluciones).
+class _HypothesisEditor extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _HypothesisEditor(this.ctx);
+  @override
+  State<_HypothesisEditor> createState() => _HypothesisEditorState();
+}
+
+class _HypothesisEditorState extends State<_HypothesisEditor> {
+  final field = TextEditingController();
+  int revisions = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    field.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    field.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    return _titledCard(context, '${data['title'] ?? 'Hipótesis'}',
+        '${data['hypothesis'] ?? ''}',
+        icon: Icons.edit_note,
+        children: [
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('he_field'),
+            controller: field,
+            maxLines: 3,
+            minLines: 2,
+            decoration: InputDecoration(
+              labelText: revisions == 0
+                  ? 'Tu hipótesis revisada'
+                  : 'Revisión ${revisions + 1}',
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.tonal(
+            key: const ValueKey('he_save'),
+            onPressed: field.text.trim().isEmpty
+                ? null
+                : () {
+                    revisions++;
+                    TutorEvents.send('HypothesisEditor', 'hypothesisSubmitted',
+                        {'hypothesis': field.text, 'revision': revisions});
+                    setState(() {});
+                  },
+            child: Text(revisions == 0
+                ? 'Guardar hipótesis'
+                : 'Guardada revisión $revisions ✓'),
+          ),
+        ]);
+  }
+}
 
 final driftDistributionExplorer = CatalogItem(
   name: 'DriftDistributionExplorer',
@@ -142,9 +341,8 @@ final dataTableExplorer = CatalogItem(
       icon: Icons.table_chart, accent: (cs) => cs.secondary),
 );
 
-// ponytail: los 7 restantes del CATALOG comparten forma título+pregunta;
-// un solo helper en vez de 7 clases casi idénticas.
-// ponytail: LearningCurveSimulator es experiment (teal); resto neutral.
+// ponytail: los 6 restantes del CATALOG comparten forma título+pregunta;
+// un solo helper en vez de 6 clases casi idénticas.
 CatalogItem _simpleCard(String name, String titleEx, String bodyEx,
     {bool experiment = false}) {
   return CatalogItem(
@@ -170,9 +368,106 @@ final choiceReasoningWidget =
     _simpleCard('ChoiceReasoningWidget', 'Elige y razona', '¿Qué opción y por qué?');
 final sqlQueryWorkbench =
     _simpleCard('SqlQueryWorkbench', 'Consulta', '¿Qué consulta responde esto?');
-final learningCurveSimulator = _simpleCard(
-    'LearningCurveSimulator', 'Simula', '¿Qué pasa si subes la complejidad?',
-    experiment: true);
+
+/// P1.2: simulador paramétrico real (sliders + predicción); la curva vive en
+/// LabDetailPage. Emite parameterChanged y predictionSubmitted.
+final learningCurveSimulator = CatalogItem(
+  name: 'LearningCurveSimulator',
+  dataSchema: S.object(
+    properties: {
+      'title': S.string(description: 'Título del simulador'),
+      'question': S.string(description: 'Consigna o pregunta'),
+      'complexity': S.number(description: 'Complejidad inicial 1-10'),
+      'noise_pct': S.number(description: 'Ruido inicial 0-50'),
+    },
+    required: ['question'],
+  ),
+  exampleData: [
+    () => '[{"id": "root", "component": "LearningCurveSimulator", '
+        '"title": "Simula", "question": "¿Qué pasa si subes la complejidad?", '
+        '"complexity": 5, "noise_pct": 20}]',
+  ],
+  widgetBuilder: (ctx) => _LearningCurveSimulator(ctx),
+);
+
+class _LearningCurveSimulator extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _LearningCurveSimulator(this.ctx);
+  @override
+  State<_LearningCurveSimulator> createState() => _LearningCurveSimulatorState();
+}
+
+class _LearningCurveSimulatorState extends State<_LearningCurveSimulator> {
+  late double complexity;
+  late double noise;
+
+  @override
+  void initState() {
+    super.initState();
+    final data = widget.ctx.data as Map;
+    complexity = (_numProp(data, 'complexity') ?? 5).clamp(1, 10);
+    noise = (_numProp(data, 'noise_pct') ?? 20).clamp(0, 50);
+  }
+
+  void _changed() => TutorEvents.send('LearningCurveSimulator', 'parameterChanged',
+      {'complexity': complexity.round(), 'noise_pct': noise.round()});
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    final cs = Theme.of(context).colorScheme;
+    return _titledCard(context, '${data['title'] ?? 'Simula'}',
+        '${data['question'] ?? ''}',
+        icon: Icons.science,
+        accent: cs.secondary,
+        children: [
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text('Complejidad'),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('lcs_complexity'),
+                  value: complexity,
+                  min: 1,
+                  max: 10,
+                  divisions: 9,
+                  label: '${complexity.round()}',
+                  onChanged: (v) => setState(() => complexity = v),
+                  onChangeEnd: (_) => _changed(),
+                ),
+              ),
+              Text('${complexity.round()}/10'),
+            ],
+          ),
+          Row(
+            children: [
+              const Text('Ruido'),
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('lcs_noise'),
+                  value: noise,
+                  min: 0,
+                  max: 50,
+                  divisions: 10,
+                  label: '${noise.round()}%',
+                  onChanged: (v) => setState(() => noise = v),
+                  onChangeEnd: (_) => _changed(),
+                ),
+              ),
+              Text('${noise.round()}%'),
+            ],
+          ),
+          FilledButton.tonal(
+            key: const ValueKey('lcs_send'),
+            onPressed: () => TutorEvents.send('LearningCurveSimulator',
+                'predictionSubmitted',
+                {'complexity': complexity.round(), 'noise_pct': noise.round()}),
+            child: const Text('Enviar predicción'),
+          ),
+        ]);
+  }
+}
 final conceptMapBuilder =
     _simpleCard('ConceptMapBuilder', 'Mapa', '¿Cómo se conectan estos conceptos?');
 final pipelineDAGBuilder =

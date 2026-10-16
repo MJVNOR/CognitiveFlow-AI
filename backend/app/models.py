@@ -75,3 +75,13 @@ class InstructorReview(Base):
     instructor_id: Mapped[str] = mapped_column(String, nullable=False)
     rubric_scores_json: Mapped[str] = mapped_column(Text, default="{}")
     notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class UiEvent(Base):
+    __tablename__ = "ui_events"
+    # ponytail: id = client_event_id → dedup natural por PK, un registro por evento
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    widget_type: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")

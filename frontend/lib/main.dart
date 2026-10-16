@@ -73,6 +73,18 @@ class StatusText extends StatelessWidget {
   }
 }
 
+/// Lleva la vista al estado tras evaluar/avanzar: el resultado aparece
+/// bajo el fold y si no el usuario no lo ve (ni Marionette lo alcanza).
+void scrollToStatus(GlobalKey key) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 250));
+    }
+  });
+}
+
 Future<void> main() async {
   if (kDebugMode) {
     MarionetteBinding.ensureInitialized();
@@ -437,6 +449,7 @@ class Shell extends ConsumerWidget {
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 16),
                 child: IconButton(
+                  key: const ValueKey('nav_logout'),
                   tooltip: 'Salir',
                   icon: const Icon(Icons.logout),
                   onPressed: logout,
@@ -501,6 +514,11 @@ Future<Map<String, dynamic>> postJson(String path, Map<String, dynamic> body) as
   return jsonDecode(r.body) as Map<String, dynamic>;
 }
 
+// P1.5: id único por evento (reintento seguro vía dedup en backend).
+int _eventSeq = 0;
+String newEventId() =>
+    '${DateTime.now().microsecondsSinceEpoch}-${_eventSeq++}';
+
 Future<List<Module>> fetchModules() async => parseModules(await fetchJson('/modules'));
 Future<List<Lab>> fetchLabs() async => parseLabs(await fetchJson('/labs'));
 Future<List<Student>> fetchStudents() async =>
@@ -525,39 +543,87 @@ String labStatusLabel(String? status) => switch (status) {
 
 class _AcademyState extends State<AcademyPage> {
   // ponytail: un solo Future.wait; tres GET en paralelo, un solo spinner.
-  late final _future =
-      Future.wait([fetchModules(), fetchLabs(), fetchMap('/me/lab-status')]);
+  late Future<List<dynamic>> _future;
+  @override
+  void initState() {
+    super.initState();
+    _future =
+        Future.wait([fetchModules(), fetchLabs(), fetchMap('/me/lab-status')]);
+  }
+
+  void _retry() => setState(() {
+        _future = Future.wait(
+            [fetchModules(), fetchLabs(), fetchMap('/me/lab-status')]);
+      });
 
   void _goLab(BuildContext context, Lab l) => context.go(
         '/labs/${l.id}',
         extra: {'lab_type': l.labType, 'title': l.title},
       );
 
+  (IconData, Color, Color, Color) _statusStyle(
+      String? st, ColorScheme cs) {
+    // icon, iconColor, chipBg, chipFg — redundancia icono+texto (DESIGN.md §4).
+    return switch (st) {
+      'done' => (
+          Icons.check_circle,
+          const Color(0xFF166534),
+          const Color(0xFFDCFCE7),
+          const Color(0xFF166534),
+        ),
+      'active' => (
+          Icons.play_arrow,
+          cs.primary,
+          cs.primaryContainer,
+          cs.onPrimaryContainer,
+        ),
+      'posttest' => (
+          Icons.lock_outline,
+          cs.tertiary,
+          cs.tertiaryContainer,
+          cs.onTertiaryContainer,
+        ),
+      _ => (Icons.circle_outlined, cs.outline, cs.surfaceContainerHighest,
+          cs.onSurfaceVariant),
+    };
+  }
+
   Widget _labCard(BuildContext context, Lab l, Map statusMap) {
     final st = statusMap[l.id] as String?;
+    final cs = Theme.of(context).colorScheme;
+    final (icon, iconColor, chipBg, chipFg) = _statusStyle(st, cs);
     return Card(
       child: ListTile(
-        title: AutoSizeText(l.title, maxLines: 1, minFontSize: 12),
-        subtitle: AutoSizeText(l.description,
-            maxLines: 2, minFontSize: 11, overflow: TextOverflow.ellipsis),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        leading: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: chipBg,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 20, color: st == null ? iconColor : chipFg),
+        ),
+        title: Text(l.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall),
+        subtitle: l.description.isEmpty
+            ? null
+            : Text(l.description,
+                maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Chip(
-              avatar: Icon(
-                switch (st) {
-                  'active' => Icons.play_arrow,
-                  'posttest' => Icons.lock_outline,
-                  'done' => Icons.check_circle,
-                  _ => Icons.circle_outlined,
-                },
-                size: 14,
-              ),
+              backgroundColor: chipBg,
               label: Text(labStatusLabel(st),
-                  style: const TextStyle(fontSize: 11)),
+                  style: TextStyle(fontSize: 11, color: chipFg)),
               visualDensity: VisualDensity.compact,
+              side: BorderSide.none,
             ),
-            const Icon(Icons.chevron_right),
+            Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
           ],
         ),
         onTap: () => _goLab(context, l),
@@ -571,13 +637,38 @@ class _AcademyState extends State<AcademyPage> {
       future: _future,
       builder: (c, s) {
         if (s.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Cargando academia…'),
+              ],
+            ),
+          );
         }
         if (s.hasError) {
           return Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Text('${Strings.noApi}: ${s.error}'),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text('${Strings.noApi}: ${s.error}',
+                        textAlign: TextAlign.center),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _retry,
+                    child: const Text('Reintentar'),
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -585,6 +676,27 @@ class _AcademyState extends State<AcademyPage> {
         final labs = s.data![1] as List<Lab>;
         final statusMap = s.data![2] as Map;
         final orphans = [for (final l in labs) if (l.moduleId == '') l];
+        if (labs.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.school_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Text('Sin laboratorios todavía',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                      'Vuelve más tarde o avisa a tu instructor si esperabas contenido aquí.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            ),
+          );
+        }
         // Objetivo actual: lo en curso primero, si no lo siguiente sin iniciar.
         Lab? current;
         for (final l in labs) {
@@ -596,59 +708,105 @@ class _AcademyState extends State<AcademyPage> {
         current ??= [for (final l in labs) if ((statusMap[l.id] as String?) == null) l]
             .firstOrNull;
         final cur = current;
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (cur != null) ...[
-              SectionCard(
-                icon: Icons.track_changes,
-                title: 'Tu objetivo actual',
-                trailing: Chip(
-                  label: Text(labStatusLabel(statusMap[cur.id] as String?),
-                      style: const TextStyle(fontSize: 11)),
-                  visualDensity: VisualDensity.compact,
-                ),
+        int doneCount(Iterable<Lab> ls) =>
+            ls.where((l) => statusMap[l.id] == 'done').length;
+        Widget moduleHeader(Module m, int total, int done) => Padding(
+              padding: const EdgeInsets.only(top: 16, bottom: 4),
+              child: Row(
                 children: [
-                  AutoSizeText(cur.title,
-                      maxLines: 1,
-                      minFontSize: 13,
-                      style: Theme.of(context).textTheme.titleSmall),
-                  if (cur.description.isNotEmpty)
-                    AutoSizeText(cur.description,
-                        maxLines: 2,
-                        minFontSize: 11,
-                        overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 8),
-                  FilledButton(
-                    onPressed: () => _goLab(context, cur),
-                    child: const Text('Continuar'),
+                  Expanded(
+                    child: Semantics(
+                        header: true,
+                        child: Text(m.title,
+                            style: Theme.of(context).textTheme.titleMedium)),
                   ),
+                  if (total > 0)
+                    Text('$done/$total',
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelMedium
+                            ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant)),
                 ],
-              ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
-              const SizedBox(height: 12),
-            ],
-            for (final m in modules) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                child: Semantics(
-                    header: true,
-                    child: Text(m.title,
-                        style: Theme.of(context).textTheme.titleMedium)),
               ),
-              for (final l in labs)
-                if (l.moduleId == m.id) _labCard(context, l, statusMap),
-            ],
-            if (orphans.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                child: Semantics(
-                    header: true,
-                    child: Text('Otros',
-                        style: Theme.of(context).textTheme.titleMedium)),
-              ),
-              for (final l in orphans) _labCard(context, l, statusMap),
-            ],
-          ],
+            );
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              children: [
+                if (cur != null) ...[
+                  SectionCard(
+                    icon: Icons.track_changes,
+                    title: 'Tu objetivo actual',
+                    trailing: Chip(
+                      label: Text(
+                          labStatusLabel(statusMap[cur.id] as String?),
+                          style: const TextStyle(fontSize: 11)),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    children: [
+                      Text(cur.title,
+                          style: Theme.of(context).textTheme.titleSmall),
+                      if (cur.description.isNotEmpty)
+                        Text(cur.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          FilledButton(
+                            onPressed: () => _goLab(context, cur),
+                            child: const Text('Continuar'),
+                          ),
+                          TextButton(
+                            onPressed: () => context.go('/progress'),
+                            child: const Text('Ver progreso'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
+                  const SizedBox(height: 4),
+                ],
+                for (final m in modules) ...[
+                  Builder(builder: (context) {
+                    final mls = [
+                      for (final l in labs)
+                        if (l.moduleId == m.id) l
+                    ];
+                    if (mls.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        moduleHeader(m, mls.length, doneCount(mls)),
+                        for (final l in mls) _labCard(context, l, statusMap),
+                      ],
+                    );
+                  }),
+                ],
+                if (orphans.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16, bottom: 4),
+                    child: Semantics(
+                        header: true,
+                        child: Text('Otros',
+                            style:
+                                Theme.of(context).textTheme.titleMedium)),
+                  ),
+                  for (final l in orphans) _labCard(context, l, statusMap),
+                ],
+              ],
+            ),
+          ),
         );
       },
     );
@@ -969,6 +1127,7 @@ class _NextLabButtonState extends State<NextLabButton> {
         }
         final n = labs[i + 1];
         return FilledButton.tonal(
+          key: const ValueKey('next_lab'),
           onPressed: () => context.go(
             '/labs/${n.id}',
             extra: {'lab_type': n.labType, 'title': n.title},
@@ -1020,6 +1179,7 @@ class _PosttestReflectionState extends State<PosttestReflection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
+            key: const ValueKey('reflection_text'),
             controller: reflection,
             maxLines: 3,
             decoration: const InputDecoration(
@@ -1029,6 +1189,7 @@ class _PosttestReflectionState extends State<PosttestReflection> {
           ),
           const SizedBox(height: 12),
           FilledButton(
+            key: const ValueKey('reflection_send'),
             onPressed: busy ? null : _send,
             child: const Text('Enviar reflexión y cerrar'),
           ),
@@ -1145,6 +1306,7 @@ class ResultPanel extends StatelessWidget {
             ),
           ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.1, end: 0),
           FilledButton.tonal(
+            key: const ValueKey('next_activity'),
             onPressed: lab.nextBusy ? null : onNext,
             style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
             child: const SizedBox(
@@ -1183,7 +1345,21 @@ class ResultPanel extends StatelessWidget {
         ],
         if (lab.intervention != null) ...[
           const SizedBox(height: 8),
-          TutorSurface(intervention: lab.intervention!),
+          TutorSurface(
+            intervention: lab.intervention!,
+            onEvent: (wt, et, payload) async {
+              final sid = lab.sessionId;
+              if (sid == null) return;
+              try {
+                await postJson('/sessions/$sid/events', {
+                  'client_event_id': newEventId(),
+                  'widget_type': wt,
+                  'event_type': et,
+                  'payload': payload,
+                });
+              } catch (_) {}
+            },
+          ),
         ],
       ],
     );
@@ -1201,6 +1377,7 @@ class DataLabPage extends StatefulWidget {
 
 class _DataLabState extends State<DataLabPage> {
   final lab = LabSession();
+  final statusKey = GlobalKey();
   List columns = [];
   List rows = [];
   final flagged = <int>{};
@@ -1349,6 +1526,7 @@ class _DataLabState extends State<DataLabPage> {
                     rows: [
                       for (final r in rows)
                         DataRow(
+                          key: ValueKey('datarow_${r['id']}'),
                           selected: flagged.contains(r['id']),
                           onSelectChanged: (_) {
                             setState(() {
@@ -1359,13 +1537,20 @@ class _DataLabState extends State<DataLabPage> {
                             saveDraft(widget.labId, 'flagged',
                                 flagged.map((e) => '$e').join(','));
                           },
-                          cells: [for (final c in columns) DataCell(Text('${r['$c'] ?? '—'}'))],
+                          // ponytail: key en la celda (con RenderBox) para taps exactos;
+                          // la key en DataRow no resuelve centro útil en web.
+                          cells: [
+                            for (final c in columns)
+                              DataCell(Text('${r['$c'] ?? '—'}',
+                                  key: ValueKey('datacell_${r['id']}_$c'))),
+                          ],
                         ),
                     ],
                   ),
                 ),
               ),
           TextField(
+            key: const ValueKey('data_justification'),
             controller: justification,
             maxLines: 3,
             decoration: const InputDecoration(
@@ -1375,11 +1560,13 @@ class _DataLabState extends State<DataLabPage> {
           ),
           const SizedBox(height: 12),
           FilledButton(
+            key: const ValueKey('data_send'),
             onPressed: lab.evaluating ? null : _send,
             child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
           ),
           if (!lab.posttestMode)
             TextButton(
+              key: const ValueKey('go_posttest'),
               onPressed: lab.sessionId == null
                   ? null
                   : () => setState(() {
@@ -1403,7 +1590,7 @@ class _DataLabState extends State<DataLabPage> {
                   }
                   setState(() {});
                 }),
-          StatusText(lab.status),
+          StatusText(lab.status, key: statusKey),
             ],
           ),
         ),
@@ -1422,6 +1609,7 @@ class LabDetailPage extends StatefulWidget {
 
 class _LabDetailState extends State<LabDetailPage> {
   final lab = LabSession();
+  final statusKey = GlobalKey();
   double complexity = 5;
   double noise = 20;
   final hypo = TextEditingController();
@@ -1618,6 +1806,7 @@ class _LabDetailState extends State<LabDetailPage> {
         accent: lab.posttestMode ? null : cs.tertiary,
         children: [
           TextField(
+            key: const ValueKey('ml_hypo'),
             controller: hypo,
             maxLines: 4,
             minLines: 3,
@@ -1637,6 +1826,7 @@ class _LabDetailState extends State<LabDetailPage> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
+                key: const ValueKey('ml_send'),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(0, 48),
                 ),
@@ -1655,6 +1845,7 @@ class _LabDetailState extends State<LabDetailPage> {
       children: [
         if (!lab.posttestMode)
           TextButton(
+            key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
                 : () => setState(() {
@@ -1694,7 +1885,7 @@ class _LabDetailState extends State<LabDetailPage> {
                 }
                 setState(() {});
               }),
-        StatusText(lab.status),
+        StatusText(lab.status, key: statusKey),
       ],
     );
     return Scaffold(
@@ -2040,6 +2231,7 @@ class MonitorLabPage extends StatefulWidget {
 
 class _MonitorState extends State<MonitorLabPage> {
   final lab = LabSession();
+  final statusKey = GlobalKey();
   String feature = 'temp';
   double changepoint = 90;
   final answer = TextEditingController();
@@ -2180,6 +2372,7 @@ class _MonitorState extends State<MonitorLabPage> {
         },
       ),
       TextField(
+        key: const ValueKey('monitor_answer'),
         controller: answer, maxLines: 3,
         decoration: const InputDecoration(
           labelText: 'Hipótesis de deriva y decisión *',
@@ -2188,6 +2381,7 @@ class _MonitorState extends State<MonitorLabPage> {
       ),
       const SizedBox(height: 12),
       FilledButton(
+        key: const ValueKey('monitor_send'),
         onPressed: lab.evaluating ? null : _send,
         child: Text(lab.posttestMode ? Strings.deliverPosttest : Strings.sendAttempt),
       ),
@@ -2197,6 +2391,7 @@ class _MonitorState extends State<MonitorLabPage> {
       children: [
         if (!lab.posttestMode)
           TextButton(
+            key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
                 : () => setState(() {
@@ -2220,7 +2415,7 @@ class _MonitorState extends State<MonitorLabPage> {
                 }
                 setState(() {});
               }),
-        StatusText(lab.status),
+        StatusText(lab.status, key: statusKey),
       ],
     );
     return Scaffold(

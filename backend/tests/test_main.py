@@ -511,3 +511,59 @@ def test_instructor_review_flow():
     csv_text = client.get("/instructor/export?format=csv", headers=H_I1).text
     assert "Alumna" not in csv_text and "s1" not in csv_text and "STU-" in csv_text
     assert client.get("/instructor/export?format=csv", headers=H_S1).status_code == 403
+
+
+# PR-02 P1.5: eventos UI idempotentes por client_event_id, validados y con ownership
+def test_events_idempotent_single_record():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    body = {"client_event_id": "evt-pr02-1", "widget_type": "LearningCurveSimulator",
+            "event_type": "parameterChanged", "payload": {"complexity": 7}}
+    r1 = client.post(f"/sessions/{sid}/events", json=body, headers=H_S1).json()
+    assert r1 == {"id": "evt-pr02-1", "deduped": False}
+    r2 = client.post(f"/sessions/{sid}/events", json=body, headers=H_S1).json()
+    assert r2 == {"id": "evt-pr02-1", "deduped": True}
+    rows = TestingSession().query(models.UiEvent).filter_by(id="evt-pr02-1").all()
+    assert len(rows) == 1 and rows[0].session_id == sid
+
+
+def test_events_reject_unknown_or_mismatched():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    base = {"client_event_id": "evt-x", "payload": {}}
+    assert client.post(f"/sessions/{sid}/events",
+        json={**base, "widget_type": "Nope", "event_type": "hintRequested"},
+        headers=H_S1).status_code == 422
+    assert client.post(f"/sessions/{sid}/events",
+        json={**base, "widget_type": "SocraticQuestionCard", "event_type": "hack"},
+        headers=H_S1).status_code == 422
+    assert client.post(f"/sessions/{sid}/events",
+        json={**base, "widget_type": "SocraticQuestionCard", "event_type": "parameterChanged"},
+        headers=H_S1).status_code == 422
+
+
+def test_events_cross_student_forbidden():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    assert client.post(f"/sessions/{sid}/events",
+        json={"client_event_id": "evt-ajeno", "widget_type": "SocraticQuestionCard",
+              "event_type": "hintRequested", "payload": {}},
+        headers=H_S2).status_code in (403, 404)
+
+
+# PR-02 P1.1: contrato versionado en next-intervention
+def test_intervention_carries_schema_and_events():
+    sid = client.post(
+        "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
+    ).json()["id"]
+    aid = client.post(f"/sessions/{sid}/attempts",
+        json={"complexity": 8, "noise_pct": 20, "seed": 1, "answer_text": "creo que sube"},
+        headers=H_S1).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1)
+    iv = client.post(f"/sessions/{sid}/next-intervention",
+        json={"attempt_id": aid}, headers=H_S1).json()
+    assert iv["schema_version"] == 1
+    assert isinstance(iv["allowed_events"], list) and iv["allowed_events"]

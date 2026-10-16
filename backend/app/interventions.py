@@ -19,6 +19,33 @@ CATALOG = {
 
 FALLBACK_WIDGET = "SocraticQuestionCard"
 
+SCHEMA_VERSION = 1
+
+# P1.1: contrato mínimo versionado — qué eventos acepta cada widget.
+ALLOWED_EVENTS = {
+    "parameterChanged",
+    "predictionSubmitted",
+    "hypothesisSubmitted",
+    "evidenceSelected",
+    "argumentSubmitted",
+    "hintRequested",
+}
+
+ALLOWED_BY_WIDGET = {
+    "LearningCurveSimulator": ["parameterChanged", "predictionSubmitted", "hintRequested"],
+    "EvidenceComparison": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
+    "HypothesisEditor": ["hypothesisSubmitted", "hintRequested"],
+    "SocraticQuestionCard": ["hintRequested"],
+    "ChoiceReasoningWidget": ["argumentSubmitted", "hintRequested"],
+    "DataTableExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
+    "DriftDistributionExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
+    "SqlQueryWorkbench": ["argumentSubmitted", "hintRequested"],
+    "ConceptMapBuilder": ["argumentSubmitted", "hintRequested"],
+    "PipelineDAGBuilder": ["argumentSubmitted", "hintRequested"],
+    "RubricFeedbackCard": ["hintRequested"],
+    "ReflectionSummary": ["argumentSubmitted"],
+}
+
 
 def validate_ui_spec(spec: dict) -> list[str]:
     """Devuelve lista de errores; vacía = válida."""
@@ -207,4 +234,6 @@ def safe_intervention(fallback_reason: str) -> dict:
         "socratic_question": q,
         "difficulty_delta": 0,
         "give_direct_answer": False,
+        "schema_version": SCHEMA_VERSION,
+        "allowed_events": ALLOWED_BY_WIDGET.get(FALLBACK_WIDGET, []),
     }

@@ -14,16 +14,34 @@ const tutorCatalogId = 'ai.cognitiveflow.tutor';
 const tutorSurfaceId = 'tutor';
 
 /// Traduce una intervención del backend a componentes A2UI del catálogo.
+/// P1.1: valida tipo contra el catálogo y propaga parámetros numéricos;
+/// tipo desconocido o formato inválido → tarjeta accesible, nunca crash.
 Map<String, Object?> interventionToComponent(Map intervention) {
-  final type = '${intervention['widget_type']}';
+  var type = '${intervention['widget_type']}';
+  if (!cognitiveFlowWidgets.contains(type)) type = 'SocraticQuestionCard';
   final spec = (intervention['widget_parameters'] as Map?) ?? {};
-  final title = '${spec['title'] ?? type}';
+  final title = type == '${intervention['widget_type']}'
+      ? '${spec['title'] ?? type}'
+      : 'Actividad no disponible';
   final question = '${intervention['socratic_question'] ?? ''}';
+  final params = (spec['parameters'] as Map?) ?? {};
+  num? paramNum(String k) {
+    final p = params[k];
+    if (p is Map && p['initial'] is num) return p['initial'];
+    return null;
+  }
+
   final props = switch (type) {
     'EvidenceComparison' => {'title': title, 'evidence': question},
     'HypothesisEditor' => {'title': title, 'hypothesis': question},
     'DataTableExplorer' => {'title': title, 'hint': question},
     'DriftDistributionExplorer' => {'title': title, 'hint': question},
+    'LearningCurveSimulator' => {
+        'title': title,
+        'question': question,
+        if (paramNum('complexity') != null) 'complexity': paramNum('complexity'),
+        if (paramNum('noise_pct') != null) 'noise_pct': paramNum('noise_pct'),
+      },
     _ => {'title': title, 'question': question},
   };
   return {'id': 'root', 'component': type, ...props};
@@ -31,7 +49,8 @@ Map<String, Object?> interventionToComponent(Map intervention) {
 
 class TutorSurface extends StatefulWidget {
   final Map intervention;
-  const TutorSurface({super.key, required this.intervention});
+  final void Function(String widgetType, String eventType, Map<String, Object?> payload)? onEvent;
+  const TutorSurface({super.key, required this.intervention, this.onEvent});
   @override
   State<TutorSurface> createState() => _TutorSurfaceState();
 }
@@ -44,6 +63,7 @@ class _TutorSurfaceState extends State<TutorSurface> {
   @override
   void initState() {
     super.initState();
+    TutorEvents.emit = widget.onEvent;
     _controller = SurfaceController(
       catalogs: [Catalog(cognitiveFlowCatalog, catalogId: tutorCatalogId)],
     );
@@ -65,6 +85,7 @@ class _TutorSurfaceState extends State<TutorSurface> {
   @override
   void didUpdateWidget(covariant TutorSurface old) {
     super.didUpdateWidget(old);
+    TutorEvents.emit = widget.onEvent;
     if (!identical(old.intervention, widget.intervention)) {
       _transport.addMessage(core.A2uiMessage.fromJson({
         'version': 'v0.9',
@@ -78,6 +99,7 @@ class _TutorSurfaceState extends State<TutorSurface> {
 
   @override
   void dispose() {
+    if (TutorEvents.emit == widget.onEvent) TutorEvents.emit = null;
     _sub.cancel();
     _transport.dispose();
     _controller.dispose();
