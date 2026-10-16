@@ -1014,24 +1014,32 @@ class LabSteps extends StatelessWidget {
           if (i > 0) SizedBox(width: 16, child: Divider(color: cs.outlineVariant)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  i <= current ? Icons.check_circle : Icons.circle_outlined,
-                  size: 16,
-                  color: i <= current ? cs.primary : cs.onSurfaceVariant,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  labStepLabels[i],
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: i == current ? FontWeight.bold : null,
-                    color: i <= current ? null : cs.onSurfaceVariant,
+            child: Semantics(
+              selected: i == current,
+              label: '${labStepLabels[i]}${i == current ? ', paso actual' : i < current ? ', completado' : ''}',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    i < current
+                        ? Icons.check_circle
+                        : i == current
+                            ? Icons.radio_button_checked
+                            : Icons.circle_outlined,
+                    size: 16,
+                    color: i <= current ? cs.primary : cs.onSurfaceVariant,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Text(
+                    labStepLabels[i],
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: i == current ? FontWeight.bold : null,
+                      color: i <= current ? null : cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -1364,6 +1372,25 @@ class ResultPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // P1: estado vacío diseñado — reserva el espacio en desktop antes del envío.
+    if (!lab.evaluating &&
+        lab.evalError == null &&
+        lab.evalResult == null &&
+        lab.intervention == null &&
+        lab.socraticQ.isEmpty &&
+        lab.tutorHistory.isEmpty &&
+        lab.nextError == null) {
+      return const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Aquí verás tu evidencia y el siguiente paso.',
+              style: TextStyle(fontSize: 12)),
+          SizedBox(height: 4),
+          Text('Envía tu intento para empezar.',
+              style: TextStyle(fontSize: 12)),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1548,7 +1575,10 @@ class ResultPanel extends StatelessWidget {
           ),
           const Text('La evaluación es evidencia; la actividad sigue con el tutor.',
               style: TextStyle(fontSize: 12)),
-        ] else if (lab.evalResult != null && !lab.evaluating && lab.evalError == null) ...[
+        ] else if (lab.evalResult != null &&
+            lab.evalResult!['status'] != 'pending' &&
+            !lab.evaluating &&
+            lab.evalError == null) ...[
           const SizedBox(height: 8),
           const Row(
             children: [
@@ -1559,6 +1589,7 @@ class ResultPanel extends StatelessWidget {
                   style: TextStyle(fontSize: 12)),
             ],
           ),
+          TextButton(onPressed: onRetry, child: const Text(Strings.retry)),
         ],
         if (lab.nextBusy)
           const Padding(
@@ -1602,6 +1633,31 @@ class ResultPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+// P1: el postest es irreversible (bloquea eval/tutor, fija variante del
+// servidor). Confirmación única compartida por los 3 labs.
+Future<void> confirmEnterPosttest(BuildContext context, LabSession lab,
+    void Function(void Function()) setState, Future<void> Function() reload,
+    [void Function()? onVariant]) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Text('¿Entrar al postest?'),
+      content: const Text(
+          'Se bloquea la evaluación y el tutor, y cambia a una variante nueva. '
+          'Tu intento actual queda guardado. No podrás volver.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('Seguir practicando')),
+        FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('Ir al postest')),
+      ],
+    ),
+  );
+  if (ok == true) await enterPosttest(lab, setState, reload, onVariant);
 }
 
 // G1: tabla sintética, marcar anomalías, justificar, postest con tabla nueva.
@@ -1779,6 +1835,13 @@ class _DataLabState extends State<DataLabPage> {
                   padding: EdgeInsets.all(24),
                   child: Center(child: CircularProgressIndicator()),
                 ),
+              if (columns.isEmpty && lab.status.isNotEmpty)
+                Row(
+                  children: [
+                    Expanded(child: Text(lab.status)),
+                    TextButton(onPressed: _loadTable, child: const Text(Strings.retry)),
+                  ],
+                ),
               if (columns.isNotEmpty)
               Scrollbar(
                 controller: hCtrl,
@@ -1858,7 +1921,7 @@ class _DataLabState extends State<DataLabPage> {
               key: const ValueKey('go_posttest'),
               onPressed: lab.sessionId == null
                   ? null
-                  : () => enterPosttest(lab, setState, _loadTable),
+                  : () => confirmEnterPosttest(context, lab, setState, _loadTable),
               child: const Text(Strings.goPosttest),
             ),
           if (!lab.posttestMode &&
@@ -2096,6 +2159,13 @@ class _LabDetailState extends State<LabDetailPage> {
               )
             : null,
         children: [
+          if (train.isEmpty && val.isEmpty && lab.status.isNotEmpty)
+            Row(
+              children: [
+                Expanded(child: Text(lab.status)),
+                TextButton(onPressed: _loadCurve, child: const Text(Strings.retry)),
+              ],
+            ),
           AccessibleCurveChart(
             train: train,
             val: val,
@@ -2187,7 +2257,7 @@ class _LabDetailState extends State<LabDetailPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => enterPosttest(lab, setState, _loadCurve, () {
+                : () => confirmEnterPosttest(context, lab, setState, _loadCurve, () {
                       final v = lab.posttestVariant;
                       if (v != null) {
                         complexity = (v['complexity'] as num).toDouble();
@@ -2314,7 +2384,7 @@ class CurvePainter extends StatelessWidget {
           ),
         ),
         borderData: FlBorderData(show: false),
-        lineTouchData: const LineTouchData(enabled: false),
+        lineTouchData: const LineTouchData(enabled: true),
         lineBarsData: [
           if (train.isNotEmpty)
             LineChartBarData(
@@ -2845,6 +2915,13 @@ class _MonitorState extends State<MonitorLabPage> {
         title: '1 · Compara distribuciones',
         accent: experimentAccent,
         children: [
+      if (dist == null && lab.status.isNotEmpty)
+        Row(
+          children: [
+            Expanded(child: Text(lab.status)),
+            TextButton(onPressed: _load, child: const Text(Strings.retry)),
+          ],
+        ),
       InputDecorator(
         decoration: const InputDecoration(
           labelText: '¿Qué feature deriva?',
@@ -2929,7 +3006,7 @@ class _MonitorState extends State<MonitorLabPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => enterPosttest(lab, setState, _load),
+                : () => confirmEnterPosttest(context, lab, setState, _load),
             child: const Text(Strings.goPosttest),
           ),
         if (!lab.posttestMode &&
@@ -3011,7 +3088,7 @@ class HistPainter extends StatelessWidget {
         gridData: const FlGridData(show: false),
         titlesData: const FlTitlesData(show: false),
         borderData: FlBorderData(show: false),
-        barTouchData: BarTouchData(enabled: false),
+        barTouchData: BarTouchData(enabled: true),
         barGroups: [
           for (var i = 0; i < ref.length; i++)
             BarChartGroupData(
