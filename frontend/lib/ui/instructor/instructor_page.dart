@@ -1,82 +1,58 @@
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../domain/models/models.dart';
-import '../../data/repositories/instructor_repository.dart'
-    show fetchMatrix, fetchSessions, fetchStudents;
-import '../../data/repositories/lab_repository.dart' show fetchLabs;
+import '../../ui/instructor/view_models/instructor_viewmodel.dart';
 import '../../utils/criteria.dart' show progressLine;
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/posttest.dart';
 
-class InstructorPage extends StatefulWidget {
+class InstructorPage extends ConsumerWidget {
   const InstructorPage({super.key});
   @override
-  State<InstructorPage> createState() => _InstructorState();
-}
-
-class _InstructorState extends State<InstructorPage> {
-  late Future<List<dynamic>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-  }
-
-  Future<List<dynamic>> _load() =>
-      Future.wait([fetchStudents(), fetchLabs(), fetchMatrix()]);
-
-  void _retry() => setState(() => _future = _load());
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
-      future: _future,
-      builder: (c, s) {
-        if (s.connectionState == ConnectionState.waiting) {
-          return const Center(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(instructorViewModelProvider);
+    return switch (async) {
+      AsyncLoading() => const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Cargando estudiantes…'),
+            ],
+          ),
+        ),
+      AsyncError(:final error) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 12),
-                Text('Cargando estudiantes…'),
-              ],
-            ),
-          );
-        }
-        if (s.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.cloud_off_outlined, size: 40),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('${Strings.noApi}: ${s.error}',
-                        textAlign: TextAlign.center),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: _retry,
-                    child: const Text('Reintentar'),
-                  ),
+                const Icon(Icons.cloud_off_outlined, size: 40),
+                const SizedBox(height: 12),
+                Semantics(
+                  liveRegion: true,
+                  child: Text('${Strings.noApi}: $error',
+                      textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed: () => ref
+                      .read(instructorViewModelProvider.notifier)
+                      .refresh(),
+                  child: const Text('Reintentar'),
+                ),
                 ],
               ),
             ),
-          );
-        }
-        final students = s.data![0] as List<Student>;
-        final labTitles = {
-          for (final l in (s.data![1] as List<Lab>)) l.id: l.title
-        };
-        final matrix = {
-          for (final m in (s.data![2] as List)) (m['student_id'] as String): m as Map
-        };
+          ),
+      AsyncData(:final value) => Builder(builder: (context) {
+        final students = value.students;
+        final labTitles = value.labTitles;
+        final matrix = value.matrix;
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -117,8 +93,8 @@ class _InstructorState extends State<InstructorPage> {
               ),
           ],
         );
-      },
-    );
+      }),
+    };
   }
 }
 
@@ -178,51 +154,36 @@ class _MatrixCard extends StatelessWidget {
 }
 
 // ponytail: future hoisted to dialog state so rebuilds don't refetch.
-class _SessionsDialog extends StatefulWidget {
+class _SessionsDialog extends ConsumerWidget {
   final String studentId;
   final Map<String, String> labTitles;
   const _SessionsDialog({required this.studentId, required this.labTitles});
   @override
-  State<_SessionsDialog> createState() => _SessionsDialogState();
-}
-
-// ponytail: future recreable para reintentar tras error de red.
-class _SessionsDialogState extends State<_SessionsDialog> {
-  late Future<List<SessionInfo>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future = fetchSessions(widget.studentId);
-  }
-
-  void _retry() => setState(() => _future = fetchSessions(widget.studentId));
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<SessionInfo>>(
-      future: _future,
-      builder: (c2, s2) {
-        if (s2.connectionState == ConnectionState.waiting) {
-          return Semantics(
-            liveRegion: true,
-            child: const LinearProgressIndicator(),
-          );
-        }
-        if (s2.hasError) {
-          return Row(
-            children: [
-              Expanded(
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text('No se pudieron cargar las sesiones: ${s2.error}',
-                      style: const TextStyle(fontSize: 12)),
-                ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(studentSessionsViewModelProvider(studentId));
+    return switch (async) {
+      AsyncLoading() => Semantics(
+          liveRegion: true,
+          child: const LinearProgressIndicator(),
+        ),
+      AsyncError(:final error) => Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                liveRegion: true,
+                child: Text('No se pudieron cargar las sesiones: $error',
+                    style: const TextStyle(fontSize: 12)),
               ),
-              TextButton(onPressed: _retry, child: const Text('Reintentar')),
-            ],
-          );
-        }
-        final sessions = s2.data!;
+            ),
+            TextButton(
+                onPressed: () => ref
+                    .read(studentSessionsViewModelProvider(studentId).notifier)
+                    .refresh(),
+                child: const Text('Reintentar')),
+          ],
+        ),
+      AsyncData(:final value) => Builder(builder: (context) {
+        final sessions = value;
         if (sessions.isEmpty) return const Text('Sin sesiones');
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -266,7 +227,7 @@ class _SessionsDialogState extends State<_SessionsDialog> {
                     child: Icon(icon, size: 17, color: fg),
                   ),
                   title: Text(
-                      widget.labTitles[se.labTemplateId] ?? se.labTemplateId,
+                      labTitles[se.labTemplateId] ?? se.labTemplateId,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13)),
@@ -281,7 +242,7 @@ class _SessionsDialogState extends State<_SessionsDialog> {
               }),
           ],
         );
-      },
-    );
+      }),
+    };
   }
 }

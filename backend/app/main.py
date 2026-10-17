@@ -27,6 +27,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o for o in os.getenv(
         "CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080").split(",") if o],
+    # Piloto local: cualquier puerto efímero en loopback (smoke en 8081+).
+    # Solo loopback; el servidor no se expone a la red.
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )

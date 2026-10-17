@@ -1,7 +1,7 @@
 // Postest: banner + confirmación + labels de estado.
 import 'package:flutter/material.dart';
 
-import '../view_models/lab_session.dart';
+import '../view_models/lab_session_viewmodel.dart';
 
 /// Aviso de bloqueo de postest, idéntico en los 3 labs.
 class PosttestBanner extends StatelessWidget {
@@ -29,10 +29,14 @@ class PosttestBanner extends StatelessWidget {
 }
 
 // P1: el postest es irreversible (bloquea eval/tutor, fija variante del
-// servidor). Confirmación única compartida por los 3 labs.
-Future<void> confirmEnterPosttest(BuildContext context, LabSession lab,
-    void Function(void Function()) setState, Future<void> Function() reload,
-    [void Function()? onVariant]) async {
+// servidor). Confirmación única compartida por los labs (vía ViewModel).
+/// Confirmación de postest (MVVM): opera sobre el ViewModel, sin setState.
+Future<void> confirmEnterPosttestVm(
+  BuildContext context,
+  LabSessionViewModel vm,
+  Future<void> Function() reload, [
+  void Function()? onVariant,
+]) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (c) => AlertDialog(
@@ -50,7 +54,7 @@ Future<void> confirmEnterPosttest(BuildContext context, LabSession lab,
       ],
     ),
   );
-  if (ok == true) await enterPosttest(lab, setState, reload, onVariant);
+  if (ok == true) await vm.enterPosttest(reload, onVariant);
 }
 
 String labStatusLabel(String? status) => switch (status) {

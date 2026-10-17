@@ -1,10 +1,6 @@
-// P6.3: ciclo de sesión + transporte extraídos de main.dart sin cambios de lógica.
-// UI y páginas quedan en main.dart; este módulo no importa widgets.
-// ViewModel del lab (MVVM): la fuente vive en data/services y data/repositories.
-import '../../../data/services/api_client.dart';
-
-/// Ciclo compartido de un lab: sesión → intento → evaluar → intervenir → postest.
-/// La página envuelve cada llamada en setState (esta clase no notifica sola).
+// Estado del ciclo de un lab: sesión → intento → evaluar → intervenir → postest.
+// MVVM: estado puro (sin red). La red vive en SessionRepository y la
+// orquesta LabSessionViewModel. Los tests y widgets la usan directo por campos.
 class LabSession {
   String? sessionId;
   String? attemptId;
@@ -26,6 +22,8 @@ class LabSession {
   // Sprint 4: nivel diagnosticado + ayuda usada (restauran con la sesión).
   String? level;
   Map<String, int>? assistance;
+  // Lección del objetivo (la carga el VM, la muestra la View).
+  List<Map<String, dynamic>> objectives = [];
 
   /// 0 explorar, 1 evaluar, 2 intervenir, 3 postest.
   int get step => (posttestMode || posttestSent || done)
@@ -36,177 +34,37 @@ class LabSession {
               ? 1
               : 0;
 
-  Future<void> init(String labId) async {
-    try {
-      // ponytail: student_id derived server-side from token (main.py:159); don't send it.
-      final s = await postJson('/sessions', {'lab_template_id': labId});
-      sessionId = s['id'] as String;
-    } catch (e) {
-      status = 'Error API: $e';
-    }
-  }
-
-  Future<void> send(Map<String, dynamic> body, {required bool posttest}) async {
-    final path = posttest ? 'posttest' : 'attempts';
-    final a = await postJson('/sessions/$sessionId/$path', body);
-    attemptId = a['id'] as String;
-  }
-
-  /// Evento GenUI → backend (deduplicado por client_event_id). Sin sesión, no-op.
-  Future<void> emitEvent(
-      String widgetType, String eventType, Map<String, Object?> payload) async {
-    final sid = sessionId;
-    if (sid == null) return;
-    await postJson('/sessions/$sid/events', {
-      'client_event_id': newEventId(),
-      'widget_type': widgetType,
-      'event_type': eventType,
-      'payload': payload,
-    });
-  }
-
-  /// evaluate y socratic en try separados: si la pregunta falla, la
-  /// evaluación se conserva y se puede reintentar solo la pregunta.
-  Future<void> evaluate() async {
-    evalError = null;
-    try {
-      evalResult =
-          await postJson('/sessions/$sessionId/evaluate', {'attempt_id': attemptId});
-    } catch (e) {
-      evalError = 'No se pudo evaluar: $e';
-      return;
-    }
-    try {
-      final sq =
-          await postJson('/sessions/$sessionId/socratic', {'attempt_id': attemptId});
-      socraticQ = (sq['question'] ?? '') as String;
-      final fb = sq['feedback'];
-      feedback = fb is Map ? Map<String, dynamic>.from(fb) : null;
-    } catch (e) {
-      evalError = 'Evaluado ✓, pero la pregunta no llegó: $e';
-    }
-    await loadHistory();
-  }
-
-  Future<void> next() async {
-    nextError = null;
-    try {
-      intervention = await postJson(
-          '/sessions/$sessionId/next-intervention', {'attempt_id': attemptId});
-    } catch (e) {
-      nextError = 'No llegó la actividad: $e';
-    }
-  }
-
-  Future<void> loadHistory() async {
-    try {
-      final h = await fetchJson('/sessions/$sessionId/tutor-history');
-      tutorHistory = h.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-    } catch (_) {}
-  }
-
-  // P1.6: reanudar sesión abierta tras recarga — sin re-evaluar (cero créditos).
-  Future<bool> resume(String labId) async {
-    try {
-      final mine = await fetchJson('/me/sessions?lab_template_id=$labId');
-      Map<String, dynamic>? open;
-      for (final m in mine) {
-        final mm = Map<String, dynamic>.from(m as Map);
-        if (mm['status'] != 'done') open = mm;
-      }
-      if (open == null) return false;
-      sessionId = open['id'] as String;
-      final det = await fetchMap('/sessions/$sessionId');
-      posttestMode = det['status'] == 'posttest';
-      final v = det['variant'];
-      if (v is Map) posttestVariant = Map<String, dynamic>.from(v);
-      final atts = await fetchJson('/sessions/$sessionId/attempts');
-      attemptId = null;
-      posttestSent = false;
-      for (final a in atts) {
-        final am = Map<String, dynamic>.from(a as Map);
-        final input = Map<String, dynamic>.from(am['input'] as Map);
-        if (input['kind'] == 'posttest') {
-          posttestSent = true;
-        } else if (am['id'] != null) {
-          attemptId = am['id'] as String;
-        }
-      }
-      final le = det['last_eval'];
-      evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
-      level = det['level'] as String?;
-      final am = det['assistance'];
-      assistance = am is Map
-          ? {for (final e in am.entries) '${e.key}': (e.value as num).toInt()}
-          : null;
-      socraticQ = '';
-      feedback = null;
-      intervention = null;
-      await loadHistory();
-      // Sprint 1: restaurar la última actividad al reanudar (sin re-evaluar ni gastar).
-      if (!posttestMode) {
-        try {
-          final ivs = await fetchJson('/sessions/$sessionId/interventions');
-          if (ivs.isNotEmpty) {
-            final last = Map<String, dynamic>.from(ivs.last as Map);
-            final params = last['widget_parameters'];
-            if (params is Map) {
-              intervention = {
-                'widget_type': last['widget_type'],
-                'widget_parameters': Map<String, dynamic>.from(params),
-                'socratic_question': last['socratic_question'],
-                'strategy': last['strategy'],
-              };
-            }
-          }
-        } catch (_) {}
-      }
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> reflect(String text) async {
-    final r = await postJson('/sessions/$sessionId/reflection', {'text': text});
-    reflectionSummary = (r['summary'] as Map?)?.map((k, v) => MapEntry('$k', v));
-    done = true;
-  }
-
   // P4.1: el servidor fija la variante del postest; el cliente la aplica.
   Map<String, dynamic>? posttestVariant;
   Map<String, dynamic>? reflectionSummary;
 
-  Future<bool> beginPosttest() async {
-    try {
-      final r = await postJson('/sessions/$sessionId/posttest', {'answer_text': ''});
-      posttestVariant = r;
-      return true;
-    } catch (e) {
-      status = 'No se pudo iniciar el postest: $e';
-      return false;
-    }
-  }
-
   int variantSeed(int fallback) => (posttestVariant?['seed'] as num?)?.toInt() ?? fallback;
-}
 
-// P4.1: entrada al postest con variante del servidor (igual en los 3 labs).
-// beginPosttest es idempotente: doble toque no duplica nada.
-Future<void> enterPosttest(LabSession lab, void Function(void Function()) setState,
-    Future<void> Function() reload,
-    [void Function()? onVariant]) async {
-  if (await lab.beginPosttest()) {
-    setState(() {
-      lab.posttestMode = true;
-      lab.evalResult = null;
-      lab.intervention = null;
-      lab.socraticQ = '';
-      lab.feedback = null;
-      onVariant?.call();
-    });
-    await reload();
-  } else {
-    setState(() {});
-  }
+  /// Snapshot para MVVM: los ViewModels notifican reasignando copias.
+  LabSession copy() => LabSession()
+    ..sessionId = sessionId
+    ..attemptId = attemptId
+    ..evalResult = evalResult == null ? null : Map<String, dynamic>.from(evalResult!)
+    ..socraticQ = socraticQ
+    ..intervention =
+        intervention == null ? null : Map<String, dynamic>.from(intervention!)
+    ..status = status
+    ..evaluating = evaluating
+    ..nextBusy = nextBusy
+    ..evalError = evalError
+    ..nextError = nextError
+    ..posttestMode = posttestMode
+    ..posttestSent = posttestSent
+    ..done = done
+    ..tutorHistory = [for (final h in tutorHistory) Map<String, dynamic>.from(h)]
+    ..feedback = feedback == null ? null : Map<String, dynamic>.from(feedback!)
+    ..level = level
+    ..assistance = assistance == null ? null : Map<String, int>.from(assistance!)
+    ..objectives = [for (final o in objectives) Map<String, dynamic>.from(o)]
+    ..posttestVariant = posttestVariant == null
+        ? null
+        : Map<String, dynamic>.from(posttestVariant!)
+    ..reflectionSummary = reflectionSummary == null
+        ? null
+        : Map<String, dynamic>.from(reflectionSummary!);
 }

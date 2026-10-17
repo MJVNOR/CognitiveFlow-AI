@@ -2,21 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/auth/auth_state.dart';
-import '../../data/repositories/auth_repository.dart';
-import '../../ui/core/widgets/chrome.dart';
-import '../../ui/core/widgets/strings.dart';
+import 'view_models/login_viewmodel.dart';
+import '../core/widgets/chrome.dart';
+import '../core/widgets/strings.dart';
 
+/// View de login (MVVM): solo muestra [LoginUiState] y llama a [LoginViewModel].
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
   @override
-  ConsumerState<LoginPage> createState() => _LoginState();
+  ConsumerState<LoginPage> createState() => _LoginViewState();
 }
 
-class _LoginState extends ConsumerState<LoginPage> {
+class _LoginViewState extends ConsumerState<LoginPage> {
   final userId = TextEditingController(text: 's1');
-  String status = '';
-  bool busy = false;
 
   @override
   void dispose() {
@@ -25,36 +23,14 @@ class _LoginState extends ConsumerState<LoginPage> {
   }
 
   Future<void> _login() async {
-    final id = userId.text.trim();
-    if (id.isEmpty) {
-      setState(() => status = 'Escribe tu user_id demo (p. ej. s1).');
-      return;
-    }
-    if (busy) return;
-    setState(() {
-      busy = true;
-      status = '';
-    });
-    try {
-      final creds = await login(id);
-      await ref.read(authProvider.notifier).login(
-            creds.token,
-            creds.userId,
-            creds.role,
-          );
-      if (mounted) context.go('/academy');
-    } catch (e) {
-      final msg = '$e';
-      setState(() => status = msg.contains('usuario desconocido')
-          ? 'No se pudo entrar: usuario desconocido (usa s1-s4 o i1).'
-          : 'No se pudo entrar: sin conexión con la API. Reintenta.');
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
+    final creds =
+        await ref.read(loginViewModelProvider.notifier).login(userId.text);
+    if (creds != null && mounted) context.go('/academy');
   }
 
   @override
   Widget build(BuildContext context) {
+    final ui = ref.watch(loginViewModelProvider);
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -82,7 +58,7 @@ class _LoginState extends ConsumerState<LoginPage> {
                     TextField(
                       key: const ValueKey('login_user'),
                       controller: userId,
-                      enabled: !busy,
+                      enabled: !ui.busy,
                       autofocus: true,
                       textInputAction: TextInputAction.done,
                       decoration: const InputDecoration(labelText: Strings.loginUserId),
@@ -91,8 +67,8 @@ class _LoginState extends ConsumerState<LoginPage> {
                     const SizedBox(height: 16),
                     FilledButton(
                       key: const ValueKey('login_submit'),
-                      onPressed: busy ? null : _login,
-                      child: busy
+                      onPressed: ui.busy ? null : _login,
+                      child: ui.busy
                           ? const SizedBox(
                               height: 20,
                               width: 20,
@@ -100,7 +76,7 @@ class _LoginState extends ConsumerState<LoginPage> {
                             )
                           : const Text(Strings.loginEnter),
                     ),
-                    if (status.isNotEmpty) ...[
+                    if (ui.status.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,7 +84,7 @@ class _LoginState extends ConsumerState<LoginPage> {
                           Icon(Icons.error_outline, size: 20, color: scheme.error),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: StatusText(status),
+                            child: StatusText(ui.status),
                           ),
                         ],
                       ),
@@ -123,4 +99,3 @@ class _LoginState extends ConsumerState<LoginPage> {
     );
   }
 }
-

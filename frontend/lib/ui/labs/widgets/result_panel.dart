@@ -12,11 +12,16 @@ class ResultPanel extends StatelessWidget {
   final LabSession lab;
   final VoidCallback onNext;
   final VoidCallback onRetry;
+
+  /// Eventos GenUI → backend (los emite el ViewModel de la página).
+  final Future<void> Function(
+      String widgetType, String eventType, Map<String, Object?> payload)? onEvent;
   const ResultPanel({
     super.key,
     required this.lab,
     required this.onNext,
     required this.onRetry,
+    this.onEvent,
   });
   @override
   Widget build(BuildContext context) {
@@ -286,7 +291,7 @@ class ResultPanel extends StatelessWidget {
             intervention: lab.intervention!,
             onEvent: (wt, et, payload) async {
               try {
-                await lab.emitEvent(wt, et, payload);
+                await onEvent?.call(wt, et, payload);
               } catch (_) {}
             },
           ),

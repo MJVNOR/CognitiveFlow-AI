@@ -1,71 +1,56 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../domain/models/models.dart';
-import '../../data/repositories/instructor_repository.dart' show fetchAttempts;
+import '../../ui/instructor/view_models/instructor_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 
 // E5: el instructor solo lee evidencia; la evaluación automática vive en
 // el resumen y la matriz. Sin sliders, notas ni guardado (rol readonly).
 
-class SessionReviewPage extends StatefulWidget {
+class SessionReviewPage extends ConsumerWidget {
   final String sessionId;
   const SessionReviewPage({super.key, required this.sessionId});
   @override
-  State<SessionReviewPage> createState() => _ReviewState();
-}
-
-class _ReviewState extends State<SessionReviewPage> {
-  late Future<List<Attempt>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future = fetchAttempts(widget.sessionId);
-  }
-
-  void _retry() => setState(() => _future = fetchAttempts(widget.sessionId));
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(sessionAttemptsViewModelProvider(sessionId));
     return Scaffold(
       appBar: const DoubleTitleBar(
           title: 'Evidencia de la sesión', backRoute: '/instructor'),
-      body: FutureBuilder<List<Attempt>>(
-        future: _future,
-        builder: (c, s) {
-          if (s.connectionState == ConnectionState.waiting) {
-            return const Center(
+      body: switch (async) {
+        AsyncLoading() => const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Cargando intentos…'),
+              ],
+            ),
+          ),
+        AsyncError(:final error) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 12),
-                  Text('Cargando intentos…'),
+                  Semantics(
+                      liveRegion: true,
+                      child: Text('No se pudieron cargar los intentos: $error',
+                          textAlign: TextAlign.center)),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: () => ref
+                        .read(sessionAttemptsViewModelProvider(sessionId)
+                            .notifier)
+                        .refresh(),
+                    child: const Text('Reintentar'),
+                  ),
                 ],
               ),
-            );
-          }
-          if (s.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Semantics(
-                        liveRegion: true,
-                        child: Text('No se pudieron cargar los intentos: ${s.error}',
-                            textAlign: TextAlign.center)),
-                    const SizedBox(height: 12),
-                    FilledButton.tonal(
-                      onPressed: _retry,
-                      child: const Text('Reintentar'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-          final attempts = s.data!;
+            ),
+          ),
+        AsyncData(:final value) => Builder(builder: (context) {
+          final attempts = value;
           if (attempts.isEmpty) {
             return const Center(
               child: Padding(
@@ -85,7 +70,7 @@ class _ReviewState extends State<SessionReviewPage> {
                 children: [
                   SectionCard(
                     icon: Icons.visibility_outlined,
-                    accent: Theme.of(c).colorScheme.tertiary,
+                    accent: Theme.of(context).colorScheme.tertiary,
                     title: n == 1 ? '1 intento (solo lectura)' : '$n intentos (solo lectura)',
                     children: const [
                       Text('La evaluación automática vive en el resumen y la matriz; aquí solo se lee evidencia.'),
@@ -105,8 +90,8 @@ class _ReviewState extends State<SessionReviewPage> {
               ),
             ),
           );
-        },
-      ),
+        }),
+      },
     );
   }
 }

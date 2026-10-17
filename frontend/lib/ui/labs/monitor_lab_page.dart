@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/repositories/lab_repository.dart' as lab_repo;
-import '../../ui/labs/view_models/lab_session.dart';
-import '../../utils/storage/drafts.dart';
+import '../../ui/labs/view_models/lab_session_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/lab_chrome.dart';
@@ -14,52 +13,51 @@ import '../../ui/labs/widgets/curve_chart.dart';
 import '../../ui/labs/widgets/hist_chart.dart';
 
 // G2: referencia vs actual + serie con cambio; diagnosticar deriva y decidir acción.
-class MonitorLabPage extends StatefulWidget {
+class MonitorLabPage extends ConsumerStatefulWidget {
   final String labId;
   final String title;
   const MonitorLabPage({super.key, required this.labId, required this.title});
   @override
-  State<MonitorLabPage> createState() => _MonitorState();
+  ConsumerState<MonitorLabPage> createState() => _MonitorState();
 }
 
-class _MonitorState extends State<MonitorLabPage> {
-  final lab = LabSession();
+class _MonitorState extends ConsumerState<MonitorLabPage> {
   final statusKey = GlobalKey();
   String feature = 'temp';
   double changepoint = 90;
   final answer = TextEditingController();
   Map<String, dynamic>? dist;
-  List<Map<String, dynamic>>? objectives;
   int tab = 0;
+
+  LabSessionViewModel get _vm =>
+      ref.read(labSessionProvider(widget.labId).notifier);
+  LabSession get lab => ref.watch(labSessionProvider(widget.labId));
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
   @override
   void initState() {
     super.initState();
-    answer.addListener(() => saveDraft(widget.labId, 'answer', answer.text));
+    answer.addListener(() => _vm.saveDraft(widget.labId, 'answer', answer.text));
     _init();
   }
 
   Future<void> _init() async {
     // P1.6: reanudar abierta antes de crear una nueva.
-    if (!await lab.resume(widget.labId)) {
-      await lab.init(widget.labId);
-      if (lab.sessionId == null) {
+    if (!await _vm.resume(widget.labId)) {
+      await _vm.init(widget.labId);
+      if (!mounted) return;
+      if (ref.read(labSessionProvider(widget.labId)).sessionId == null) {
         setState(() {});
         return;
       }
     }
     // Sprint 3: lección del objetivo (no bloquea el experimento si falla).
-    try {
-      final objs = await lab_repo.fetchObjectives(widget.labId);
-      if (!mounted) return;
-      setState(() => objectives = objs);
-    } catch (_) {}
+    await _vm.loadObjectives(widget.labId);
     await _load();
-    final ft = await loadDraft(widget.labId, 'feature');
-    final cp = await loadDraft(widget.labId, 'changepoint');
-    final an = await loadDraft(widget.labId, 'answer');
+    final ft = await _vm.loadDraft(widget.labId, 'feature');
+    final cp = await _vm.loadDraft(widget.labId, 'changepoint');
+    final an = await _vm.loadDraft(widget.labId, 'answer');
     if (!mounted) return;
     setState(() {
       if (ft != null && ft.isNotEmpty) feature = ft;
@@ -70,60 +68,51 @@ class _MonitorState extends State<MonitorLabPage> {
 
   Future<void> _load() async {
     try {
-      final d = await lab_repo.fetchDistributions(widget.labId, seed);
+      final d = await _vm.fetchDistributions(widget.labId, seed);
+      if (!mounted) return;
       setState(() => dist = d);
     } catch (e) {
-      setState(() => lab.status = 'Error datos: $e');
+      _vm.setStatus('Error datos: $e');
     }
   }
 
   Future<void> _send() async {
-    if (lab.sessionId == null || lab.evaluating) return;
+    final snap = ref.read(labSessionProvider(widget.labId));
+    if (snap.sessionId == null || snap.evaluating) return;
     if (answer.text.trim().isEmpty) {
-      setState(() => lab.status = 'La hipótesis es obligatoria');
+      _vm.setStatus('La hipótesis es obligatoria');
       return;
     }
-    setState(() {
-      lab.evaluating = true;
-      lab.status = '';
-    });
+    _vm.setEvaluating(true);
+    _vm.setStatus('');
     try {
-      await lab.send({
+      await _vm.send({
         'seed': seed,
         'extra': {'feature': feature, 'changepoint': changepoint.round()},
         'answer_text': answer.text,
-      }, posttest: lab.posttestMode);
-      setState(() {
-        lab.evaluating = false;
-        if (lab.posttestMode) {
-          lab.posttestSent = true;
-          lab.status = 'Postest entregado (sin ayuda)';
-        } else {
-          lab.status = 'Guardado ✓';
-        }
-      });
-      if (!lab.posttestMode) {
-        await lab.evaluate();
-        setState(() {});
+      }, posttest: snap.posttestMode);
+      _vm.markDelivered(
+          posttest:
+              ref.read(labSessionProvider(widget.labId)).posttestMode);
+      if (!ref.read(labSessionProvider(widget.labId)).posttestMode) {
+        await _vm.evaluate();
       }
     } catch (e) {
-      setState(() {
-        lab.evaluating = false;
-        lab.status = 'Error envío: $e';
-      });
+      _vm.setEvaluating(false);
+      _vm.setStatus('Error envío: $e');
     }
   }
 
   Future<void> _retry() async {
-    setState(() => lab.evaluating = true);
-    await lab.evaluate();
-    setState(() => lab.evaluating = false);
+    _vm.setEvaluating(true);
+    await _vm.evaluate();
+    _vm.setEvaluating(false);
   }
 
   Future<void> _next() async {
-    setState(() => lab.nextBusy = true);
-    await lab.next();
-    setState(() => lab.nextBusy = false);
+    _vm.setNextBusy(true);
+    await _vm.next();
+    _vm.setNextBusy(false);
   }
 
   @override
@@ -147,7 +136,7 @@ class _MonitorState extends State<MonitorLabPage> {
     final locked = lab.posttestSent || lab.posttestMode;
     final controls = [
       LabHeader(
-        crumb: labCrumb(objectives),
+        crumb: labCrumb(lab.objectives),
         meta: sessionMeta(lab),
         objective: lab.posttestMode
             ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
@@ -155,9 +144,9 @@ class _MonitorState extends State<MonitorLabPage> {
         step: lab.step,
       ),
       const SizedBox(height: 12),
-      if (objectives != null && objectives!.isNotEmpty)
-        ConceptPrimer(objective: objectives!.first),
-      if (objectives != null && objectives!.isNotEmpty)
+      if (lab.objectives.isNotEmpty)
+        ConceptPrimer(objective: lab.objectives.first),
+      if (lab.objectives.isNotEmpty)
         const SizedBox(height: 12),
       if (lab.posttestMode) const PosttestBanner(),
       if (lab.posttestMode) const SizedBox(height: 12),
@@ -187,7 +176,7 @@ class _MonitorState extends State<MonitorLabPage> {
                     ? null
                     : (_) {
                         setState(() => feature = k);
-                        saveDraft(widget.labId, 'feature', feature);
+                        _vm.saveDraft(widget.labId, 'feature', feature);
                       },
               ),
           ],
@@ -298,7 +287,7 @@ class _MonitorState extends State<MonitorLabPage> {
         onChanged: locked ? null : (v) => setState(() => changepoint = v),
         onChangeEnd: locked
             ? null
-            : (_) => saveDraft(widget.labId, 'changepoint', '$changepoint'),
+            : (_) => _vm.saveDraft(widget.labId, 'changepoint', '$changepoint'),
       ),
         ],
       ),
@@ -343,7 +332,7 @@ class _MonitorState extends State<MonitorLabPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => confirmEnterPosttest(context, lab, setState, _load),
+                : () => confirmEnterPosttestVm(context, _vm, _load),
             child: const Text(Strings.goPosttest),
           ),
         if (!lab.posttestMode &&
@@ -355,7 +344,7 @@ class _MonitorState extends State<MonitorLabPage> {
             icon: Icons.fact_check,
             title: '3 · Evidencia y siguiente paso',
             children: [
-              ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+              ResultPanel(lab: lab, onNext: _next, onRetry: _retry, onEvent: _vm.emitEvent),
             ],
           ),
         if (!lab.posttestMode &&
@@ -370,9 +359,9 @@ class _MonitorState extends State<MonitorLabPage> {
               labId: widget.labId,
               onUpdate: () {
                 if (lab.done) {
-                  clearDrafts(widget.labId, const ['feature', 'changepoint', 'answer']);
+                  _vm.clearDrafts(widget.labId, const ['feature', 'changepoint', 'answer']);
                 }
-                setState(() {});
+                _vm.touch();
               }),
         StatusText(lab.status, key: statusKey),
       ],

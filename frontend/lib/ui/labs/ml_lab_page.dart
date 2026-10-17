@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/repositories/lab_repository.dart' as lab_repo;
-import '../../ui/labs/view_models/lab_session.dart';
-import '../../utils/storage/drafts.dart';
+import '../../ui/labs/view_models/lab_session_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/lab_chrome.dart';
@@ -12,54 +11,55 @@ import '../../ui/labs/widgets/result_panel.dart';
 import '../../ui/labs/widgets/concept_primer.dart';
 import '../../ui/labs/widgets/curve_chart.dart';
 
-class LabDetailPage extends StatefulWidget {
+/// View del lab ML (MVVM): estado efímero local (sliders, controllers,
+/// curva) en el State; ciclo de sesión en [LabSessionViewModel].
+class LabDetailPage extends ConsumerStatefulWidget {
   final String labId;
   final String title;
   const LabDetailPage({super.key, required this.labId, required this.title});
   @override
-  State<LabDetailPage> createState() => _LabDetailState();
+  ConsumerState<LabDetailPage> createState() => _LabDetailState();
 }
 
-class _LabDetailState extends State<LabDetailPage> {
-  final lab = LabSession();
+class _LabDetailState extends ConsumerState<LabDetailPage> {
   final statusKey = GlobalKey();
   double complexity = 5;
   double noise = 20;
   final hypo = TextEditingController();
   Map<String, dynamic>? curve;
-  List<Map<String, dynamic>>? objectives;
   List<num>? savedVal;
   String? savedLabel;
   double epochSel = 0;
 
-  int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
+  LabSessionViewModel get _vm =>
+      ref.read(labSessionProvider(widget.labId).notifier);
+  LabSession get _lab => ref.watch(labSessionProvider(widget.labId));
+
+  int get seed => _lab.posttestMode ? _lab.variantSeed(99) : 1;
 
   @override
   void initState() {
     super.initState();
-    hypo.addListener(() => saveDraft(widget.labId, 'hypo', hypo.text));
+    hypo.addListener(() => _vm.saveDraft(widget.labId, 'hypo', hypo.text));
     _init();
   }
 
   Future<void> _init() async {
     // P1.6: reanudar abierta antes de crear una nueva.
-    if (!await lab.resume(widget.labId)) {
-      await lab.init(widget.labId);
-      if (lab.sessionId == null) {
+    if (!await _vm.resume(widget.labId)) {
+      await _vm.init(widget.labId);
+      if (!mounted) return;
+      if (ref.read(labSessionProvider(widget.labId)).sessionId == null) {
         setState(() {});
         return;
       }
     }
     // Sprint 1: lección del objetivo (no bloquea el experimento si falla).
-    try {
-      final objs = await lab_repo.fetchObjectives(widget.labId);
-      if (!mounted) return;
-      setState(() => objectives = objs);
-    } catch (_) {}
+    await _vm.loadObjectives(widget.labId);
     await _loadCurve();
-    final cx = await loadDraft(widget.labId, 'complexity');
-    final nz = await loadDraft(widget.labId, 'noise');
-    final h = await loadDraft(widget.labId, 'hypo');
+    final cx = await _vm.loadDraft(widget.labId, 'complexity');
+    final nz = await _vm.loadDraft(widget.labId, 'noise');
+    final h = await _vm.loadDraft(widget.labId, 'hypo');
     if (!mounted) return;
     setState(() {
       if (cx != null) complexity = double.tryParse(cx) ?? complexity;
@@ -68,8 +68,10 @@ class _LabDetailState extends State<LabDetailPage> {
     });
     if (cx != null || nz != null) await _loadCurve();
     // En postest manda la variante del servidor, no el borrador.
-    final v = lab.posttestVariant;
-    if (lab.posttestMode && v != null) {
+    final v = ref.read(labSessionProvider(widget.labId)).posttestVariant;
+    final posttestMode =
+        ref.read(labSessionProvider(widget.labId)).posttestMode;
+    if (posttestMode && v != null) {
       if (!mounted) return;
       setState(() {
         complexity = (v['complexity'] as num).toDouble();
@@ -81,85 +83,78 @@ class _LabDetailState extends State<LabDetailPage> {
 
   Future<void> _loadCurve() async {
     try {
-      final c = await lab_repo.fetchCurve(
+      final c = await _vm.fetchCurve(
         widget.labId,
         complexity.round(),
         noise.round(),
         seed,
       );
+      if (!mounted) return;
       setState(() => curve = c);
     } catch (e) {
-      setState(() => lab.status = 'Error curva: $e');
+      _vm.setStatus('Error curva: $e');
     }
   }
 
   Future<void> _send() async {
+    final lab = ref.read(labSessionProvider(widget.labId));
     if (lab.sessionId == null || lab.evaluating) return;
     if (hypo.text.trim().isEmpty) {
-      setState(() => lab.status =
-          lab.posttestMode ? 'El diagnóstico es obligatorio' : 'La hipótesis es obligatoria');
+      _vm.setStatus(lab.posttestMode
+          ? 'El diagnóstico es obligatorio'
+          : 'La hipótesis es obligatoria');
       return;
     }
-    setState(() {
-      lab.evaluating = true;
-      lab.status = '';
-    });
+    _vm.setEvaluating(true);
+    _vm.setStatus('');
     try {
-      await lab.send({
+      await _vm.send({
         'complexity': complexity.round(),
         'noise_pct': noise.round(),
         'seed': seed,
         'answer_text': hypo.text,
       }, posttest: lab.posttestMode);
-      setState(() {
-        lab.evaluating = false;
-        if (lab.posttestMode) {
-          lab.posttestSent = true;
-          lab.status = 'Postest entregado (sin ayuda de IA)';
-        } else {
-          lab.status = 'Guardado ✓ (simulación, sin IA)';
-        }
-      });
-      if (!lab.posttestMode) {
-        await lab.evaluate();
-        setState(() {});
+      _vm.markDelivered(
+          posttest:
+              ref.read(labSessionProvider(widget.labId)).posttestMode,
+          savedMessage: 'Guardado ✓ (simulación, sin IA)',
+          posttestMessage: 'Postest entregado (sin ayuda de IA)');
+      if (!ref.read(labSessionProvider(widget.labId)).posttestMode) {
+        await _vm.evaluate();
       }
     } catch (e) {
-      setState(() {
-        lab.evaluating = false;
-        lab.status = 'Error envío: $e';
-      });
+      _vm.setEvaluating(false);
+      _vm.setStatus('Error envío: $e');
     }
   }
 
   /// Sprint 3: la época marcada queda en ui_events como evidencia seleccionada.
   Future<void> _markEvidence() async {
+    final lab = ref.read(labSessionProvider(widget.labId));
     if (lab.sessionId == null) return;
     try {
-      await lab.emitEvent('LearningCurveSimulator', 'evidenceSelected', {
+      await _vm.emitEvent('LearningCurveSimulator', 'evidenceSelected', {
         'epoch': epochSel.round(),
         'complexity': complexity.round(),
         'noise_pct': noise.round(),
         'mode': lab.posttestMode ? 'posttest' : 'practice',
       });
-      if (!mounted) return;
-      setState(() => lab.status = 'Evidencia guardada: época ${epochSel.round()}');
+      _vm.setStatus('Evidencia guardada: época ${epochSel.round()}');
     } catch (e) {
-      if (!mounted) return;
-      setState(() => lab.status = 'No se guardó la evidencia: $e');
+      _vm.setStatus('No se guardó la evidencia: $e');
     }
   }
 
   Future<void> _retry() async {
-    setState(() => lab.evaluating = true);
-    await lab.evaluate();
-    setState(() => lab.evaluating = false);
+    _vm.setEvaluating(true);
+    await _vm.evaluate();
+    _vm.setEvaluating(false);
   }
 
   Future<void> _next() async {
-    setState(() => lab.nextBusy = true);
-    await lab.next();
-    setState(() => lab.nextBusy = false);
+    _vm.setNextBusy(true);
+    await _vm.next();
+    _vm.setNextBusy(false);
   }
 
   @override
@@ -169,10 +164,11 @@ class _LabDetailState extends State<LabDetailPage> {
   }
 
   /// Miga Ruta > Módulo > Unidad derivada del objetivo (sin hardcodear textos).
-  String? _crumb() => labCrumb(objectives);
+  String? _crumb() => labCrumb(_lab.objectives);
 
   @override
   Widget build(BuildContext context) {
+    final lab = _lab;
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
     final val = (curve?['val'] as List?)?.cast<num>() ?? [];
     final sent = lab.posttestSent;
@@ -191,9 +187,9 @@ class _LabDetailState extends State<LabDetailPage> {
         step: lab.step,
       ),
       const SizedBox(height: 12),
-      if (objectives != null && objectives!.isNotEmpty)
-        ConceptPrimer(objective: objectives!.first),
-      if (objectives != null && objectives!.isNotEmpty)
+      if (lab.objectives.isNotEmpty)
+        ConceptPrimer(objective: lab.objectives.first),
+      if (lab.objectives.isNotEmpty)
         const SizedBox(height: 12),
       if (lab.posttestMode) const PosttestBanner(),
       if (lab.posttestMode) const SizedBox(height: 12),
@@ -238,7 +234,7 @@ class _LabDetailState extends State<LabDetailPage> {
                 ? null
                 : (_) {
                     _loadCurve();
-                    saveDraft(widget.labId, 'complexity', '$complexity');
+                    _vm.saveDraft(widget.labId, 'complexity', '$complexity');
                   },
           ),
           ParamSlider(
@@ -254,7 +250,7 @@ class _LabDetailState extends State<LabDetailPage> {
                 ? null
                 : (_) {
                     _loadCurve();
-                    saveDraft(widget.labId, 'noise', '$noise');
+                    _vm.saveDraft(widget.labId, 'noise', '$noise');
                   },
           ),
           if (train.isNotEmpty) ...[
@@ -354,11 +350,15 @@ class _LabDetailState extends State<LabDetailPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => confirmEnterPosttest(context, lab, setState, _loadCurve, () {
-                      final v = lab.posttestVariant;
+                : () => confirmEnterPosttestVm(context, _vm, _loadCurve, () {
+                      final v = ref
+                          .read(labSessionProvider(widget.labId))
+                          .posttestVariant;
                       if (v != null) {
-                        complexity = (v['complexity'] as num).toDouble();
-                        noise = (v['noise_pct'] as num).toDouble();
+                        setState(() {
+                          complexity = (v['complexity'] as num).toDouble();
+                          noise = (v['noise_pct'] as num).toDouble();
+                        });
                       }
                     }),
             child: const Text(Strings.goPosttestNoAI),
@@ -372,7 +372,7 @@ class _LabDetailState extends State<LabDetailPage> {
             icon: Icons.fact_check,
             title: '3 · Evidencia y siguiente paso',
             children: [
-              ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+              ResultPanel(lab: lab, onNext: _next, onRetry: _retry, onEvent: _vm.emitEvent),
             ],
           ),
         if (!lab.posttestMode &&
@@ -386,10 +386,10 @@ class _LabDetailState extends State<LabDetailPage> {
               lab: lab,
               labId: widget.labId,
               onUpdate: () {
-                if (lab.done) {
-                  clearDrafts(widget.labId, const ['complexity', 'noise', 'hypo']);
+                if (ref.read(labSessionProvider(widget.labId)).done) {
+                  _vm.clearDrafts(widget.labId, const ['complexity', 'noise', 'hypo']);
                 }
-                setState(() {});
+                _vm.touch();
               }),
         StatusText(lab.status, key: statusKey),
       ],
@@ -422,4 +422,3 @@ class _LabDetailState extends State<LabDetailPage> {
     );
   }
 }
-

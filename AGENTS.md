@@ -53,7 +53,8 @@ flutter analyze --no-pub; flutter test; flutter build web
   `MaterialApp.router.builder`). No usar `Text` fuera de ella.
 - `genui 0.10.4` fijado en `pubspec.lock`; builders usan `BoundString` +
   `CatalogItemContext`; `Surface` se obtiene con `controller.contextFor(id)`.
-- Backend sin `CORSMiddleware` ⇒ el login web falla (preflight `OPTIONS` 404).
+- Backend con `CORSMiddleware` (orígenes `CORS_ORIGINS` + regex loopback
+  cualquier puerto) ⇒ el login web funciona; verificado con smoke vivo.
 - **Estado global con Riverpod (`flutter_riverpod`):** `lib/core/auth/auth_state.dart`
   (`authProvider`), `lib/ui/core/themes/cognitive_theme.dart`
   (`themeModeProvider`); `lib/config/routing/router.dart` (`routerProvider`)

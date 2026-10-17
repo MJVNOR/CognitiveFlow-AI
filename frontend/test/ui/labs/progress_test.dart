@@ -1,10 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:cognitiveflow/domain/models/models.dart';
+import 'package:cognitiveflow/ui/academy/view_models/academy_viewmodel.dart';
 import 'package:cognitiveflow/ui/labs/widgets/reflection.dart';
 import 'package:cognitiveflow/ui/labs/widgets/result_panel.dart';
 import 'package:cognitiveflow/ui/labs/view_models/lab_session.dart';
 import 'package:cognitiveflow/utils/criteria.dart';
+
+/// NextLabButton (MVVM) lee labs del provider: en tests se sirve vacío.
+class _EmptyLabs extends LabsListViewModel {
+  @override
+  Future<List<Lab>> build() async => [];
+}
+
+Widget _scoped(Widget child) => ProviderScope(
+      overrides: [labsListViewModelProvider.overrideWith(_EmptyLabs.new)],
+      child: MaterialApp(home: Scaffold(body: child)),
+    );
 
 void main() {
   test('progressLine resume inicial y delta', () {
@@ -21,11 +35,7 @@ void main() {
       ..done = true
       ..reflectionSummary = {'mejora': 'evidencia', 'desafio': 'causal'};
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PosttestReflection(lab: lab, labId: 'lab-ml', onUpdate: () {}),
-        ),
-      ),
+      _scoped(PosttestReflection(lab: lab, labId: 'lab-ml', onUpdate: () {})),
     );
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Mejora observada: Uso de evidencia ✓'), findsOneWidget);
@@ -37,11 +47,7 @@ void main() {
       ..done = true
       ..reflectionSummary = {'mejora': null, 'desafio': null};
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PosttestReflection(lab: lab, labId: 'lab-ml', onUpdate: () {}),
-        ),
-      ),
+      _scoped(PosttestReflection(lab: lab, labId: 'lab-ml', onUpdate: () {})),
     );
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.textContaining('Mejora observada'), findsNothing);

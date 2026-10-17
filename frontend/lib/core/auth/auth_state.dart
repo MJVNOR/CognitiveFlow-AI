@@ -3,22 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-String? apiToken;
-String? apiRole; // student|instructor (lo dice /auth/login y /auth/me)
-String? apiUserId;
+import '../../data/services/api_client.dart';
 
 /// Lee prefs antes del runApp (evita flash logged-out → login).
 Future<({AuthState? auth, ThemeMode theme})> loadInitialState() async {
   final prefs = await SharedPreferences.getInstance();
-  apiToken = prefs.getString('apiToken');
-  apiUserId = prefs.getString('apiUserId');
-  apiRole = prefs.getString('apiRole');
-  final auth = apiToken == null
+  final token = prefs.getString('apiToken');
+  final userId = prefs.getString('apiUserId');
+  final role = prefs.getString('apiRole');
+  defaultApiClient.setToken(token);
+  final auth = token == null
       ? null
       : AuthState(
-          token: apiToken!,
-          userId: apiUserId ?? '',
-          role: apiRole ?? 'student',
+          token: token,
+          userId: userId ?? '',
+          role: role ?? 'student',
         );
   final theme = switch (prefs.getString('themeMode')) {
     'light' => ThemeMode.light,
@@ -45,9 +44,7 @@ class AuthNotifier extends Notifier<AuthState?> {
   AuthState? build() => initial;
 
   Future<void> login(String token, String userId, String role) async {
-    apiToken = token;
-    apiUserId = userId;
-    apiRole = role;
+    defaultApiClient.setToken(token);
     state = AuthState(token: token, userId: userId, role: role);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('apiToken', token);
@@ -56,9 +53,7 @@ class AuthNotifier extends Notifier<AuthState?> {
   }
 
   Future<void> logout() async {
-    apiToken = null;
-    apiUserId = null;
-    apiRole = null;
+    defaultApiClient.setToken(null);
     state = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('apiToken');

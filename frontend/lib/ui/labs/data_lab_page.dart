@@ -1,10 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/repositories/lab_repository.dart' as lab_repo;
-import '../../ui/labs/view_models/lab_session.dart';
-import '../../utils/storage/drafts.dart';
+import '../../ui/labs/view_models/lab_session_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/lab_chrome.dart';
@@ -15,24 +14,26 @@ import '../../ui/labs/widgets/concept_primer.dart';
 import '../../ui/labs/data/cleaning_preview.dart';
 
 // G1: tabla sintética, marcar anomalías, justificar, postest con tabla nueva.
-class DataLabPage extends StatefulWidget {
+class DataLabPage extends ConsumerStatefulWidget {
   final String labId;
   final String title;
   const DataLabPage({super.key, required this.labId, required this.title});
   @override
-  State<DataLabPage> createState() => _DataLabState();
+  ConsumerState<DataLabPage> createState() => _DataLabState();
 }
 
-class _DataLabState extends State<DataLabPage> {
-  final lab = LabSession();
+class _DataLabState extends ConsumerState<DataLabPage> {
   final statusKey = GlobalKey();
   List columns = [];
   List rows = [];
   final flagged = <int>{};
   final cellTypes = <String, String>{};
   final actions = <String, String>{};
-  List<Map<String, dynamic>>? objectives;
   final justification = TextEditingController();
+
+  LabSessionViewModel get _vm =>
+      ref.read(labSessionProvider(widget.labId).notifier);
+  LabSession get lab => ref.watch(labSessionProvider(widget.labId));
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
@@ -40,30 +41,27 @@ class _DataLabState extends State<DataLabPage> {
   void initState() {
     super.initState();
     justification.addListener(
-        () => saveDraft(widget.labId, 'justification', justification.text));
+        () => _vm.saveDraft(widget.labId, 'justification', justification.text));
     _init();
   }
 
   Future<void> _init() async {
     // P1.6: reanudar abierta antes de crear una nueva.
-    if (!await lab.resume(widget.labId)) {
-      await lab.init(widget.labId);
-      if (lab.sessionId == null) {
+    if (!await _vm.resume(widget.labId)) {
+      await _vm.init(widget.labId);
+      if (!mounted) return;
+      if (ref.read(labSessionProvider(widget.labId)).sessionId == null) {
         setState(() {});
         return;
       }
     }
     await _loadTable();
     // Sprint 3: lección del objetivo (no bloquea la tabla si falla).
-    try {
-      final objs = await lab_repo.fetchObjectives(widget.labId);
-      if (!mounted) return;
-      setState(() => objectives = objs);
-    } catch (_) {}
+    await _vm.loadObjectives(widget.labId);
     // Borrador previo (si salió del lab sin entregar).
-    final f = await loadDraft(widget.labId, 'flagged');
-    final cm = await loadDraft(widget.labId, 'cellmap');
-    final j = await loadDraft(widget.labId, 'justification');
+    final f = await _vm.loadDraft(widget.labId, 'flagged');
+    final cm = await _vm.loadDraft(widget.labId, 'cellmap');
+    final j = await _vm.loadDraft(widget.labId, 'justification');
     if (!mounted) return;
     setState(() {
       if (f != null && f.isNotEmpty) {
@@ -85,65 +83,56 @@ class _DataLabState extends State<DataLabPage> {
 
   Future<void> _loadTable() async {
     try {
-      final ds = await lab_repo.fetchDataset(widget.labId, seed);
+      final ds = await _vm.fetchDataset(widget.labId, seed);
+      if (!mounted) return;
       setState(() {
         columns = ds['columns'] as List;
         rows = ds['rows'] as List;
         flagged.clear();
       });
     } catch (e) {
-      setState(() => lab.status = 'Error tabla: $e');
+      _vm.setStatus('Error tabla: $e');
     }
   }
 
   Future<void> _send() async {
-    if (lab.sessionId == null || lab.evaluating) return;
+    final snap = ref.read(labSessionProvider(widget.labId));
+    if (snap.sessionId == null || snap.evaluating) return;
     if (justification.text.trim().isEmpty) {
-      setState(() => lab.status = 'La justificación es obligatoria');
+      _vm.setStatus('La justificación es obligatoria');
       return;
     }
-    setState(() {
-      lab.evaluating = true;
-      lab.status = '';
-    });
+    _vm.setEvaluating(true);
+    _vm.setStatus('');
     try {
-      await lab.send({
+      await _vm.send({
         'seed': seed,
         'flags': flagged.toList(),
         'extra': {'cell_types': cellTypes, 'actions': actions},
         'answer_text': justification.text,
-      }, posttest: lab.posttestMode);
-      setState(() {
-        lab.evaluating = false;
-        if (lab.posttestMode) {
-          lab.posttestSent = true;
-          lab.status = 'Postest entregado (sin ayuda)';
-        } else {
-          lab.status = 'Guardado ✓';
-        }
-      });
-      if (!lab.posttestMode) {
-        await lab.evaluate();
-        setState(() {});
+      }, posttest: snap.posttestMode);
+      _vm.markDelivered(
+          posttest:
+              ref.read(labSessionProvider(widget.labId)).posttestMode);
+      if (!ref.read(labSessionProvider(widget.labId)).posttestMode) {
+        await _vm.evaluate();
       }
     } catch (e) {
-      setState(() {
-        lab.evaluating = false;
-        lab.status = 'Error envío: $e';
-      });
+      _vm.setEvaluating(false);
+      _vm.setStatus('Error envío: $e');
     }
   }
 
   Future<void> _retry() async {
-    setState(() => lab.evaluating = true);
-    await lab.evaluate();
-    setState(() => lab.evaluating = false);
+    _vm.setEvaluating(true);
+    await _vm.evaluate();
+    _vm.setEvaluating(false);
   }
 
   Future<void> _next() async {
-    setState(() => lab.nextBusy = true);
-    await lab.next();
-    setState(() => lab.nextBusy = false);
+    _vm.setNextBusy(true);
+    await _vm.next();
+    _vm.setNextBusy(false);
   }
 
   final scrollCtrl = ScrollController();
@@ -158,9 +147,9 @@ class _DataLabState extends State<DataLabPage> {
   }
 
   Future<void> _persistFlags() async {
-    await saveDraft(
+    await _vm.saveDraft(
         widget.labId, 'flagged', flagged.map((e) => '$e').join(','));
-    await saveDraft(widget.labId, 'cellmap',
+    await _vm.saveDraft(widget.labId, 'cellmap',
         jsonEncode({'types': cellTypes, 'actions': actions}));
   }
 
@@ -276,7 +265,7 @@ class _DataLabState extends State<DataLabPage> {
               // P6.2: mismo split desktop que ML/Monitor (actividad | tutor).
               final controls = <Widget>[
               LabHeader(
-                crumb: labCrumb(objectives),
+                crumb: labCrumb(lab.objectives),
                 meta: sessionMeta(lab),
                 objective: lab.posttestMode
                     ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
@@ -284,9 +273,9 @@ class _DataLabState extends State<DataLabPage> {
                 step: lab.step,
               ),
               const SizedBox(height: 12),
-              if (objectives != null && objectives!.isNotEmpty)
-                ConceptPrimer(objective: objectives!.first),
-              if (objectives != null && objectives!.isNotEmpty)
+              if (lab.objectives.isNotEmpty)
+                ConceptPrimer(objective: lab.objectives.first),
+              if (lab.objectives.isNotEmpty)
                 const SizedBox(height: 12),
               const SizedBox(height: 12),
               if (lab.posttestMode) const PosttestBanner(),
@@ -427,7 +416,7 @@ class _DataLabState extends State<DataLabPage> {
               key: const ValueKey('go_posttest'),
               onPressed: lab.sessionId == null
                   ? null
-                  : () => confirmEnterPosttest(context, lab, setState, _loadTable),
+                  : () => confirmEnterPosttestVm(context, _vm, _loadTable),
               child: const Text(Strings.goPosttest),
             ),
           if (!lab.posttestMode &&
@@ -439,7 +428,7 @@ class _DataLabState extends State<DataLabPage> {
               icon: Icons.fact_check,
               title: '3 · Evidencia y siguiente paso',
               children: [
-                ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+                ResultPanel(lab: lab, onNext: _next, onRetry: _retry, onEvent: _vm.emitEvent),
               ],
             ),
           if (!lab.posttestMode &&
@@ -453,11 +442,11 @@ class _DataLabState extends State<DataLabPage> {
                 lab: lab,
                 labId: widget.labId,
                 onUpdate: () {
-                  if (lab.done) {
-                    clearDrafts(widget.labId,
+                  if (ref.read(labSessionProvider(widget.labId)).done) {
+                    _vm.clearDrafts(widget.labId,
                         const ['flagged', 'cellmap', 'justification']);
                   }
-                  setState(() {});
+                  _vm.touch();
                 }),
           StatusText(lab.status, key: statusKey),
             ],

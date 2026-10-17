@@ -1,31 +1,24 @@
 // Reflexión de cierre + botón al siguiente lab.
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../data/repositories/lab_repository.dart' show fetchLabs;
-import '../../../domain/models/models.dart';
 import '../../../utils/criteria.dart' show criterionLabel;
-import '../view_models/lab_session.dart';
+import '../../academy/view_models/academy_viewmodel.dart';
+import '../view_models/lab_session_viewmodel.dart';
 
 /// Botón al siguiente lab de la ruta (por order_index). Nada que enlazar → texto.
-class NextLabButton extends StatefulWidget {
+class NextLabButton extends ConsumerWidget {
   final String labId;
   const NextLabButton(this.labId, {super.key});
   @override
-  State<NextLabButton> createState() => _NextLabButtonState();
-}
-
-class _NextLabButtonState extends State<NextLabButton> {
-  late final _future = fetchLabs();
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<Lab>>(
-      future: _future,
-      builder: (c, s) {
-        if (!s.hasData) return const SizedBox.shrink();
-        final labs = s.data!;
-        final i = labs.indexWhere((l) => l.id == widget.labId);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(labsListViewModelProvider);
+    return switch (async) {
+      AsyncData(:final value) => Builder(builder: (context) {
+        final labs = value;
+        final i = labs.indexWhere((l) => l.id == labId);
         if (i < 0 || i + 1 >= labs.length) {
           return const Text('Último lab de la ruta ✓');
         }
@@ -39,23 +32,28 @@ class _NextLabButtonState extends State<NextLabButton> {
           child: AutoSizeText('Siguiente lab: ${n.title}',
               maxLines: 1, minFontSize: 12),
         );
-      },
-    );
+      }),
+      _ => const SizedBox.shrink(),
+    };
   }
 }
 
 /// Reflexión de cierre + done + enlace al siguiente lab (postest unificado).
-class PosttestReflection extends StatefulWidget {
+/// MVVM: el envío y errores van al ViewModel del lab ([labId]).
+class PosttestReflection extends ConsumerStatefulWidget {
   final LabSession lab;
   final String labId;
   final VoidCallback onUpdate;
   const PosttestReflection(
-      {super.key, required this.lab, required this.labId, required this.onUpdate});
+      {super.key,
+      required this.lab,
+      required this.labId,
+      required this.onUpdate});
   @override
-  State<PosttestReflection> createState() => _PosttestReflectionState();
+  ConsumerState<PosttestReflection> createState() => _PosttestReflectionState();
 }
 
-class _PosttestReflectionState extends State<PosttestReflection> {
+class _PosttestReflectionState extends ConsumerState<PosttestReflection> {
   final reflection = TextEditingController();
   bool busy = false;
 
@@ -66,11 +64,12 @@ class _PosttestReflectionState extends State<PosttestReflection> {
   }
 
   Future<void> _send() async {
+    final vm = ref.read(labSessionProvider(widget.labId).notifier);
     setState(() => busy = true);
     try {
-      await widget.lab.reflect(reflection.text);
+      await vm.reflect(reflection.text);
     } catch (e) {
-      widget.lab.status = 'Error: $e';
+      vm.setStatus('Error: $e');
     }
     setState(() => busy = false);
     widget.onUpdate();

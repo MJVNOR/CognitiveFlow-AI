@@ -1,100 +1,74 @@
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../domain/models/models.dart';
 import '../../l10n/app_localizations.dart';
-import '../../data/repositories/lab_repository.dart' show fetchLabs;
-import '../../data/repositories/progress_repository.dart';
 import '../../utils/criteria.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/core/themes/cognitive_theme.dart';
+import '../../ui/progress/view_models/progress_viewmodel.dart';
 
 final _int = NumberFormat.decimalPattern('es');
 
 String _labTitle(List<Lab> labs, String id) =>
     labs.where((l) => l.id == id).map((l) => l.title).firstOrNull ?? id;
 
-class ProgressPage extends StatefulWidget {
+class ProgressPage extends ConsumerWidget {
   const ProgressPage({super.key});
   @override
-  State<ProgressPage> createState() => _ProgressState();
-}
-
-class _ProgressState extends State<ProgressPage> {
-  // ponytail: mismo Future.wait que Academia + GET /me/progress medido.
-  late Future<List<dynamic>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-  }
-
-  Future<List<dynamic>> _load() => Future.wait([
-        fetchLabs(),
-        fetchLabStatus(),
-        fetchProgress(),
-        fetchRecallDue(),
-      ]);
-
-  void _retry() => setState(() => _future = _load());
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
-      future: _future,
-      builder: (c, s) {
-        if (s.connectionState == ConnectionState.waiting) {
-          return const Center(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(progressViewModelProvider);
+    return switch (async) {
+      AsyncLoading() => const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Cargando tu avance y evidencias…'),
+            ],
+          ),
+        ),
+      AsyncError(:final error) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 12),
-                Text('Cargando tu avance y evidencias…'),
+                const Icon(Icons.cloud_off_outlined, size: 40),
+                const SizedBox(height: 12),
+                Semantics(
+                  liveRegion: true,
+                  child: Text('No se pudo cargar el progreso. Revisa tu conexión y reintenta.',
+                      textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 4),
+                Semantics(
+                  liveRegion: true,
+                  child: Text('${Strings.noApi}: $error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed: () => ref
+                      .read(progressViewModelProvider.notifier)
+                      .refresh(),
+                  child: const Text('Reintentar'),
+                ),
               ],
             ),
-          );
-        }
-        if (s.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.cloud_off_outlined, size: 40),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('No se pudo cargar el progreso. Revisa tu conexión y reintenta.',
-                        textAlign: TextAlign.center),
-                  ),
-                  const SizedBox(height: 4),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('${Strings.noApi}: ${s.error}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 12)),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: _retry,
-                    child: const Text('Reintentar'),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-        final labs = s.data![0] as List<Lab>;
-        final statusMap = s.data![1] as Map;
-        final prog = {
-          for (final p in (s.data![2] as List)) (p['lab_template_id'] as String): p as Map
-        };
+          ),
+        ),
+      AsyncData(:final value) => Builder(builder: (context) {
+        final labs = value.labs;
+        final statusMap = value.statusMap;
+        final prog = value.prog;
         final done =
             [for (final l in labs) if (statusMap[l.id] == 'done') l].length;
         if (labs.isEmpty) {
@@ -148,7 +122,7 @@ class _ProgressState extends State<ProgressPage> {
                   semanticsValue: '${((done / labs.length) * 100).round()}%',
                 ),
                 const SizedBox(height: 16),
-                if ((s.data![3] as List).isNotEmpty) ...[
+                if (value.recalls.isNotEmpty) ...[
                   SectionCard(
                     icon: Icons.event_repeat,
                     title: 'Repasos vencidos',
@@ -156,7 +130,7 @@ class _ProgressState extends State<ProgressPage> {
                       const Text(
                           'Preguntas nuevas, sin pistas: el dominio se mantiene demostrándolo otra vez.',
                           style: TextStyle(fontSize: 12)),
-                      for (final r in (s.data![3] as List).cast<Map>())
+                      for (final r in value.recalls.cast<Map>())
                         ListTile(
                           dense: true,
                           contentPadding: EdgeInsets.zero,
@@ -165,12 +139,9 @@ class _ProgressState extends State<ProgressPage> {
                               style: const TextStyle(fontSize: 13)),
                           trailing: TextButton(
                             key: ValueKey('recall_done_${r['id']}'),
-                            onPressed: () async {
-                              try {
-                                await markRecallDone('${r['id']}');
-                              } catch (_) {}
-                              _retry();
-                            },
+                            onPressed: () => ref
+                                .read(progressViewModelProvider.notifier)
+                                .markRecallDone('${r['id']}'),
                             child: const Text('Marcar hecho'),
                           ),
                         ),
@@ -257,8 +228,8 @@ class _ProgressState extends State<ProgressPage> {
             ),
           ),
         );
-      },
-    );
+      }),
+    };
   }
 }
 

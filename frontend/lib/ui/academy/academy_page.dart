@@ -1,20 +1,14 @@
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/models/models.dart';
-import '../../data/repositories/lab_repository.dart' show fetchLabs, fetchModules;
-import '../../data/repositories/progress_repository.dart' show fetchLabStatus;
+import '../../ui/academy/view_models/academy_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/core/themes/cognitive_theme.dart';
-
-class AcademyPage extends StatefulWidget {
-  const AcademyPage({super.key});
-  @override
-  State<AcademyPage> createState() => _AcademyState();
-}
 
 // P6.1: nada de ids crudos visibles (jerga de dominio, no de producto).
 String labTypeLabel(String? t) => switch (t) {
@@ -25,25 +19,16 @@ String labTypeLabel(String? t) => switch (t) {
       _ => t ?? '',
     };
 
-class _AcademyState extends State<AcademyPage> {
-  // ponytail: un solo Future.wait; tres GET en paralelo, un solo spinner.
-  late Future<List<dynamic>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future =
-        Future.wait([fetchModules(), fetchLabs(), fetchLabStatus()]);
-  }
-
-  void _retry() => setState(() {
-        _future = Future.wait(
-            [fetchModules(), fetchLabs(), fetchLabStatus()]);
-      });
+class AcademyPage extends ConsumerWidget {
+  const AcademyPage({super.key});
 
   void _goLab(BuildContext context, Lab l) => context.go(
         '/labs/${l.id}',
         extra: {'lab_type': l.labType, 'title': l.title},
       );
+
+  void _retry(WidgetRef ref) =>
+      ref.read(academyViewModelProvider.notifier).refresh();
 
   (IconData, Color, Color, Color) _statusStyle(
       String? st, ColorScheme cs) {
@@ -116,49 +101,45 @@ class _AcademyState extends State<AcademyPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<dynamic>>(
-      future: _future,
-      builder: (c, s) {
-        if (s.connectionState == ConnectionState.waiting) {
-          return const Center(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(academyViewModelProvider);
+    return switch (async) {
+      AsyncLoading() => const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Cargando academia…'),
+            ],
+          ),
+        ),
+      AsyncError(:final error) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 12),
-                Text('Cargando academia…'),
+                const Icon(Icons.cloud_off_outlined, size: 40),
+                const SizedBox(height: 12),
+                Semantics(
+                  liveRegion: true,
+                  child: Text('${Strings.noApi}: $error',
+                      textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed: () => _retry(ref),
+                  child: const Text('Reintentar'),
+                ),
               ],
             ),
-          );
-        }
-        if (s.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.cloud_off_outlined, size: 40),
-                  const SizedBox(height: 12),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('${Strings.noApi}: ${s.error}',
-                        textAlign: TextAlign.center),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: _retry,
-                    child: const Text('Reintentar'),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-        final modules = s.data![0] as List<Module>;
-        final labs = s.data![1] as List<Lab>;
-        final statusMap = s.data![2] as Map;
+          ),
+        ),
+      AsyncData(:final value) => Builder(builder: (context) {
+        final modules = value.modules;
+        final labs = value.labs;
+        final statusMap = value.statusMap;
         final orphans = [for (final l in labs) if (l.moduleId == '') l];
         if (labs.isEmpty) {
           return Center(
@@ -292,57 +273,42 @@ class _AcademyState extends State<AcademyPage> {
             ),
           ),
         );
-      },
-    );
+      }),
+    };
   }
 }
 
-class LabsPage extends StatefulWidget {
+class LabsPage extends ConsumerWidget {
   const LabsPage({super.key});
   @override
-  State<LabsPage> createState() => _LabsState();
-}
-
-class _LabsState extends State<LabsPage> {
-  late Future<List<Lab>> _future;
-  @override
-  void initState() {
-    super.initState();
-    _future = fetchLabs();
-  }
-
-  void _retry() => setState(() => _future = fetchLabs());
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<Lab>>(
-      future: _future,
-      builder: (c, s) {
-        if (s.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (s.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Semantics(
-                    liveRegion: true,
-                    child: Text('${Strings.noApi}: ${s.error}',
-                        textAlign: TextAlign.center),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.tonal(
-                    onPressed: _retry,
-                    child: const Text(Strings.retry),
-                  ),
-                ],
-              ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(labsListViewModelProvider);
+    return switch (async) {
+      AsyncLoading() => const Center(child: CircularProgressIndicator()),
+      AsyncError(:final error) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Semantics(
+                  liveRegion: true,
+                  child: Text('${Strings.noApi}: $error',
+                      textAlign: TextAlign.center),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonal(
+                  onPressed: () => ref
+                      .read(labsListViewModelProvider.notifier)
+                      .refresh(),
+                  child: const Text(Strings.retry),
+                ),
+              ],
             ),
-          );
-        }
-        final labs = s.data!;
+          ),
+        ),
+      AsyncData(:final value) => Builder(builder: (context) {
+        final labs = value;
         if (labs.isEmpty) {
           return const Center(
             child: Padding(
@@ -376,8 +342,8 @@ class _LabsState extends State<LabsPage> {
             ),
           ),
         );
-      },
-    );
+      }),
+    };
   }
 }
 

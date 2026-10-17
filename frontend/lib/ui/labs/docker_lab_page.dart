@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/repositories/lab_repository.dart' as lab_repo;
-import '../../ui/labs/view_models/lab_session.dart';
-import '../../utils/storage/drafts.dart';
+import '../../ui/labs/view_models/lab_session_viewmodel.dart';
 import '../../ui/core/widgets/chrome.dart';
 import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/widgets/lab_chrome.dart';
@@ -16,12 +15,12 @@ import '../../ui/labs/docker/docker_units.dart';
 // M08: Docker Academy — 4 unidades con widgets GenUI + transferencia al postest.
 // La actividad usa el mismo TutorSurface que las intervenciones: el widget emite
 // eventos al backend y la justificación viaja en el intento (extra.unit).
-class DockerLabPage extends StatefulWidget {
+class DockerLabPage extends ConsumerStatefulWidget {
   final String labId;
   final String title;
   const DockerLabPage({super.key, required this.labId, required this.title});
   @override
-  State<DockerLabPage> createState() => _DockerState();
+  ConsumerState<DockerLabPage> createState() => _DockerState();
 }
 
 const _dockerUnits = [
@@ -39,14 +38,16 @@ const _unitPrompts = {
   'M08-D07-persistence': 'Predice qué archivos sobreviven con cada montaje.',
 };
 
-class _DockerState extends State<DockerLabPage> {
-  final lab = LabSession();
+class _DockerState extends ConsumerState<DockerLabPage> {
   final statusKey = GlobalKey();
   String unit = 'M08-D01-containers';
   String? posttestUnit;
-  List<Map<String, dynamic>>? objectives;
   final justification = TextEditingController();
   final Map<String, Object?> _evidence = {};
+
+  LabSessionViewModel get _vm =>
+      ref.read(labSessionProvider(widget.labId).notifier);
+  LabSession get lab => ref.watch(labSessionProvider(widget.labId));
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
   String get _activeUnit =>
@@ -56,28 +57,25 @@ class _DockerState extends State<DockerLabPage> {
   void initState() {
     super.initState();
     justification.addListener(
-        () => saveDraft(widget.labId, 'justification', justification.text));
+        () => _vm.saveDraft(widget.labId, 'justification', justification.text));
     _init();
   }
 
   Future<void> _init() async {
     // P1.6: reanudar abierta antes de crear una nueva.
-    if (!await lab.resume(widget.labId)) {
-      await lab.init(widget.labId);
-      if (lab.sessionId == null) {
+    if (!await _vm.resume(widget.labId)) {
+      await _vm.init(widget.labId);
+      if (!mounted) return;
+      if (ref.read(labSessionProvider(widget.labId)).sessionId == null) {
         setState(() {});
         return;
       }
     }
     // Sprint 5: lección por unidad (no bloquea si falla).
-    try {
-      final objs = await lab_repo.fetchObjectives(widget.labId);
-      if (!mounted) return;
-      setState(() => objectives = objs);
-    } catch (_) {}
-    final u = await loadDraft(widget.labId, 'unit');
-    final pu = await loadDraft(widget.labId, 'posttest_unit');
-    final j = await loadDraft(widget.labId, 'justification');
+    await _vm.loadObjectives(widget.labId);
+    final u = await _vm.loadDraft(widget.labId, 'unit');
+    final pu = await _vm.loadDraft(widget.labId, 'posttest_unit');
+    final j = await _vm.loadDraft(widget.labId, 'justification');
     if (!mounted) return;
     setState(() {
       if (u != null && _dockerUnits.contains(u)) unit = u;
@@ -87,7 +85,7 @@ class _DockerState extends State<DockerLabPage> {
   }
 
   Map<String, dynamic>? _objectiveFor(String id) {
-    for (final o in objectives ?? const []) {
+    for (final o in lab.objectives) {
       if (o['id'] == id) return o;
     }
     return null;
@@ -105,10 +103,10 @@ class _DockerState extends State<DockerLabPage> {
 
   Future<void> _onActivityEvent(
       String wt, String et, Map<String, Object?> p) async {
-    final sid = lab.sessionId;
+    final sid = ref.read(labSessionProvider(widget.labId)).sessionId;
     if (sid != null) {
       try {
-        await lab.emitEvent(wt, et, p);
+        await _vm.emitEvent(wt, et, p);
       } catch (_) {}
     }
     // La evidencia del widget alimenta la evaluación del intento.
@@ -125,54 +123,46 @@ class _DockerState extends State<DockerLabPage> {
   }
 
   Future<void> _send() async {
-    if (lab.sessionId == null || lab.evaluating) return;
+    final snap = ref.read(labSessionProvider(widget.labId));
+    if (snap.sessionId == null || snap.evaluating) return;
     if (justification.text.trim().isEmpty) {
-      setState(() => lab.status = lab.posttestMode
+      _vm.setStatus(snap.posttestMode
           ? 'El diagnóstico es obligatorio'
           : 'La justificación es obligatoria');
       return;
     }
-    setState(() {
-      lab.evaluating = true;
-      lab.status = '';
-    });
+    _vm.setEvaluating(true);
+    _vm.setStatus('');
     try {
-      await lab.send({
+      await _vm.send({
         'seed': seed,
         'extra': {'unit': _activeUnit, ..._evidence},
         'answer_text': justification.text,
-      }, posttest: lab.posttestMode);
-      setState(() {
-        lab.evaluating = false;
-        if (lab.posttestMode) {
-          lab.posttestSent = true;
-          lab.status = 'Postest entregado (sin ayuda de IA)';
-        } else {
-          lab.status = 'Guardado ✓ (simulación, sin IA)';
-        }
-      });
-      if (!lab.posttestMode) {
-        await lab.evaluate();
-        setState(() {});
+      }, posttest: snap.posttestMode);
+      _vm.markDelivered(
+          posttest:
+              ref.read(labSessionProvider(widget.labId)).posttestMode,
+          savedMessage: 'Guardado ✓ (simulación, sin IA)',
+          posttestMessage: 'Postest entregado (sin ayuda de IA)');
+      if (!ref.read(labSessionProvider(widget.labId)).posttestMode) {
+        await _vm.evaluate();
       }
     } catch (e) {
-      setState(() {
-        lab.evaluating = false;
-        lab.status = 'Error envío: $e';
-      });
+      _vm.setEvaluating(false);
+      _vm.setStatus('Error envío: $e');
     }
   }
 
   Future<void> _retry() async {
-    setState(() => lab.evaluating = true);
-    await lab.evaluate();
-    setState(() => lab.evaluating = false);
+    _vm.setEvaluating(true);
+    await _vm.evaluate();
+    _vm.setEvaluating(false);
   }
 
   Future<void> _next() async {
-    setState(() => lab.nextBusy = true);
-    await lab.next();
-    setState(() => lab.nextBusy = false);
+    _vm.setNextBusy(true);
+    await _vm.next();
+    _vm.setNextBusy(false);
   }
 
   @override
@@ -223,7 +213,7 @@ class _DockerState extends State<DockerLabPage> {
                             unit = u;
                             _evidence.clear();
                           });
-                          saveDraft(widget.labId, 'unit', u);
+                          _vm.saveDraft(widget.labId, 'unit', u);
                         },
                 ),
             ],
@@ -282,10 +272,10 @@ class _DockerState extends State<DockerLabPage> {
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
                 ? null
-                : () => confirmEnterPosttest(context, lab, setState, () async {},
+                : () => confirmEnterPosttestVm(context, _vm, () async {},
                     () {
-                      posttestUnit = unit;
-                      saveDraft(widget.labId, 'posttest_unit', unit);
+                      setState(() => posttestUnit = unit);
+                      _vm.saveDraft(widget.labId, 'posttest_unit', unit);
                     }),
             child: const Text(Strings.goPosttestNoAI),
           ),
@@ -298,7 +288,7 @@ class _DockerState extends State<DockerLabPage> {
             icon: Icons.fact_check,
             title: '3 · Evidencia y siguiente paso',
             children: [
-              ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
+              ResultPanel(lab: lab, onNext: _next, onRetry: _retry, onEvent: _vm.emitEvent),
             ],
           ),
         if (!lab.posttestMode &&
@@ -312,11 +302,11 @@ class _DockerState extends State<DockerLabPage> {
               lab: lab,
               labId: widget.labId,
               onUpdate: () {
-                if (lab.done) {
-                  clearDrafts(widget.labId,
+                if (ref.read(labSessionProvider(widget.labId)).done) {
+                  _vm.clearDrafts(widget.labId,
                       const ['unit', 'posttest_unit', 'justification']);
                 }
-                setState(() {});
+                _vm.touch();
               }),
         StatusText(lab.status, key: statusKey),
       ],
