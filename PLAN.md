@@ -579,10 +579,10 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 - [x] Docker D01/D02/D04/D07 con widgets del MVP y prueba de transferencia.
 
 ### Sprint 4 — Dominio, repaso e instructor (P1)
-- [ ] Diagnóstico por objetivos, adaptación novato/intermedio/avanzado y ayuda gradual.
-- [ ] RecallSchedule configurable 1/3/7 días, preguntas nuevas y seguimiento de retención.
-- [ ] Dashboard instructor readonly: overview, estudiante, sesión. Quitar formularios/sliders/comentarios y permisos de escritura; preservar históricos.
-- [ ] Métricas de dominio SOLO de postests versionados; histórico con evidencia real y estados vacíos.
+- [x] Diagnóstico por objetivos, adaptación novato/intermedio/avanzado y ayuda gradual.
+- [x] RecallSchedule configurable 1/3/7 días, preguntas nuevas y seguimiento de retención.
+- [x] Dashboard instructor readonly: overview, estudiante, sesión. Quitar formularios/sliders/comentarios y permisos de escritura; preservar históricos.
+- [x] Métricas de dominio SOLO de postests versionados; histórico con evidencia real y estados vacíos.
 
 ### Sprint 5 — Calidad de producto, investigación y entrega (P1/P2)
 - [ ] Aplicar `DESIGN.md`, Impeccable para critique/layout/typeset/polish/audit sobre capturas y builds Flutter, sin asumir parser Dart automático.

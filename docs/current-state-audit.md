@@ -20,7 +20,7 @@ Commit: `acf031f` · DB intacta, sin migraciones. No se reinicializa ni se borra
 Auth: `POST /auth/login`, `DELETE /auth/logout`, `GET /auth/me`
 Labs/sesiones: `GET /modules`, `GET /labs`, `GET /me/lab-status`, `GET /me/sessions`, `GET /me/progress`, `POST /sessions`, `GET /sessions/{id}`, `GET /sessions/{id}/attempts`, `POST /sessions/{id}/attempts`, `POST /sessions/{id}/events`, `POST /sessions/{id}/posttest`, `POST /sessions/{id}/reflection`, `GET /sessions/{id}/interventions`, `GET /sessions/{id}/tutor-history`, `GET /labs/{id}/curve|dataset|distributions`
 Evaluación/tutor: `POST /sessions/{id}/evaluate`, `POST /sessions/{id}/socratic`, `POST /sessions/{id}/next-intervention`
-Instructor: `GET /instructor/students`, `GET /instructor/students/{id}/sessions`, `POST /instructor/attempts/{id}/reviews`, `GET /instructor/export`, `GET /instructor/matrix`, `GET /instructor/agreement`, `GET /instructor/backup`
+Instructor: `GET /instructor/...` solo lectura (`POST reviews` eliminado en Sprint 4), `GET /instructor/export`, `GET /instructor/matrix`, `GET /instructor/agreement`, `GET /instructor/backup`
 
 ## 4. Pruebas ejecutadas (evidencia, no inventario)
 
@@ -79,3 +79,10 @@ Objetivo `M06-U04-drift` + diagnósticos (2 ítems `DriftDistributionExplorer`);
 ## 14. Sprint 3 cierre (2026-10-17)
 
 Data Detective: inspector por fila (tipo + acción, diálogo con drafts) sin checkbox masivo, `cell_types`/`actions` en `extra` del intento, `detail.types_ok` determinista en el evaluador, vista previa de limpieza simulada (convertir/imputar/eliminar con medias reales) y ConceptPrimer M02-U02. ML: guardar 1 corrida y superponer su validación (leyenda + tabla), slider de época de divergencia con `evidenceSelected` persistido. Seeds: 9 módulos (m8 Docker, m9 integrador), 7 objetivos con `status` real (`interactive_ready` ×3, `content_ready` ×4 Docker), columna agregada vía `ensure_columns` sin borrar datos. Docker D01/D02/D04/D07: 4 widgets GenUI interactivos (clasificar, ciclo por pasos, reordenar Dockerfile, predecir+recrear persistencia) con eventos y tests; `CATALOG` 12→16 con allowlist; transferencia = dg-2 por unidad en blueprints. Tests: backend 72 passed / frontend 50 passed / analyze limpio.
+
+## 15. Sprint 4 cierre (2026-10-17)
+
+1. Instructor readonly: eliminado `POST /instructor/attempts/{id}/reviews` (404 para ambos roles; export/matriz/agreement intactos, históricos preservados); página de sesión en solo lectura (sin sliders/notas/guardar) y matriz sin chips de pendiente irresolubles.
+2. Dominio solo de postests: `mastery` + `mastery_status` en progreso/matriz; UI declara «Sin dominio demostrado todavía (la práctica no cuenta)» hasta el postest.
+3. Diagnóstico por objetivo: `diagnostic_results` en la primera evaluación (needs_foundation|guided_practice|autonomous_challenge, misma escala que la política de ayuda); `GET session` expone `level` + `assistance{hints,socratic,interventions}`; workspace muestra «Ruta: … · Ayudas usadas: N».
+4. Repaso 1/3/7: `recall_schedule` al cerrar la sesión; `GET /me/recall-due` (vencidos) + `POST /me/recall/{id}/done` con ownership; sección «Repasos vencidos» en Progreso. Preguntas nuevas vía variantes del servidor; sin automatización de correos. Tests: backend 74 passed / frontend 51 passed / analyze limpio.
