@@ -373,4 +373,43 @@ def reflection(session_id: str, body: ReflectionIn, user=Depends(current_user),
     desafio = min(deltas, key=deltas.get) if deltas else None
     if desafio is None and post:
         desafio = min(post, key=post.get)
+    # Sprint 4: repaso espaciado 1/3/7 días (preguntas nuevas las da la variante).
+    import time as _time
+
+    now = int(_time.time())
+    obj = db.query(models.LearningObjective).filter_by(
+        lab_template_id=s.lab_template_id).first()
+    if not db.query(models.RecallItem).filter_by(
+            student_id=s.student_id, lab_template_id=s.lab_template_id,
+            status="pending").first():
+        for days in (1, 3, 7):
+            db.add(models.RecallItem(
+                id=uuid.uuid4().hex[:8], student_id=s.student_id,
+                lab_template_id=s.lab_template_id, objective_id=obj.id if obj else "",
+                due_at=now + days * 86400, status="pending", created_at=now))
+    db.commit()
     return {"status": "done", "summary": {"mejora": mejora, "desafio": desafio}}
+
+
+@router.get("/me/recall-due")
+def recall_due(user=Depends(current_user), db: Session = Depends(get_db)):
+    # Sprint 4: solo vencidos y pendientes, ordenados por fecha.
+    import time as _time
+
+    rows = (db.query(models.RecallItem)
+            .filter_by(student_id=user.id, status="pending")
+            .filter(models.RecallItem.due_at <= int(_time.time()))
+            .order_by(models.RecallItem.due_at).all())
+    return [{"id": r.id, "lab_template_id": r.lab_template_id,
+             "objective_id": r.objective_id, "due_at": r.due_at} for r in rows]
+
+
+@router.post("/me/recall/{item_id}/done")
+def recall_done(item_id: str, user=Depends(current_user),
+                db: Session = Depends(get_db)):
+    r = db.query(models.RecallItem).filter_by(id=item_id).first()
+    if r is None or r.student_id != user.id:
+        raise HTTPException(404, "repaso no encontrado")
+    r.status = "done"
+    db.commit()
+    return {"status": "done"}

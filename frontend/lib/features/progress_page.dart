@@ -11,6 +11,9 @@ import '../widgets/theme.dart';
 
 final _int = NumberFormat.decimalPattern('es');
 
+String _labTitle(List<Lab> labs, String id) =>
+    labs.where((l) => l.id == id).map((l) => l.title).firstOrNull ?? id;
+
 class ProgressPage extends StatefulWidget {
   const ProgressPage({super.key});
   @override
@@ -26,8 +29,12 @@ class _ProgressState extends State<ProgressPage> {
     _future = _load();
   }
 
-  Future<List<dynamic>> _load() => Future.wait(
-      [fetchLabs(), fetchMap('/me/lab-status'), fetchJson('/me/progress')]);
+  Future<List<dynamic>> _load() => Future.wait([
+        fetchLabs(),
+        fetchMap('/me/lab-status'),
+        fetchJson('/me/progress'),
+        fetchJson('/me/recall-due'),
+      ]);
 
   void _retry() => setState(() => _future = _load());
 
@@ -137,6 +144,37 @@ class _ProgressState extends State<ProgressPage> {
                   semanticsValue: '${((done / labs.length) * 100).round()}%',
                 ),
                 const SizedBox(height: 16),
+                if ((s.data![3] as List).isNotEmpty) ...[
+                  SectionCard(
+                    icon: Icons.event_repeat,
+                    title: 'Repasos vencidos',
+                    children: [
+                      const Text(
+                          'Preguntas nuevas, sin pistas: el dominio se mantiene demostrándolo otra vez.',
+                          style: TextStyle(fontSize: 12)),
+                      for (final r in (s.data![3] as List).cast<Map>())
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                              _labTitle(labs, '${r['lab_template_id']}'),
+                              style: const TextStyle(fontSize: 13)),
+                          trailing: TextButton(
+                            key: ValueKey('recall_done_${r['id']}'),
+                            onPressed: () async {
+                              try {
+                                await postJson(
+                                    '/me/recall/${r['id']}/done', {});
+                              } catch (_) {}
+                              _retry();
+                            },
+                            child: const Text('Marcar hecho'),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 for (final l in labs)
                   Card(
                     child: ExpansionTile(

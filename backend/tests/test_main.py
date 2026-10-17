@@ -1420,3 +1420,34 @@ def test_diagnostic_level_and_assistance():
         "reviso mi hipótesis inicial"))
     assert client.get(f"/sessions/{strong_sid}", headers=H_S1).json()["level"] in (
         "guided_practice", "autonomous_challenge")
+
+
+# Sprint 4: repaso 1/3/7 — se programa al cerrar, vence, se completa.
+def test_recall_schedule_due_and_done():
+    import time as _time
+
+    sid = _full_ml_session()
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": "postest"}, headers=H_S1)
+    client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1)
+    rows = TestingSession().query(models.RecallItem).filter_by(student_id="s1").all()
+    assert len(rows) == 3 and all(r.status == "pending" for r in rows)
+    days = sorted((r.due_at - r.created_at) // 86400 for r in rows)
+    assert days == [1, 3, 7]
+    # aún no vence → vacío; vencido → aparece; completar → desaparece
+    assert client.get("/me/recall-due", headers=H_S1).json() == []
+    db = TestingSession()
+    first = db.query(models.RecallItem).filter_by(student_id="s1").order_by(
+        models.RecallItem.due_at).first()
+    first.due_at = int(_time.time()) - 1
+    db.commit()
+    db.close()
+    due = client.get("/me/recall-due", headers=H_S1).json()
+    assert len(due) == 1 and due[0]["lab_template_id"] == "lab-ml"
+    assert client.post(f"/me/recall/{due[0]['id']}/done", headers=H_S1).json() == {
+        "status": "done"}
+    assert client.get("/me/recall-due", headers=H_S1).json() == []
+    # ajeno no ve ni completa
+    assert client.get("/me/recall-due", headers=H_S2).json() == []
+    other = TestingSession().query(models.RecallItem).filter_by(
+        student_id="s1", status="pending").first()
+    assert client.post(f"/me/recall/{other.id}/done", headers=H_S2).status_code == 404
