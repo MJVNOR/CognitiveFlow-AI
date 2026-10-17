@@ -15,6 +15,10 @@ CATALOG = {
     "PipelineDAGBuilder",
     "RubricFeedbackCard",
     "ReflectionSummary",
+    "ContainerVsVmExplorer",
+    "ImageContainerLifecycle",
+    "DockerfileWorkbench",
+    "PersistenceExperiment",
 }
 
 FALLBACK_WIDGET = "SocraticQuestionCard"
@@ -42,6 +46,10 @@ ALLOWED_BY_WIDGET = {
     "SqlQueryWorkbench": ["argumentSubmitted", "hintRequested"],
     "ConceptMapBuilder": ["argumentSubmitted", "hintRequested"],
     "PipelineDAGBuilder": ["argumentSubmitted", "hintRequested"],
+    "ContainerVsVmExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
+    "ImageContainerLifecycle": ["evidenceSelected", "hintRequested"],
+    "DockerfileWorkbench": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
+    "PersistenceExperiment": ["predictionSubmitted", "evidenceSelected", "hintRequested"],
     "RubricFeedbackCard": ["hintRequested"],
     "ReflectionSummary": ["argumentSubmitted"],
 }

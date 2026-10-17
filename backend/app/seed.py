@@ -10,7 +10,8 @@ MODULES = [
     ("m5", "Modalidades especializadas", 5),
     ("m6", "MLOps, datos y observabilidad", 6),
     ("m7", "Agentes y contexto", 7),
-    ("m8", "Proyecto integrador", 8),
+    ("m8", "Docker y despliegue", 8),
+    ("m9", "Proyecto integrador", 9),
 ]
 
 USERS = [
@@ -57,6 +58,7 @@ OBJECTIVE_M06_U04 = {
         "Confundir cambio de concepto con deriva de datos.",
     ],
     "rubric_id": "drift-v1",
+    "status": "interactive_ready",
     "diagnostic_blueprint": {
         "items": [
             {"id": "dg-1", "widget_type": "DriftDistributionExplorer",
@@ -95,6 +97,7 @@ OBJECTIVE_ML_U02 = {
         "Confundir ruido en los datos con overfitting.",
     ],
     "rubric_id": "ml-overfitting-v1",
+    "status": "interactive_ready",
     "diagnostic_blueprint": {
         "items": [
             {"id": "dg-1", "widget_type": "LearningCurveSimulator",
@@ -109,7 +112,193 @@ OBJECTIVE_ML_U02 = {
     },
 }
 
-OBJECTIVES = [OBJECTIVE_ML_U02, OBJECTIVE_M06_U04]
+# Sprint 3: M02-U02 (Data Detective) con tipos de error + plan de limpieza.
+OBJECTIVE_M02_U02 = {
+    "id": "M02-U02-cleaning",
+    "lab_template_id": "lab-data",
+    "title": "Clasificar anomalías y elegir limpieza sin destruir evidencia",
+    "level": "intermedio",
+    "concept_summary": (
+        "No toda rareza es error: un outlier puede ser real. Clasifica primero: "
+        "faltante, duplicado, unidad mezclada, imposible físico o fuga de futuro. "
+        "Después elige la reparación más barata que conserva evidencia: imputar, "
+        "convertir, eliminar o revisar. Eliminar sin mirar destruye datos."
+    ),
+    "worked_example_steps": [
+        "Fila con pressure vacío: faltante → imputar con la media.",
+        "Temp 77 con unit F junto a valores en C: unidad mezclada → convertir.",
+        "Fila idéntica a otra: duplicado → eliminar una.",
+    ],
+    "misconceptions": [
+        "Todo outlier es un error que hay que borrar.",
+        "Eliminar filas nunca tiene costo.",
+        "Las unidades no importan si el número parece normal.",
+    ],
+    "rubric_id": "data-cleaning-v1",
+    "status": "interactive_ready",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "DataTableExplorer",
+             "widget_config": {"n_rows": 30, "seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Antes de marcar: ¿qué tipos de error esperas y dónde?"},
+            {"id": "dg-2", "widget_type": "DataTableExplorer",
+             "widget_config": {"n_rows": 30, "seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Nueva tabla: clasifica cada anomalía y su reparación."},
+        ]
+    },
+}
+
+# Sprint 3: Docker D01/D02/D04/D07 (contenido listo, widgets MVP, sin lab interactivo aún).
+OBJECTIVE_D01 = {
+    "id": "M08-D01-containers",
+    "lab_template_id": "lab-docker",
+    "title": "Distinguir contenedor de máquina virtual y sus límites",
+    "level": "introductorio",
+    "concept_summary": (
+        "Un contenedor comparte el kernel del host y aísla procesos; una VM "
+        "virtualiza hardware con su propio kernel. Contenedor: arranque rápido, "
+        "ligero, ideal para apps reproducibles. Límite: no persiste solo, no es "
+        "una VM pequeña y localhost dentro no es tu máquina."
+    ),
+    "worked_example_steps": [
+        "App que debe correr igual en tu PC y en el servidor: contenedor.",
+        "Necesitas otro kernel o drivers: máquina virtual.",
+        "Tu archivo desapareció al recrear el contenedor: filesystem efímero.",
+    ],
+    "misconceptions": [
+        "Un contenedor guarda mis archivos automáticamente.",
+        "localhost en el contenedor es mi máquina.",
+        "Contenedor y VM son intercambiables.",
+    ],
+    "rubric_id": "docker-d01-v1",
+    "status": "content_ready",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "ContainerVsVmExplorer",
+             "widget_config": {"seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Tres escenarios: ¿contenedor o VM? Justifica cada uno."},
+            {"id": "dg-2", "widget_type": "ContainerVsVmExplorer",
+             "widget_config": {"seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Nuevos escenarios: clasifica y señala el límite."},
+        ]
+    },
+}
+
+OBJECTIVE_D02 = {
+    "id": "M08-D02-lifecycle",
+    "lab_template_id": "lab-docker",
+    "title": "Distinguir imagen, contenedor y su ciclo de vida",
+    "level": "introductorio",
+    "concept_summary": (
+        "La imagen es inmutable (plantilla con capas); el contenedor es una "
+        "instancia viva. Ciclo: pull/build → run → stop → rm. Borrar el "
+        "contenedor no borra la imagen; parar no borra los datos del volumen."
+    ),
+    "worked_example_steps": [
+        "pull trajo la imagen; run la encendió como contenedor.",
+        "stop la detuvo (sigue existiendo); rm la eliminó.",
+        "La imagen sigue disponible para un nuevo run.",
+    ],
+    "misconceptions": [
+        "Borrar el contenedor borra la imagen.",
+        "Parar un contenedor borra sus archivos.",
+        "Imagen y contenedor son lo mismo.",
+    ],
+    "rubric_id": "docker-d02-v1",
+    "status": "content_ready",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "ImageContainerLifecycle",
+             "widget_config": {"seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Ordena el ciclo y predice qué sobrevive a cada paso."},
+            {"id": "dg-2", "widget_type": "ImageContainerLifecycle",
+             "widget_config": {"seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Servicio caído: ¿qué paso lo recupera y qué se pierde?"},
+        ]
+    },
+}
+
+OBJECTIVE_D04 = {
+    "id": "M08-D04-dockerfile",
+    "lab_template_id": "lab-docker",
+    "title": "Escribir un Dockerfile reproducible y con buena caché",
+    "level": "intermedio",
+    "concept_summary": (
+        "El Dockerfile declara capas: FROM fija versión, COPY requirements + RUN "
+        "pip van antes que COPY del código para no invalidar la caché, EXPOSE "
+        "documenta (no publica) y .dockerignore excluye. Orden malo = builds "
+        "lentos; versión sin fijar = builds irreproducibles."
+    ),
+    "worked_example_steps": [
+        "COPY requirements + RUN install antes que COPY del código: la caché sobrevive.",
+        "Cambiar solo app.py no reinstala dependencias.",
+        "EXPOSE 8000 documenta; -p 8000:8000 publica.",
+    ],
+    "misconceptions": [
+        "EXPOSE publica el puerto solo.",
+        "El orden de instrucciones no afecta el tiempo.",
+        "latest siempre es reproducible.",
+    ],
+    "rubric_id": "docker-d04-v1",
+    "status": "content_ready",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "DockerfileWorkbench",
+             "widget_config": {"seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Ordena las instrucciones y predice qué invalida la caché."},
+            {"id": "dg-2", "widget_type": "DockerfileWorkbench",
+             "widget_config": {"seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Dockerfile roto: corrige orden y explica cada capa."},
+        ]
+    },
+}
+
+OBJECTIVE_D07 = {
+    "id": "M08-D07-persistence",
+    "lab_template_id": "lab-docker",
+    "title": "Predecir qué sobrevive al recrear un contenedor",
+    "level": "intermedio",
+    "concept_summary": (
+        "El filesystem del contenedor es efímero: al recrear, lo no montado se "
+        "pierde. Named volume persiste gestionado por Docker; bind mount enlaza "
+        "tu carpeta. SQLite necesita volumen o se pierde con el contenedor."
+    ),
+    "worked_example_steps": [
+        "Escribes /app/data/x sin montaje y recreas: se pierde.",
+        "Con named volume y recreas: sobrevive.",
+        "Bind mount: sobrevive y lo ves en tu carpeta.",
+    ],
+    "misconceptions": [
+        "Recrear conserva los archivos escritos dentro.",
+        "Volume y capa de imagen son lo mismo.",
+        "Bind mount y named volume no se distinguen.",
+    ],
+    "rubric_id": "docker-d07-v1",
+    "status": "content_ready",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "PersistenceExperiment",
+             "widget_config": {"seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Predice qué archivos sobreviven con cada montaje."},
+            {"id": "dg-2", "widget_type": "PersistenceExperiment",
+             "widget_config": {"seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "DB SQLite en Compose: ¿dónde la guardas y por qué?"},
+        ]
+    },
+}
+
+OBJECTIVES = [OBJECTIVE_ML_U02, OBJECTIVE_M06_U04, OBJECTIVE_M02_U02,
+              OBJECTIVE_D01, OBJECTIVE_D02, OBJECTIVE_D04, OBJECTIVE_D07]
 
 
 def init_db():
@@ -121,28 +310,35 @@ def seed_if_empty():
 
     db = SessionLocal()
     try:
-        if db.query(models.Module).count() == 0:
-            for mid, title, order in MODULES:
+        # ponytail: por id → agrega el que falte (m9, objetivos nuevos) sin tocar el resto
+        for mid, title, order in MODULES:
+            row = db.query(models.Module).filter_by(id=mid).first()
+            if row is None:
                 db.add(models.Module(id=mid, title=title, order_index=order))
+            elif row.title != title:
+                row.title = title
         if db.query(models.User).count() == 0:
             for uid, name, role in USERS:
                 db.add(models.User(id=uid, display_name=name, role=role))
-        if db.query(models.LabTemplate).count() == 0:
-            for lid, title, ltype, mid, order, desc in LABS:
+        for lid, title, ltype, mid, order, desc in LABS:
+            if not db.query(models.LabTemplate).filter_by(id=lid).first():
                 db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
                                           module_id=mid, order_index=order,
                                           description=desc))
-        # ponytail: por id → agrega el que falte sin tocar el resto ni duplicar
         if hasattr(models, "LearningObjective"):
             for o in OBJECTIVES:
-                if not db.query(models.LearningObjective).filter_by(id=o["id"]).first():
+                row = db.query(models.LearningObjective).filter_by(id=o["id"]).first()
+                if row is None:
                     db.add(models.LearningObjective(
                         id=o["id"], lab_template_id=o["lab_template_id"], title=o["title"],
                         level=o["level"], concept_summary=o["concept_summary"],
                         worked_example_json=_json.dumps(o["worked_example_steps"]),
                         misconceptions_json=_json.dumps(o["misconceptions"]),
                         rubric_id=o["rubric_id"],
-                        diagnostic_blueprint_json=_json.dumps(o["diagnostic_blueprint"])))
+                        diagnostic_blueprint_json=_json.dumps(o["diagnostic_blueprint"]),
+                        status=o.get("status", "planned")))
+                elif row.status != o.get("status", "planned"):
+                    row.status = o.get("status", "planned")
         db.commit()
     finally:
         db.close()

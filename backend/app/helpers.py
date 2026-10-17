@@ -76,7 +76,7 @@ def _evaluate_attempt(db: Session, session, attempt) -> dict:
     if lab_type == "data_detective":
         # ponytail: Jev solo en ML por ahora; datos y monitoreo con mock determinista
         result = mock_evaluate_data(attempt.answer_text, state.get("flags", []),
-                                    state.get("seed", 1))
+                                    state.get("seed", 1), state.get("extra", {}))
     elif lab_type == "model_monitoring":
         result = mock_evaluate_monitor(attempt.answer_text, state.get("extra", {}),
                                        state.get("seed", 1))

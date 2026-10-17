@@ -232,4 +232,138 @@ void main() {
         isTrue);
     expect(got.any((g) => g[1] == 'argumentSubmitted'), isTrue);
   });
+
+  // Sprint 3: widgets Docker MVP emiten evidencia real.
+  testWidgets('ContainerVsVmExplorer clasifica y emite', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'ContainerVsVmExplorer',
+              'widget_parameters': {'title': 'T'},
+              'socratic_question': '¿Contenedor o VM?',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('¿Contenedor o VM?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('cve_c_0')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('cve_v_1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('cve_c_2')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('cve_send')));
+    await tester.pump();
+    expect(
+        got.any((g) =>
+            g[0] == 'ContainerVsVmExplorer' &&
+            g[1] == 'evidenceSelected' &&
+            (g[2] as Map)['choices'].join(',') == '0,1,0'),
+        isTrue);
+  });
+
+  testWidgets('ImageContainerLifecycle completa el ciclo', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'ImageContainerLifecycle',
+              'widget_parameters': {'title': 'T'},
+              'socratic_question': 'Avanza el ciclo',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(find.byKey(const ValueKey('icl_next')));
+      await tester.pump();
+    }
+    expect(
+        got.any((g) =>
+            g[0] == 'ImageContainerLifecycle' &&
+            g[1] == 'evidenceSelected' &&
+            (g[2] as Map)['completed'] == true),
+        isTrue);
+  });
+
+  testWidgets('DockerfileWorkbench reordena y emite', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'DockerfileWorkbench',
+              'widget_parameters': {'title': 'T'},
+              'socratic_question': 'Ordena',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dw_up_1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dw_send')));
+    await tester.pump();
+    expect(
+        got.any((g) =>
+            g[0] == 'DockerfileWorkbench' &&
+            g[1] == 'evidenceSelected' &&
+            ((g[2] as Map)['order'] as List).length == 4),
+        isTrue);
+  });
+
+  testWidgets('PersistenceExperiment predice y observa', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TutorSurface(
+            intervention: {
+              'widget_type': 'PersistenceExperiment',
+              'widget_parameters': {'title': 'T'},
+              'socratic_question': '¿Sobrevive?',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('pe_mount_1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('pe_pred_survive')));
+    await tester.pump();
+    expect(
+        got.any((g) =>
+            g[0] == 'PersistenceExperiment' &&
+            g[1] == 'predictionSubmitted' &&
+            (g[2] as Map)['predicted'] == true),
+        isTrue);
+    await tester.tap(find.byKey(const ValueKey('pe_write')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('pe_recreate')));
+    await tester.pump();
+    expect(find.textContaining('sobrevivió'), findsOneWidget);
+    expect(
+        got.any((g) =>
+            g[0] == 'PersistenceExperiment' &&
+            g[1] == 'evidenceSelected' &&
+            (g[2] as Map)['observed'] == true &&
+            (g[2] as Map)['match'] == true),
+        isTrue);
+  });
 }

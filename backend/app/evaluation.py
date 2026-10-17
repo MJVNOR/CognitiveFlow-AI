@@ -181,11 +181,31 @@ def mock_evaluate_monitor(answer_text: str, extra: dict, seed: int = 1) -> dict:
     }
 
 
-def mock_evaluate_data(answer_text: str, flags: list, seed: int = 1) -> dict:
+def _true_row_type(rows: list, rid: int) -> str:
+    # ponytail: mismas reglas que generate(); el frontend las duplica para simular
+    r = rows[rid]
+    if r.get("pressure") is None:
+        return "missing"
+    if r.get("unit") == "F":
+        return "unit"
+    if r.get("pressure") == 999.9:
+        return "outlier"
+    if r.get("temp") == -273.2:
+        return "leak"
+    base = {k: r[k] for k in ("temp", "unit", "pressure", "line")}
+    for i, o in enumerate(rows):
+        if i != rid and all(o.get(k) == v for k, v in base.items()):
+            return "duplicate"
+    return "ok"
+
+
+def mock_evaluate_data(answer_text: str, flags: list, seed: int = 1,
+                       extra: dict | None = None) -> dict:
     """Rúbrica data-cleaning-v1: checks deterministas + keywords. Etiquetado mock."""
     from app.labs_data import generate
 
     planted = set(generate(seed)["planted"])
+    rows_all = generate(seed)["rows"]
     flagged = set(flags or [])
     hits = len(planted & flagged)
     t = (answer_text or "").lower()
@@ -209,4 +229,29 @@ def mock_evaluate_data(answer_text: str, flags: list, seed: int = 1) -> dict:
         "rubric_version": DATA_RUBRIC_VERSION,
         "criteria": [{"id": k, "score": v} for k, v in scores.items()],
         "feedback_generated_by": "mock",
+        "detail": _data_type_detail(rows_all, flags, extra),
     }
+
+
+def _data_type_detail(rows: list, flags: list, extra: dict | None) -> dict:
+    """Sprint 3: acierto por tipo declarado vs real (inspector por celda)."""
+    claimed = {}
+    if isinstance(extra, dict):
+        ct = extra.get("cell_types", {})
+        if isinstance(ct, dict):
+            claimed = {str(k): v for k, v in ct.items()}
+    types = {}
+    for rid in flags or []:
+        try:
+            i = int(rid)
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= i < len(rows):
+            continue
+        actual = _true_row_type(rows, i)
+        c = claimed.get(str(i))
+        types[str(i)] = {"claimed": c, "actual": actual,
+                         "ok": c == actual and actual != "ok"}
+    actions = extra.get("actions", {}) if isinstance(extra, dict) else {}
+    return {"types": types, "types_ok": sum(1 for t in types.values() if t["ok"]),
+            "actions": actions if isinstance(actions, dict) else {}}

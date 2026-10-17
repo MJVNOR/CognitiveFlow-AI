@@ -24,6 +24,9 @@ class _LabDetailState extends State<LabDetailPage> {
   final hypo = TextEditingController();
   Map<String, dynamic>? curve;
   List<Map<String, dynamic>>? objectives;
+  List<num>? savedVal;
+  String? savedLabel;
+  double epochSel = 0;
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
@@ -124,6 +127,29 @@ class _LabDetailState extends State<LabDetailPage> {
     }
   }
 
+  /// Sprint 3: la época marcada queda en ui_events como evidencia seleccionada.
+  Future<void> _markEvidence() async {
+    if (lab.sessionId == null) return;
+    try {
+      await postJson('/sessions/${lab.sessionId}/events', {
+        'client_event_id': newEventId(),
+        'widget_type': 'LearningCurveSimulator',
+        'event_type': 'evidenceSelected',
+        'payload': {
+          'epoch': epochSel.round(),
+          'complexity': complexity.round(),
+          'noise_pct': noise.round(),
+          'mode': lab.posttestMode ? 'posttest' : 'practice',
+        },
+      });
+      if (!mounted) return;
+      setState(() => lab.status = 'Evidencia guardada: época ${epochSel.round()}');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => lab.status = 'No se guardó la evidencia: $e');
+    }
+  }
+
   Future<void> _retry() async {
     setState(() => lab.evaluating = true);
     await lab.evaluate();
@@ -192,6 +218,7 @@ class _LabDetailState extends State<LabDetailPage> {
           AccessibleCurveChart(
             train: train,
             val: val,
+            val2: savedVal,
             height: 220,
             label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida',
           ),
@@ -229,6 +256,51 @@ class _LabDetailState extends State<LabDetailPage> {
                     saveDraft(widget.labId, 'noise', '$noise');
                   },
           ),
+          if (train.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ParamSlider(
+              label: 'Época de divergencia',
+              value: 'e${epochSel.round()}',
+              help: 'Marca dónde se despega la validación y úsala como evidencia.',
+              current: epochSel.clamp(0, (train.length - 1).toDouble()),
+              min: 0,
+              max: (train.length - 1).toDouble(),
+              divisions: train.length > 1 ? train.length - 1 : 1,
+              onChanged: locked ? null : (v) => setState(() => epochSel = v),
+              onChangeEnd: null,
+            ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonal(
+                  key: const ValueKey('ml_mark_evidence'),
+                  onPressed:
+                      lab.sessionId == null || sent ? null : _markEvidence,
+                  child: const Text('Marcar época como evidencia'),
+                ),
+                OutlinedButton(
+                  key: const ValueKey('ml_save_run'),
+                  onPressed: curve == null
+                      ? null
+                      : () => setState(() {
+                            savedVal = List<num>.from(val);
+                            savedLabel =
+                                'C${complexity.round()}·R${noise.round()}';
+                          }),
+                  child: Text(savedVal == null
+                      ? 'Guardar corrida'
+                      : 'Guardada: $savedLabel (reemplazar)'),
+                ),
+                if (savedVal != null)
+                  TextButton(
+                    key: const ValueKey('ml_clear_run'),
+                    onPressed: () => setState(() => savedVal = null),
+                    child: const Text('Quitar guardada'),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
       const SizedBox(height: 12),
@@ -396,11 +468,15 @@ class CurvePainter extends StatelessWidget {
   final Color trainColor;
   final Color valColor;
   final double labelInterval;
+  final List<num>? val2;
+  final Color? savedColor;
   const CurvePainter(this.train, this.val,
       {super.key,
       required this.trainColor,
       required this.valColor,
-      this.labelInterval = 5});
+      this.labelInterval = 5,
+      this.val2,
+      this.savedColor});
 
   List<FlSpot> _spots(List<num> ys) => [
         for (var i = 0; i < ys.length; i++)
@@ -468,6 +544,15 @@ class CurvePainter extends StatelessWidget {
               dotData: const FlDotData(show: false),
               dashArray: [6, 4],
             ),
+          if (val2 != null && val2!.isNotEmpty && savedColor != null)
+            LineChartBarData(
+              spots: _spots(val2!),
+              isCurved: false,
+              color: savedColor!,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+              dashArray: [2, 4],
+            ),
         ],
       ),
     );
@@ -485,7 +570,8 @@ class AccessibleCurveChart extends StatelessWidget {
   final String label;
   final double height;
   final double labelInterval;
-  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label, this.height = 180, this.labelInterval = 5});
+  final List<num>? val2;
+  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label, this.height = 180, this.labelInterval = 5, this.val2});
 
   String _summary(List<num> ys) {
     if (ys.isEmpty) return 'sin datos';
@@ -508,7 +594,9 @@ class AccessibleCurveChart extends StatelessWidget {
             child: CurvePainter(train, val,
                 trainColor: cs.primary,
                 valColor: cs.tertiary,
-                labelInterval: labelInterval),
+                labelInterval: labelInterval,
+                val2: val2,
+                savedColor: cs.outline),
           ),
         ),
         const SizedBox(height: 4),
@@ -537,6 +625,23 @@ class AccessibleCurveChart extends StatelessWidget {
               const SizedBox(width: 6),
               const Text(Strings.legendVal, style: TextStyle(fontSize: 12)),
             ]),
+            if (val2 != null && val2!.isNotEmpty)
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(
+                  width: 30,
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < 4; i++) ...[
+                        if (i > 0) const SizedBox(width: 3),
+                        Container(width: 4, height: 3, color: cs.outline),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('Corrida guardada (línea punteada)',
+                    style: TextStyle(fontSize: 12)),
+              ]),
           ],
         ),
         ExpansionTile(

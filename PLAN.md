@@ -572,11 +572,11 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 - [x] Congelar/versionar rúbricas/prompts, log de decisiones breve y seguro.
 
 ### Sprint 3 — Laboratorios bien diseñados (P1)
-- [ ] Rediseñar Data Detective con inspector por celda y simulación de limpieza.
-- [ ] Rediseñar ML Experiment con predicción, comparación de dos runs y selección de evidencia.
+- [x] Rediseñar Data Detective con inspector por celda y simulación de limpieza.
+- [x] Rediseñar ML Experiment con predicción, comparación de dos runs y selección de evidencia.
 - [x] Rediseñar Model Monitoring con ejes legibles, feature/periodo y contraste drift vs performance.
-- [ ] Seeds curricular completos de nueve módulos y doce unidades Docker con estado real de preparación.
-- [ ] Docker D01/D02/D04/D07 con widgets del MVP y prueba de transferencia.
+- [x] Seeds curricular completos de nueve módulos y doce unidades Docker con estado real de preparación.
+- [x] Docker D01/D02/D04/D07 con widgets del MVP y prueba de transferencia.
 
 ### Sprint 4 — Dominio, repaso e instructor (P1)
 - [ ] Diagnóstico por objetivos, adaptación novato/intermedio/avanzado y ayuda gradual.

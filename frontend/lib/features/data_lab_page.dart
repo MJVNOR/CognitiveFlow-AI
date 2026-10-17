@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../session/lab_session.dart';
 import '../state/app_state.dart';
 import '../widgets/cards.dart';
+import 'ml_lab_page.dart';
 
 // G1: tabla sintética, marcar anomalías, justificar, postest con tabla nueva.
 class DataLabPage extends StatefulWidget {
@@ -19,6 +22,9 @@ class _DataLabState extends State<DataLabPage> {
   List columns = [];
   List rows = [];
   final flagged = <int>{};
+  final cellTypes = <String, String>{};
+  final actions = <String, String>{};
+  List<Map<String, dynamic>>? objectives;
   final justification = TextEditingController();
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
@@ -41,14 +47,32 @@ class _DataLabState extends State<DataLabPage> {
       }
     }
     await _loadTable();
+    // Sprint 3: lección del objetivo (no bloquea la tabla si falla).
+    try {
+      final objs = await fetchJson('/labs/${widget.labId}/objectives');
+      if (!mounted) return;
+      setState(() => objectives = [
+            for (final o in objs) Map<String, dynamic>.from(o as Map)
+          ]);
+    } catch (_) {}
     // Borrador previo (si salió del lab sin entregar).
     final f = await loadDraft(widget.labId, 'flagged');
+    final cm = await loadDraft(widget.labId, 'cellmap');
     final j = await loadDraft(widget.labId, 'justification');
     if (!mounted) return;
     setState(() {
       if (f != null && f.isNotEmpty) {
         flagged.addAll(
             [for (final p in f.split(',')) int.tryParse(p)].whereType<int>());
+      }
+      if (cm != null && cm.isNotEmpty) {
+        try {
+          final m = Map<String, dynamic>.from(jsonDecode(cm) as Map);
+          cellTypes.addAll(
+              Map<String, String>.from(m['types'] as Map? ?? {}));
+          actions.addAll(
+              Map<String, String>.from(m['actions'] as Map? ?? {}));
+        } catch (_) {}
       }
       if (j != null) justification.text = j;
     });
@@ -81,6 +105,7 @@ class _DataLabState extends State<DataLabPage> {
       await lab.send({
         'seed': seed,
         'flags': flagged.toList(),
+        'extra': {'cell_types': cellTypes, 'actions': actions},
         'answer_text': justification.text,
       }, posttest: lab.posttestMode);
       setState(() {
@@ -127,6 +152,110 @@ class _DataLabState extends State<DataLabPage> {
     super.dispose();
   }
 
+  Future<void> _persistFlags() async {
+    await saveDraft(
+        widget.labId, 'flagged', flagged.map((e) => '$e').join(','));
+    await saveDraft(widget.labId, 'cellmap',
+        jsonEncode({'types': cellTypes, 'actions': actions}));
+  }
+
+  /// Inspector contextual por celda: tipo de anomalía + acción de limpieza.
+  Future<void> _inspect(Map r) async {
+    final id = '${r['id']}';
+    var type = cellTypes[id] ?? 'sin_anomalia';
+    var action = actions[id] ?? 'revisar';
+    final res = await showDialog<String>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setDialog) => AlertDialog(
+          title: Text('Fila $id'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text([for (final col in columns) '$col: ${r['$col']}']
+                    .join('\n')),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('inspector_type'),
+                  initialValue: type,
+                  decoration: const InputDecoration(
+                    labelText: 'Tipo de anomalía',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final e in anomalyTypeLabels.entries)
+                      DropdownMenuItem(
+                          value: e.key, child: Text(e.value)),
+                  ],
+                  onChanged: (v) => setDialog(() => type = v ?? type),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('inspector_action'),
+                  initialValue: action,
+                  decoration: const InputDecoration(
+                    labelText: 'Acción de limpieza',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final e in cleaningActionLabels.entries)
+                      DropdownMenuItem(
+                          value: e.key, child: Text(e.value)),
+                  ],
+                  onChanged: (v) => setDialog(() => action = v ?? action),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            if (flagged.contains(int.tryParse(id) ?? -1))
+              TextButton(
+                key: const ValueKey('inspector_clear'),
+                onPressed: () => Navigator.of(c).pop('clear'),
+                child: const Text('Quitar marca'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(c).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const ValueKey('inspector_save'),
+              onPressed: () => Navigator.of(c).pop('save:$type:$action'),
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (res == 'clear') {
+      setState(() {
+        flagged.remove(int.tryParse(id));
+        cellTypes.remove(id);
+        actions.remove(id);
+      });
+      await _persistFlags();
+    } else if (res != null && res.startsWith('save:')) {
+      final parts = res.split(':');
+      final t = parts.length > 1 ? parts[1] : 'sin_anomalia';
+      final a = parts.length > 2 ? parts[2] : 'revisar';
+      setState(() {
+        if (t == 'sin_anomalia') {
+          flagged.remove(int.tryParse(id));
+          cellTypes.remove(id);
+          actions.remove(id);
+        } else {
+          flagged.add(int.tryParse(id) ?? -1);
+          cellTypes[id] = t;
+          actions[id] = a;
+        }
+      });
+      await _persistFlags();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -142,11 +271,17 @@ class _DataLabState extends State<DataLabPage> {
               // P6.2: mismo split desktop que ML/Monitor (actividad | tutor).
               final controls = <Widget>[
               LabHeader(
+                crumb: labCrumb(objectives),
                 objective: lab.posttestMode
                     ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
                     : 'Marca las filas con anomalías y justifica tu plan de limpieza.',
                 step: lab.step,
               ),
+              const SizedBox(height: 12),
+              if (objectives != null && objectives!.isNotEmpty)
+                ConceptPrimer(objective: objectives!.first),
+              if (objectives != null && objectives!.isNotEmpty)
+                const SizedBox(height: 12),
               const SizedBox(height: 12),
               if (lab.posttestMode) const PosttestBanner(),
               if (lab.posttestMode) const SizedBox(height: 12),
@@ -177,7 +312,7 @@ class _DataLabState extends State<DataLabPage> {
                   controller: hCtrl,
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
-                    showCheckboxColumn: true,
+                    showCheckboxColumn: false,
                     // ponytail: filas ≥44px (WCAG 2.5.8).
                     dataRowMinHeight: 44,
                     columns: [for (final c in columns) DataColumn(label: Text('$c'))],
@@ -186,15 +321,7 @@ class _DataLabState extends State<DataLabPage> {
                         DataRow(
                           key: ValueKey('datarow_${r['id']}'),
                           selected: flagged.contains(r['id']),
-                          onSelectChanged: (_) {
-                            setState(() {
-                              flagged.contains(r['id'])
-                                  ? flagged.remove(r['id'])
-                                  : flagged.add(r['id'] as int);
-                            });
-                            saveDraft(widget.labId, 'flagged',
-                                flagged.map((e) => '$e').join(','));
-                          },
+                          onSelectChanged: (_) => _inspect(r),
                           // ponytail: key en la celda (con RenderBox) para taps exactos;
                           // la key en DataRow no resuelve centro útil en web.
                           cells: [
@@ -207,6 +334,51 @@ class _DataLabState extends State<DataLabPage> {
                   ),
                 ),
               ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SectionCard(
+                icon: Icons.preview,
+                title: 'Vista previa de limpieza (simulación)',
+                children: [
+                  Builder(builder: (context) {
+                    if (flagged.isEmpty) {
+                      return const Text(
+                          'Marca filas con el inspector para simular su limpieza.',
+                          style: TextStyle(fontSize: 12));
+                    }
+                    final pv = cleanedPreview(
+                        rows, flagged, cellTypes, actions);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                            '${pv.removed} eliminadas · ${pv.converted} reparadas · ${pv.rows.length} finales',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        const SizedBox(height: 4),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: DataTable(
+                            dataRowMinHeight: 44,
+                            columns: [
+                              for (final c in columns)
+                                DataColumn(label: Text('$c')),
+                            ],
+                            rows: [
+                              for (final m in pv.rows)
+                                DataRow(cells: [
+                                  for (final c in columns)
+                                    DataCell(Text('${m['$c'] ?? '—'}')),
+                                ]),
+                            ],
+                          ),
+                        ),
+                        const Text(
+                            'Simulación client-side: no modifica los datos.',
+                            style: TextStyle(fontSize: 11)),
+                      ],
+                    );
+                  }),
                 ],
               ),
               const SizedBox(height: 12),
@@ -276,14 +448,15 @@ class _DataLabState extends State<DataLabPage> {
                 labId: widget.labId,
                 onUpdate: () {
                   if (lab.done) {
-                    clearDrafts(widget.labId, const ['flagged', 'justification']);
+                    clearDrafts(widget.labId,
+                        const ['flagged', 'cellmap', 'justification']);
                   }
                   setState(() {});
                 }),
           StatusText(lab.status, key: statusKey),
             ],
           );
-              if (constraints.maxWidth >= 1024) {
+              if (constraints.maxWidth >= 1100) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -311,5 +484,62 @@ class _DataLabState extends State<DataLabPage> {
       ),
     );
   }
+}
+
+const anomalyTypeLabels = {
+  'sin_anomalia': 'Sin anomalía',
+  'missing': 'Faltante',
+  'duplicate': 'Duplicado',
+  'unit': 'Unidad mezclada',
+  'outlier': 'Imposible físico',
+  'leak': 'Fuga de futuro',
+};
+
+const cleaningActionLabels = {
+  'revisar': 'Revisar',
+  'imputar': 'Imputar media',
+  'convertir': 'Convertir a °C',
+  'eliminar': 'Eliminar fila',
+};
+
+/// Sprint 3: vista previa de limpieza (simulación client-side, no modifica datos).
+({List<Map<String, Object?>> rows, int removed, int converted}) cleanedPreview(
+    List rows,
+    Set<int> flagged,
+    Map<String, String> types,
+    Map<String, String> actions) {
+  final pressures = [
+    for (final r in rows) (r as Map)['pressure']
+  ].whereType<num>();
+  final mean = pressures.isEmpty
+      ? null
+      : pressures.reduce((a, b) => a + b) / pressures.length;
+  final out = <Map<String, Object?>>[];
+  var removed = 0;
+  var converted = 0;
+  for (final r in rows) {
+    final m = Map<String, Object?>.from(r as Map);
+    final id = int.tryParse('${m['id']}');
+    if (id == null || !flagged.contains(id)) {
+      out.add(m);
+      continue;
+    }
+    final action = actions['$id'] ?? 'revisar';
+    if (action == 'eliminar') {
+      removed++;
+      continue;
+    }
+    if (action == 'convertir' && m['unit'] == 'F' && m['temp'] is num) {
+      m['temp'] =
+          double.parse((((m['temp'] as num) - 32) * 5 / 9).toStringAsFixed(1));
+      m['unit'] = 'C*';
+      converted++;
+    } else if (action == 'imputar' && m['pressure'] == null && mean != null) {
+      m['pressure'] = double.parse(mean.toStringAsFixed(1));
+      converted++;
+    }
+    out.add(m);
+  }
+  return (rows: out, removed: removed, converted: converted);
 }
 

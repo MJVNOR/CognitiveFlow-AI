@@ -240,7 +240,15 @@ def _objective_out(o) -> dict:
     return {"id": o.id, "lab_template_id": o.lab_template_id, "title": o.title,
             "level": o.level, "concept_summary": o.concept_summary,
             "worked_example_steps": steps, "misconceptions": misc,
-            "rubric_id": o.rubric_id}
+            "rubric_id": o.rubric_id, "status": o.status}
+
+
+def _shape_const(o: dict) -> dict:
+    # ponytail: una sola forma para filas DB y fallback
+    return {**{k: o[k] for k in ("id", "lab_template_id", "title", "level",
+                                 "concept_summary", "rubric_id", "status")},
+            "worked_example_steps": o["worked_example_steps"],
+            "misconceptions": o["misconceptions"]}
 
 
 @router.get("/labs/{lab_id}/objectives")
@@ -250,13 +258,10 @@ def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
     if rows:
         return [_objective_out(o) for o in rows]
     from app.seed import OBJECTIVES as _OBJS
-    for _o in _OBJS:
-        if _o["lab_template_id"] == lab_id:
-            return [{**{k: _o[k] for k in ("id", "lab_template_id", "title", "level",
-                                      "concept_summary", "rubric_id")},
-                 "worked_example_steps": _o["worked_example_steps"],
-                 "misconceptions": _o["misconceptions"]}]
-    raise HTTPException(404, "sin objetivos para ese lab")
+    matched = [o for o in _OBJS if o["lab_template_id"] == lab_id]
+    if not matched:
+        raise HTTPException(404, "sin objetivos para ese lab")
+    return [_shape_const(o) for o in matched]
 
 
 @router.post("/labs/{lab_id}/diagnostics")

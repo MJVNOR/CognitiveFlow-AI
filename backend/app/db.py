@@ -35,6 +35,11 @@ def ensure_columns() -> None:
         if "created_at" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE auth_tokens ADD COLUMN created_at INTEGER DEFAULT 0"))
+    if insp.has_table("learning_objectives"):
+        cols = [c["name"] for c in insp.get_columns("learning_objectives")]
+        if "status" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE learning_objectives ADD COLUMN status VARCHAR DEFAULT 'planned'"))
 
 
 def get_db():

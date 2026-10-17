@@ -43,7 +43,8 @@ for mid, title, order in [
     ("m5", "Modalidades especializadas", 5),
     ("m6", "MLOps, datos y observabilidad", 6),
     ("m7", "Agentes y contexto", 7),
-    ("m8", "Proyecto integrador", 8),
+    ("m8", "Docker y despliegue", 8),
+    ("m9", "Proyecto integrador", 9),
 ]:
     db.add(models.Module(id=mid, title=title, order_index=order))
 for uid in ["s1", "s2", "s3", "s4"]:
@@ -103,7 +104,7 @@ def test_login_and_me():
 
 
 def test_modules_from_db():
-    assert len(client.get("/modules").json()) == 8
+    assert len(client.get("/modules").json()) == 9
 
 
 def test_instructor_sees_4_students():
@@ -1315,7 +1316,9 @@ def test_frozen_contract_versions():
     assert CATALOG == {"SocraticQuestionCard", "HypothesisEditor", "ChoiceReasoningWidget",
                        "DataTableExplorer", "SqlQueryWorkbench", "LearningCurveSimulator",
                        "DriftDistributionExplorer", "EvidenceComparison", "ConceptMapBuilder",
-                       "PipelineDAGBuilder", "RubricFeedbackCard", "ReflectionSummary"}
+                       "PipelineDAGBuilder", "RubricFeedbackCard", "ReflectionSummary",
+                       "ContainerVsVmExplorer", "ImageContainerLifecycle",
+                       "DockerfileWorkbench", "PersistenceExperiment"}
     for wt, evs in ALLOWED_BY_WIDGET.items():
         assert wt in CATALOG and evs
 
@@ -1329,3 +1332,43 @@ def test_monitor_objective_and_diagnostics():
     dg = client.post("/labs/lab-monitor/diagnostics").json()
     assert dg["objective_id"] == "M06-U04-drift" and len(dg["items"]) == 2
     assert {i["widget_type"] for i in dg["items"]} == {"DriftDistributionExplorer"}
+
+
+# Sprint 3: seeds con estado real + detalle de tipos por celda.
+def test_objectives_status_and_docker_units():
+    ml = client.get("/labs/lab-ml/objectives").json()[0]
+    assert ml["status"] == "interactive_ready"
+    data = client.get("/labs/lab-data/objectives").json()
+    assert len(data) == 1 and data[0]["id"] == "M02-U02-cleaning"
+    assert data[0]["status"] == "interactive_ready"
+    dg = client.post("/labs/lab-docker/diagnostics").json()
+    assert dg["objective_id"] == "M08-D01-containers"
+    assert {i["widget_type"] for i in dg["items"]} == {"ContainerVsVmExplorer"}
+    from app.seed import OBJECTIVES as _OBJS
+    dock = {o["id"]: o["diagnostic_blueprint"]["items"][0]["widget_type"]
+            for o in _OBJS if o["lab_template_id"] == "lab-docker"}
+    assert dock == {"M08-D01-containers": "ContainerVsVmExplorer",
+                    "M08-D02-lifecycle": "ImageContainerLifecycle",
+                    "M08-D04-dockerfile": "DockerfileWorkbench",
+                    "M08-D07-persistence": "PersistenceExperiment"}
+    objs = client.get("/labs/lab-docker/objectives").json()
+    assert len(objs) == 4 and all(o["status"] == "content_ready" for o in objs)
+    assert {o["id"] for o in objs} == {"M08-D01-containers", "M08-D02-lifecycle",
+                                       "M08-D04-dockerfile", "M08-D07-persistence"}
+
+
+def test_data_eval_reports_cell_types():
+    sid = _data_session()
+    aid = client.post(
+        f"/sessions/{sid}/attempts",
+        json={"seed": 1, "flags": [7, 3, 25],
+              "extra": {"cell_types": {"7": "unit", "3": "missing", "25": "duplicate"},
+                        "actions": {"7": "convertir"}},
+              "answer_text": "unidades y faltantes"},
+        headers=H_S1,
+    ).json()["id"]
+    r = client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1).json()
+    types = r["detail"]["types"]
+    assert types["7"]["ok"] and types["3"]["ok"] and not types["25"]["ok"]
+    assert r["detail"]["types_ok"] == 2
+    assert r["detail"]["actions"] == {"7": "convertir"}

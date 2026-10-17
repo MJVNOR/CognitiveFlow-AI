@@ -112,3 +112,5 @@ class LearningObjective(Base):
     misconceptions_json: Mapped[str] = mapped_column(Text, default="[]")
     rubric_id: Mapped[str] = mapped_column(String, default="")
     diagnostic_blueprint_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Sprint 3: estado real de preparación (planned|content_ready|interactive_ready|validated)
+    status: Mapped[str] = mapped_column(String, default="planned")
