@@ -7,17 +7,16 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import ensure_columns
+from app.db import upgrade_head
 from app.routers import auth, instructor, labs, socratic
-from app.seed import init_db, seed_if_empty
+from app.seed import seed_if_empty
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
-    ensure_columns()
+    upgrade_head()
     seed_if_empty()
     yield
 

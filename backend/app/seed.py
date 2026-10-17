@@ -459,6 +459,8 @@ def seed_if_empty():
 
 
 if __name__ == "__main__":
-    init_db()
+    from app.db import upgrade_head
+
+    upgrade_head()
     seed_if_empty()
     print("seed ok")

@@ -1458,8 +1458,8 @@ def test_recall_schedule_due_and_done():
     assert client.post(f"/me/recall/{other.id}/done", headers=H_S2).status_code == 404
 
 
-# Sprint 5: la migración agrega columnas sin borrar datos (sin Alembic).
-def test_ensure_columns_adds_status_without_data_loss(tmp_path, monkeypatch):
+# Sprint 5: la migración Alembic agrega columnas sin borrar datos.
+def test_alembic_0002_adds_columns_without_data_loss(tmp_path, monkeypatch):
     import sqlalchemy as sa
     import app.db as dbmod
 
@@ -1472,7 +1472,8 @@ def test_ensure_columns_adds_status_without_data_loss(tmp_path, monkeypatch):
         c.exec_driver_sql("INSERT INTO learning_objectives (id, lab_template_id) "
                           "VALUES ('x', 'lab-ml')")
     monkeypatch.setattr(dbmod, "engine", eng)
-    dbmod.ensure_columns()
+    monkeypatch.setenv("DATABASE_URL", url)
+    dbmod.upgrade_head()
     cols = [c["name"] for c in sa.inspect(eng).get_columns("learning_objectives")]
     assert "status" in cols
     assert [c["name"] for c in sa.inspect(eng).get_columns("auth_tokens")] == [

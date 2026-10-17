@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth import _bearer, current_user, new_token, revoke_token
 from app.db import get_db
+from app.schemas import LoginOut, MeOut
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ def _login_allowed(ip: str) -> bool:
     return True
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", response_model=LoginOut)
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     # Demo piloto: user_id de seed (s1-s4, i1). Sin passwords (ver app/auth.py).
     if not _login_allowed(request.client.host if request.client else "?"):
@@ -50,6 +51,6 @@ def logout(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     return {"status": "bye"}
 
 
-@router.get("/auth/me")
+@router.get("/auth/me", response_model=MeOut)
 def me(user=Depends(current_user)):
     return {"user_id": user.id, "role": user.role, "display_name": user.display_name}

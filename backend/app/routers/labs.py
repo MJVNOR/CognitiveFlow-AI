@@ -17,6 +17,19 @@ from app.helpers import (
     _posttest_variant,
     _practice_attempts,
 )
+from app.schemas import (
+    AttemptOut,
+    DiagnosticOut,
+    InterventionLogOut,
+    LabOut,
+    ModuleOut,
+    ObjectiveOut,
+    ProgressOut,
+    RecallOut,
+    SessionBriefOut,
+    SessionDetailOut,
+    TutorHistoryItemOut,
+)
 from app.interventions import ALLOWED_BY_WIDGET, ALLOWED_EVENTS, CATALOG
 from app.labs_data import generate as generate_dataset
 from app.labs_ml import ml_curve
@@ -25,13 +38,13 @@ from app.labs_monitor import generate as generate_monitor
 router = APIRouter()
 
 
-@router.get("/modules")
+@router.get("/modules", response_model=list[ModuleOut])
 def list_modules(db: Session = Depends(get_db)):
     rows = db.query(models.Module).order_by(models.Module.order_index).all()
     return [{"id": m.id, "title": m.title, "order_index": m.order_index} for m in rows]
 
 
-@router.get("/labs")
+@router.get("/labs", response_model=list[LabOut])
 def list_labs(db: Session = Depends(get_db)):
     rows = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
     return [{"id": l.id, "title": l.title, "lab_type": l.lab_type,
@@ -48,7 +61,7 @@ def my_lab_status(user=Depends(current_user), db: Session = Depends(get_db)):
     return status
 
 
-@router.get("/me/sessions")
+@router.get("/me/sessions", response_model=list[SessionBriefOut])
 def my_sessions(lab_template_id: str = "", user=Depends(current_user),
                 db: Session = Depends(get_db)):
     # P1.6: reanudar — última sesión propia por lab, con fase (sin gastar re-evaluar).
@@ -59,7 +72,7 @@ def my_sessions(lab_template_id: str = "", user=Depends(current_user),
              "phase": _phase(db, s)} for s in q.all()]
 
 
-@router.get("/sessions/{session_id}/interventions")
+@router.get("/sessions/{session_id}/interventions", response_model=list[InterventionLogOut])
 def session_interventions(session_id: str, user=Depends(current_user),
                           db: Session = Depends(get_db)):
     # F5: audit trail legible (estrategia por intento); ownership primero.
@@ -101,7 +114,7 @@ def create_session(body: SessionIn, user=Depends(current_user), db: Session = De
     return {"id": sid}
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionDetailOut)
 def get_session(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     s = session_for(user, db, session_id)
     attempts = _practice_attempts(db, session_id)
@@ -133,7 +146,7 @@ def get_session(session_id: str, user=Depends(current_user), db: Session = Depen
             "variant": _posttest_variant(session_id) if s.status == "posttest" else None}
 
 
-@router.get("/sessions/{session_id}/tutor-history")
+@router.get("/sessions/{session_id}/tutor-history", response_model=list[TutorHistoryItemOut])
 def tutor_history(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     # P3.3: preguntas del tutor por sesión (orden de inserción); ownership primero.
     session_for(user, db, session_id)
@@ -262,7 +275,7 @@ def _shape_const(o: dict) -> dict:
             "misconceptions": o["misconceptions"]}
 
 
-@router.get("/labs/{lab_id}/objectives")
+@router.get("/labs/{lab_id}/objectives", response_model=list[ObjectiveOut])
 def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
     # Sprint 1/3: fallback a constante si aún no se sembró.
     rows = db.query(models.LearningObjective).filter_by(lab_template_id=lab_id).all()
@@ -275,7 +288,7 @@ def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
     return [_shape_const(o) for o in matched]
 
 
-@router.post("/labs/{lab_id}/diagnostics")
+@router.post("/labs/{lab_id}/diagnostics", response_model=DiagnosticOut)
 def lab_diagnostics(lab_id: str, db: Session = Depends(get_db)):
     # Sprint 1/3: diagnóstico breve (2 ítems equivalentes, sin pistas ni evaluación).
     from app.seed import OBJECTIVES as _OBJS
@@ -300,7 +313,7 @@ def lab_diagnostics(lab_id: str, db: Session = Depends(get_db)):
             "items": items}
 
 
-@router.get("/sessions/{session_id}/attempts")
+@router.get("/sessions/{session_id}/attempts", response_model=list[AttemptOut])
 def list_attempts(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     session_for(user, db, session_id)
     rows = db.query(models.LabAttempt).filter_by(session_id=session_id).all()
@@ -344,7 +357,7 @@ def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
     return {"status": "submitted", "id": aid, **variant, "eval_status": result["status"]}
 
 
-@router.get("/me/progress")
+@router.get("/me/progress", response_model=list[ProgressOut])
 def my_progress(user=Depends(current_user), db: Session = Depends(get_db)):
     # P4.2/P4.3: dominio demostrado (baseline vs postest), no clics ni tiempo.
     labs = db.query(models.LabTemplate).order_by(models.LabTemplate.order_index).all()
@@ -391,7 +404,7 @@ def reflection(session_id: str, body: ReflectionIn, user=Depends(current_user),
     return {"status": "done", "summary": {"mejora": mejora, "desafio": desafio}}
 
 
-@router.get("/me/recall-due")
+@router.get("/me/recall-due", response_model=list[RecallOut])
 def recall_due(user=Depends(current_user), db: Session = Depends(get_db)):
     # Sprint 4: solo vencidos y pendientes, ordenados por fecha.
     import time as _time

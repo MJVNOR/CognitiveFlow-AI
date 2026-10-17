@@ -13,6 +13,7 @@ from app import models
 from app.auth import require_instructor
 from app.db import get_db
 from app.helpers import _lab_progress
+from app.schemas import InstructorSessionOut, MatrixEntryOut, StudentOut
 
 router = APIRouter()
 
@@ -47,13 +48,13 @@ def instructor_agreement(user=Depends(require_instructor), db: Session = Depends
                 "mean_abs_diff": round(v["abs"] / v["n"], 3)} for k, v in out.items()}
 
 
-@router.get("/instructor/students")
+@router.get("/instructor/students", response_model=list[StudentOut])
 def instructor_students(user=Depends(require_instructor), db: Session = Depends(get_db)):
     rows = db.query(models.User).filter(models.User.role == "student").all()
     return [{"id": u.id, "display_name": u.display_name} for u in rows]
 
 
-@router.get("/instructor/students/{student_id}/sessions")
+@router.get("/instructor/students/{student_id}/sessions", response_model=list[InstructorSessionOut])
 def instructor_sessions(student_id: str, user=Depends(require_instructor),
                         db: Session = Depends(get_db)):
     rows = db.query(models.LearningSession).filter_by(student_id=student_id).all()
@@ -90,7 +91,7 @@ def instructor_export(format: str = "csv", user=Depends(require_instructor),
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 
 
-@router.get("/instructor/matrix")
+@router.get("/instructor/matrix", response_model=list[MatrixEntryOut])
 def instructor_matrix(user=Depends(require_instructor), db: Session = Depends(get_db)):
     # P4.4: matriz alumnos × labs con baseline/postest; códigos, nunca nombres aquí.
     users = db.query(models.User).filter(models.User.role == "student").all()

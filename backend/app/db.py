@@ -25,21 +25,30 @@ def _sqlite_pragmas(dbapi_conn, _):
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def ensure_columns() -> None:
-    """P7.2: añade columnas nuevas a DBs existentes sin borrar datos (sin Alembic)."""
-    from sqlalchemy import inspect, text
+def upgrade_head() -> None:
+    """Migra la DB a head (Alembic). Reemplaza a ensure_columns + create_all.
 
-    insp = inspect(engine)
-    if insp.has_table("auth_tokens"):
-        cols = [c["name"] for c in insp.get_columns("auth_tokens")]
-        if "created_at" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE auth_tokens ADD COLUMN created_at INTEGER DEFAULT 0"))
-    if insp.has_table("learning_objectives"):
-        cols = [c["name"] for c in insp.get_columns("learning_objectives")]
-        if "status" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE learning_objectives ADD COLUMN status VARCHAR DEFAULT 'planned'"))
+    - DB nueva: aplica 0001+0002 (crea todo).
+    - DB vieja sin tabla alembic_version: sella 0001 y aplica 0002
+      (añade created_at/status solo si faltan).
+    - :memory: (tests): create_all directo, Alembic no aplica ahí.
+    """
+    if DATABASE_URL in ("sqlite://", "sqlite:///:memory:"):
+        Base.metadata.create_all(bind=engine)
+        return
+    import os as _os
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect as _inspect
+
+    backend_dir = _os.path.dirname(_os.path.dirname(os.path.abspath(__file__)))
+    cfg = Config(_os.path.join(backend_dir, "alembic.ini"))
+    cfg.set_main_option("script_location", _os.path.join(backend_dir, "alembic"))
+    names = set(_inspect(engine).get_table_names())
+    if names and "alembic_version" not in names:
+        command.stamp(cfg, "0001")
+    command.upgrade(cfg, "head")
 
 
 def get_db():
