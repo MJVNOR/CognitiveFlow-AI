@@ -158,9 +158,7 @@ class _ProgressState extends State<ProgressPage> {
                         progressLine((prog[l.id]?['baseline']) as Map?,
                                 (prog[l.id]?['posttest']) as Map?) ??
                             'Sin evidencias todavía',
-                        if (prog[l.id]?['pending_review'] == true)
-                          'Pendiente de revisión'
-                        else if (prog[l.id]?['reviewed'] == true)
+                        if (prog[l.id]?['reviewed'] == true)
                           'Revisado por instructor',
                       ].join(' · ')),
                   children: [

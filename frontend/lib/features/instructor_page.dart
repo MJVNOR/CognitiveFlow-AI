@@ -79,7 +79,7 @@ class _InstructorState extends State<InstructorPage> {
               icon: Icons.groups,
               title: '${students.length} estudiantes',
               children: const [
-                Text('Toca un estudiante para ver sus sesiones y revisar.'),
+                Text('Toca un estudiante para ver sus sesiones (solo lectura).'),
               ],
             ),
             const SizedBox(height: 12),
@@ -118,19 +118,13 @@ class _InstructorState extends State<InstructorPage> {
 }
 
 // P4.4: matriz por alumno — inicial→postest por lab, sin promediar personas.
-// ponytail: resumen de una línea para el subtítulo sin expandir.
 String _studentSummary(Map<String, Map>? labs) {
   if (labs == null || labs.isEmpty) return 'Sin actividad todavía';
-  final pending = [for (final e in labs.values) if (e['pending_review'] == true) e].length;
   final withEvidence = [
     for (final e in labs.values)
       if (progressLine(e['baseline'] as Map?, e['posttest'] as Map?) != null) e
   ].length;
-  final labsBit = '$withEvidence de ${labs.length} labs con inicial y postest';
-  if (pending <= 0) return labsBit;
-  final reviewBit =
-      pending == 1 ? '1 pendiente de revisión' : '$pending pendientes de revisión';
-  return '$labsBit · $reviewBit';
+  return '$withEvidence de ${labs.length} labs con inicial y postest';
 }
 
 class _MatrixCard extends StatelessWidget {
@@ -169,17 +163,6 @@ class _MatrixCard extends StatelessWidget {
                   ],
                 )),
                 const SizedBox(width: 8),
-                if (entries[i].value['pending_review'] == true)
-                  Chip(
-                    backgroundColor: cs.tertiaryContainer,
-                    side: BorderSide.none,
-                    visualDensity: VisualDensity.compact,
-                    avatar: Icon(Icons.mark_email_unread_outlined,
-                        size: 14, color: cs.onTertiaryContainer),
-                    label: Text('Pendiente de revisi+�n',
-                        style: TextStyle(
-                            fontSize: 11, color: cs.onTertiaryContainer)),
-                  ),
               ],
             ),
           ),

@@ -4,11 +4,9 @@ import io
 import json
 import os
 import re
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
@@ -60,29 +58,6 @@ def instructor_sessions(student_id: str, user=Depends(require_instructor),
                         db: Session = Depends(get_db)):
     rows = db.query(models.LearningSession).filter_by(student_id=student_id).all()
     return [{"id": s.id, "lab_template_id": s.lab_template_id, "status": s.status} for s in rows]
-
-
-class ReviewIn(BaseModel):
-    rubric_scores: dict = {}
-    notes: str = Field(default="", max_length=2000)
-
-
-@router.post("/instructor/attempts/{attempt_id}/reviews")
-def create_review(attempt_id: str, body: ReviewIn, user=Depends(require_instructor),
-                  db: Session = Depends(get_db)):
-    attempt = db.query(models.LabAttempt).filter_by(id=attempt_id).first()
-    if not attempt:
-        raise HTTPException(404, "attempt not found")
-    # ponytail: append-only; jamás modifica evaluation_results
-    for cid, score in body.rubric_scores.items():
-        if not isinstance(score, int) or not 0 <= score <= 4:
-            raise HTTPException(422, f"score inválido en {cid}: 0-4")
-    rid = uuid.uuid4().hex[:8]
-    db.add(models.InstructorReview(id=rid, attempt_id=attempt_id, instructor_id=user.id,
-                                   rubric_scores_json=json.dumps(body.rubric_scores),
-                                   notes=body.notes))
-    db.commit()
-    return {"id": rid}
 
 
 @router.get("/instructor/export")

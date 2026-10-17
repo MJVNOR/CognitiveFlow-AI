@@ -515,7 +515,7 @@ def test_reflection_only_after_posttest():
     )
 
 
-# E5: revisión humana versionada (append-only) + export anonimizado
+# E5: instructor readonly — sin POST de revisiones; export anonimizado con históricos
 def test_instructor_review_flow():
     sid = client.post(
         "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
@@ -525,19 +525,14 @@ def test_instructor_review_flow():
         json={"complexity": 5, "noise_pct": 20, "seed": 1, "answer_text": "x"},
         headers=H_S1,
     ).json()["id"]
-    # Estudiante no puede revisar
+    # Nadie puede escribir revisiones desde la API (rol solo lectura)
     assert client.post(
         f"/instructor/attempts/{aid}/reviews",
-        json={"rubric_scores": {"exactitud": 2}, "notes": ""}, headers=H_S1).status_code == 403
-    # Instructor revisa; score inválido se rechaza
+        json={"rubric_scores": {"exactitud": 2}, "notes": ""}, headers=H_S1).status_code == 404
     assert client.post(
         f"/instructor/attempts/{aid}/reviews",
-        json={"rubric_scores": {"exactitud": 9}, "notes": ""}, headers=H_I1).status_code == 422
-    rid = client.post(
-        f"/instructor/attempts/{aid}/reviews",
-        json={"rubric_scores": {"exactitud": 2}, "notes": "parcial"}, headers=H_I1).json()["id"]
-    assert rid
-    # Export sin PII
+        json={"rubric_scores": {"exactitud": 2}, "notes": ""}, headers=H_I1).status_code == 404
+    # Export sin PII (históricos preservados, solo lectura)
     csv_text = client.get("/instructor/export?format=csv", headers=H_I1).text
     assert "Alumna" not in csv_text and "s1" not in csv_text and "STU-" in csv_text
     assert client.get("/instructor/export?format=csv", headers=H_S1).status_code == 403
@@ -977,8 +972,14 @@ def test_agreement_empty_then_computed(monkeypatch):
     aid = _attempt(sid, "fuerte")
     _eval_on(sid, aid)
     assert client.get("/instructor/agreement", headers=H_I1).json() == {}
-    client.post(f"/instructor/attempts/{aid}/reviews",
-        json={"rubric_scores": {"exactitud": 4, "evidencia": 2}, "notes": ""}, headers=H_I1)
+    # Históricos preservados: la revisión se siembra directo (la API es readonly)
+    import json as _json
+
+    db = TestingSession()
+    db.add(models.InstructorReview(id="revagree", attempt_id=aid, instructor_id="i1",
+        rubric_scores_json=_json.dumps({"exactitud": 4, "evidencia": 2}), notes=""))
+    db.commit()
+    db.close()
     ag = client.get("/instructor/agreement", headers=H_I1).json()
     assert ag["exactitud"] == {"n": 1, "exact_rate": 1.0, "mean_abs_diff": 0.0}
     assert ag["evidencia"] == {"n": 1, "exact_rate": 0.0, "mean_abs_diff": 2.0}
