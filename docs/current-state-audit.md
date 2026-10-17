@@ -86,3 +86,11 @@ Data Detective: inspector por fila (tipo + acción, diálogo con drafts) sin che
 2. Dominio solo de postests: `mastery` + `mastery_status` en progreso/matriz; UI declara «Sin dominio demostrado todavía (la práctica no cuenta)» hasta el postest.
 3. Diagnóstico por objetivo: `diagnostic_results` en la primera evaluación (needs_foundation|guided_practice|autonomous_challenge, misma escala que la política de ayuda); `GET session` expone `level` + `assistance{hints,socratic,interventions}`; workspace muestra «Ruta: … · Ayudas usadas: N».
 4. Repaso 1/3/7: `recall_schedule` al cerrar la sesión; `GET /me/recall-due` (vencidos) + `POST /me/recall/{id}/done` con ownership; sección «Repasos vencidos» en Progreso. Preguntas nuevas vía variantes del servidor; sin automatización de correos. Tests: backend 74 passed / frontend 51 passed / analyze limpio.
+
+## 16. Sprint 5 parcial — entrega (2026-10-17, solo lo automatizable)
+
+`.env.example` (backend, solo vars que el código lee), README con arquitectura
+(mermaid), contratos GenUI, tabla de tests, procedimiento backup/restore y tabla
+honesta simulado-vs-real. Pendiente humano: deploy + HTTPS, video, deck,
+documento ético, piloto, critique Impeccable. Checkbox 4 de Sprint 5 queda sin
+marcar hasta el deploy real.
