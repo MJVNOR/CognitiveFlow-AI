@@ -122,3 +122,14 @@ evidencia del widget realimentada al intento (`extra.order/mount/...`), justific
 postest con unidad bloqueada, reflexión y reanudación heredadas. Ruta `docker` +
 etiqueta en Academia. Tests: backend 78 passed / frontend 62 passed / analyze
 limpio. DB productiva migrada sin pérdidas (40 sesiones).
+
+## 19. DoD verificado + build web (Sprint 5)
+
+DoD 11/11 marcado con evidencia en tests: ConceptPrimer antes del reto, eventos
+persistidos con diferencia visible, errores distintos → widgets distintos,
+«Por qué: <reason>» explícito bajo la siguiente actividad, Jev/mock etiquetado,
+feedback desde evidencia, postest bloqueado, repaso 1/3/7, instructor readonly,
+migraciones sin pérdida. `flutter build web` compila (main.dart.js 3.7 MB);
+binarios nativos desktop/móvil no compilados (el target desplegable es web).
+Sprint 5: #2 y #3 marcados; #1 parcial (auditoría técnica, falta captura visual);
+#4 parcial (docs+respaldo hechos); #5 protocolo listo, ejecución pendiente.

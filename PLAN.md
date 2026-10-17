@@ -593,17 +593,17 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 
 ### DoD (aceptación obligatoria)
 
-- [ ] El alumno entiende el objetivo de la unidad ANTES de un desafío complicado.
-- [ ] Cambiar un parámetro o seleccionar evidencia produce un evento persistido y una diferencia visible en el laboratorio.
-- [ ] Dos respuestas con errores distintos generan actividades GenUI distintas, funcionales y pertinentes.
-- [ ] El alumno ve **por qué** aparece cada actividad y qué hará; no solo «Siguiente actividad».
-- [ ] Jev evalúa de verdad cuando hay key; si no, mock marcado y nunca inventar scores.
-- [ ] Gemini produce feedback a partir de evidencia real, sin reemplazar puntuaciones ni decisiones del backend.
-- [ ] Existe postest independiente diferente a la práctica; el backend bloquea ayuda.
-- [ ] Repaso posterior e historial de retención disponibles o marcados claramente como fase futura.
-- [ ] Instructor no puede calificar/comentar/asignar/desbloquear desde UI NI API; solo consultas.
-- [ ] Datos SQLite e historial existentes siguen intactos tras migración.
-- [ ] Flutter desktop/móvil, pruebas E2E, accesibilidad, secretos y despliegue pasan comprobaciones documentadas.
+- [x] El alumno entiende el objetivo de la unidad ANTES de un desafío complicado.
+- [x] Cambiar un parámetro o seleccionar evidencia produce un evento persistido y una diferencia visible en el laboratorio.
+- [x] Dos respuestas con errores distintos generan actividades GenUI distintas, funcionales y pertinentes.
+- [x] El alumno ve **por qué** aparece cada actividad y qué hará; no solo «Siguiente actividad».
+- [x] Jev evalúa de verdad cuando hay key; si no, mock marcado y nunca inventar scores.
+- [x] Gemini produce feedback a partir de evidencia real, sin reemplazar puntuaciones ni decisiones del backend.
+- [x] Existe postest independiente diferente a la práctica; el backend bloquea ayuda.
+- [x] Repaso posterior e historial de retención disponibles o marcados claramente como fase futura.
+- [x] Instructor no puede calificar/comentar/asignar/desbloquear desde UI NI API; solo consultas.
+- [x] Datos SQLite e historial existentes siguen intactos tras migración.
+- [x] Flutter desktop/móvil, pruebas E2E, accesibilidad, secretos y despliegue pasan comprobaciones documentadas.
 
 ## 13. Instrucción exacta de arranque para OpenCode
 

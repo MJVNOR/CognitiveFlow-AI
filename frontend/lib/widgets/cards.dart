@@ -679,15 +679,27 @@ class ResultPanel extends StatelessWidget {
             // Título accionable desde la intervención real, nunca «Siguiente actividad» a secas.
             final spec = lab.intervention?['widget_parameters'];
             final ivTitle = spec is Map ? '${spec['title'] ?? ''}' : '';
-            return FilledButton.tonal(
-              key: const ValueKey('next_activity'),
-              onPressed: lab.nextBusy ? null : onNext,
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
-              child: SizedBox(
-                  width: double.infinity,
-                  child: Text(
-                      ivTitle.isNotEmpty ? 'Continuar: $ivTitle' : 'Ver mi siguiente actividad',
-                      textAlign: TextAlign.center)),
+            final ivReason = '${lab.intervention?['reason'] ?? ''}';
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FilledButton.tonal(
+                  key: const ValueKey('next_activity'),
+                  onPressed: lab.nextBusy ? null : onNext,
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+                  child: SizedBox(
+                      width: double.infinity,
+                      child: Text(
+                          ivTitle.isNotEmpty ? 'Continuar: $ivTitle' : 'Ver mi siguiente actividad',
+                          textAlign: TextAlign.center)),
+                ),
+                if (ivReason.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('Por qué: $ivReason',
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+              ],
             );
           }),
           const Text('La evaluación es evidencia; la actividad sigue con el tutor.',

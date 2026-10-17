@@ -129,6 +129,7 @@ void main() {
       ..intervention = {
         'widget_type': 'EvidenceComparison',
         'widget_parameters': {'title': 'Compara ambas curvas'},
+        'reason': 'la justificación no usa evidencia suficiente',
       };
     await tester.pumpWidget(
       MaterialApp(
@@ -140,6 +141,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Continuar: Compara ambas curvas'), findsOneWidget);
     expect(find.text('Siguiente actividad'), findsNothing);
+    expect(find.textContaining('Por qué:'), findsOneWidget);
   });
 
   testWidgets('ConceptPrimer muestra concepto y ejemplo colapsable', (tester) async {
