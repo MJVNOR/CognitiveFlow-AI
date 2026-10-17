@@ -73,6 +73,9 @@ class LabSession {
   List<Map<String, dynamic>> tutorHistory = [];
   // PR-06: feedback compuesto fortaleza→brecha (texto Gemini o null en mock).
   Map<String, dynamic>? feedback;
+  // Sprint 4: nivel diagnosticado + ayuda usada (restauran con la sesión).
+  String? level;
+  Map<String, int>? assistance;
 
   /// 0 explorar, 1 evaluar, 2 intervenir, 3 postest.
   int get step => (posttestMode || posttestSent || done)
@@ -168,6 +171,11 @@ class LabSession {
       }
       final le = det['last_eval'];
       evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
+      level = det['level'] as String?;
+      final am = det['assistance'];
+      assistance = am is Map
+          ? {for (final e in am.entries) '${e.key}': (e.value as num).toInt()}
+          : null;
       socraticQ = '';
       feedback = null;
       intervention = null;

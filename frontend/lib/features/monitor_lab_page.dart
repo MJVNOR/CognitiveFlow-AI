@@ -143,6 +143,7 @@ class _MonitorState extends State<MonitorLabPage> {
     final controls = [
       LabHeader(
         crumb: labCrumb(objectives),
+        meta: sessionMeta(lab),
         objective: lab.posttestMode
             ? 'Distribución nueva, sin ayuda. ¿Deriva? ¿Reentrenar o monitorear?'
             : '¿Qué feature deriva? Compara referencia vs actual y ubica el cambio.',

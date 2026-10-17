@@ -199,4 +199,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Corrida guardada (línea punteada)'), findsOneWidget);
   });
+
+  test('sessionMeta resume ruta y ayudas en lenguaje estudiante', () {
+    final lab = LabSession()
+      ..level = 'needs_foundation'
+      ..assistance = {'hints': 1, 'socratic': 0, 'interventions': 2};
+    expect(sessionMeta(lab), 'Ruta: base guiada · Ayudas usadas: 3');
+    expect(sessionMeta(LabSession()), isNull);
+    expect(sessionMeta(LabSession()..level = 'pending'), isNull);
+    expect(levelLabel('autonomous_challenge'), 'desafío autónomo');
+  });
 }

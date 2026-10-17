@@ -184,6 +184,7 @@ class _LabDetailState extends State<LabDetailPage> {
     final controls = [
       LabHeader(
         crumb: _crumb(),
+        meta: sessionMeta(lab),
         objective: lab.posttestMode
             ? 'Variante nueva. Sin pistas ni tutor hasta entregar.'
             : 'Predice el efecto de la complejidad y justifica por qué',

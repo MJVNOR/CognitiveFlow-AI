@@ -130,12 +130,30 @@ String? labCrumb(List<Map<String, dynamic>>? objectives) {
   return 'Unidad ${objectives.first['id']}';
 }
 
+/// Sprint 4: lenguaje de la ruta diagnosticada (nunca etiqueta de inteligencia).
+String levelLabel(String level) => switch (level) {
+      'needs_foundation' => 'base guiada',
+      'guided_practice' => 'práctica guiada',
+      'autonomous_challenge' => 'desafío autónomo',
+      _ => 'diagnóstico pendiente',
+    };
+
+/// Línea de nivel + ayuda usada para la cabecera (null si aún no hay diagnóstico).
+String? sessionMeta(LabSession lab) {
+  if (lab.level == null || lab.level == 'pending') return null;
+  final a = lab.assistance;
+  final helps = a == null ? 0 : (a['hints'] ?? 0) + (a['interventions'] ?? 0);
+  return 'Ruta: ${levelLabel(lab.level!)} · Ayudas usadas: $helps';
+}
+
 /// Cabecera común: objetivo del lab + pasos. Va arriba del contenido propio.
 class LabHeader extends StatelessWidget {
   final String objective;
   final int step;
   final String? crumb;
-  const LabHeader({super.key, required this.objective, required this.step, this.crumb});
+  final String? meta;
+  const LabHeader(
+      {super.key, required this.objective, required this.step, this.crumb, this.meta});
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -146,6 +164,11 @@ class LabHeader extends StatelessWidget {
               color: Theme.of(context).colorScheme.onSurfaceVariant)),
         if (crumb != null) const SizedBox(height: 2),
         Text(objective, style: Theme.of(context).textTheme.titleMedium),
+        if (meta != null) ...[
+          const SizedBox(height: 2),
+          Text(meta!, style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
         const SizedBox(height: 8),
         LabSteps(current: step),
         const Divider(),

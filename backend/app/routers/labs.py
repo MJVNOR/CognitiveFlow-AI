@@ -116,9 +116,20 @@ def get_session(session_id: str, user=Depends(current_user), db: Session = Depen
             except Exception:
                 last_eval = None
             break
+    diag = db.query(models.DiagnosticResult).filter_by(session_id=session_id).first()
+    # Sprint 4: ayuda usada hasta ahora (pistas + preguntas + intervenciones).
+    assistance = {
+        "hints": db.query(models.UiEvent).filter_by(
+            session_id=session_id, event_type="hintRequested").count(),
+        "socratic": db.query(models.UiEvent).filter_by(
+            session_id=session_id, widget_type="SocraticQuestionCard").count(),
+        "interventions": db.query(models.InterventionLog).filter_by(
+            session_id=session_id).count(),
+    }
     return {"id": s.id, "student_id": s.student_id, "lab_template_id": s.lab_template_id,
             "status": s.status, "phase": _phase(db, s), "attempt_count": len(attempts),
-            "last_eval": last_eval,
+            "last_eval": last_eval, "level": diag.level if diag else "pending",
+            "assistance": assistance,
             "variant": _posttest_variant(session_id) if s.status == "posttest" else None}
 
 

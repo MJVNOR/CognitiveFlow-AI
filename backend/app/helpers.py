@@ -96,6 +96,26 @@ def _evaluate_attempt(db: Session, session, attempt) -> dict:
         )
     )
     db.commit()
+    # Sprint 4: diagnóstico por objetivo — solo la primera evaluación de práctica
+    # clasifica la ruta (misma escala que la política de ayuda gradual).
+    if _kind(attempt) != "posttest" and db.query(
+            models.DiagnosticResult).filter_by(session_id=session.id).first() is None:
+        level, avg = "pending", None
+        if result["status"] == "evaluated":
+            crits = result.get("criteria", [])
+            if crits:
+                avg = sum(c.get("score", 0) for c in crits) / len(crits)
+                level = ("needs_foundation" if avg <= 2 else
+                         "autonomous_challenge" if avg >= 3.5 else "guided_practice")
+        obj = db.query(models.LearningObjective).filter_by(
+            lab_template_id=session.lab_template_id).first()
+        db.add(models.DiagnosticResult(
+            id=uuid.uuid4().hex[:8], session_id=session.id, student_id=session.student_id,
+            lab_template_id=session.lab_template_id, objective_id=obj.id if obj else "",
+            level=level, evidence_json=json.dumps(
+                {"baseline_avg": avg, "rubric_version": result.get("rubric_version"),
+                 "evaluator": result.get("evaluator")})))
+        db.commit()
     return result
 
 

@@ -100,6 +100,30 @@ class InterventionLog(Base):
     spec_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class DiagnosticResult(Base):
+    """Sprint 4: diagnóstico por objetivo (una fila por sesión, primera evaluación)."""
+    __tablename__ = "diagnostic_results"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    student_id: Mapped[str] = mapped_column(String, nullable=False)
+    lab_template_id: Mapped[str] = mapped_column(String, nullable=False)
+    objective_id: Mapped[str] = mapped_column(String, default="")
+    level: Mapped[str] = mapped_column(String, nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class RecallItem(Base):
+    """Sprint 4: repaso espaciado 1/3/7 días (una fila por vencimiento)."""
+    __tablename__ = "recall_schedule"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    student_id: Mapped[str] = mapped_column(String, nullable=False)
+    lab_template_id: Mapped[str] = mapped_column(String, nullable=False)
+    objective_id: Mapped[str] = mapped_column(String, default="")
+    due_at: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    created_at: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class LearningObjective(Base):
     """Sprint 1: objetivo + lección + ejemplo + blueprint diagnóstico (una unidad)."""
     __tablename__ = "learning_objectives"

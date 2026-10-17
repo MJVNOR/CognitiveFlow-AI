@@ -57,6 +57,19 @@ for lid, title, ltype, mid, order, desc in [
 ]:
     db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
                               module_id=mid, order_index=order, description=desc))
+# Objetivos como en producción (los endpoints leen DB, no fallback).
+import json as _seed_json
+from app.seed import OBJECTIVES as _OBJECTIVES
+
+for _o in _OBJECTIVES:
+    db.add(models.LearningObjective(
+        id=_o["id"], lab_template_id=_o["lab_template_id"], title=_o["title"],
+        level=_o["level"], concept_summary=_o["concept_summary"],
+        worked_example_json=_seed_json.dumps(_o["worked_example_steps"]),
+        misconceptions_json=_seed_json.dumps(_o["misconceptions"]),
+        rubric_id=_o["rubric_id"],
+        diagnostic_blueprint_json=_seed_json.dumps(_o["diagnostic_blueprint"]),
+        status=_o.get("status", "planned")))
 db.commit()
 db.close()
 
@@ -1375,3 +1388,35 @@ def test_data_eval_reports_cell_types():
     assert types["7"]["ok"] and types["3"]["ok"] and not types["25"]["ok"]
     assert r["detail"]["types_ok"] == 2
     assert r["detail"]["actions"] == {"7": "convertir"}
+
+
+# Sprint 4: diagnóstico por objetivo + ayuda usada.
+def test_diagnostic_level_and_assistance():
+    sid = _ml_session()
+    det0 = client.get(f"/sessions/{sid}", headers=H_S1).json()
+    assert det0["level"] == "pending"
+    assert det0["assistance"] == {"hints": 0, "socratic": 0, "interventions": 0}
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    det = client.get(f"/sessions/{sid}", headers=H_S1).json()
+    assert det["level"] == "needs_foundation"
+    # pistas e intervenciones cuentan como ayuda; el nivel no se reescribe
+    client.post(f"/sessions/{sid}/events",
+        json={"client_event_id": "diag-h1", "widget_type": "SocraticQuestionCard",
+              "event_type": "hintRequested", "payload": {}}, headers=H_S1)
+    _intervene_aid(sid, aid)
+    aid2 = _attempt(sid, "Hay overfit porque la validación sube; propongo regularizar; reviso hipótesis")
+    _eval_on(sid, aid2)
+    det2 = client.get(f"/sessions/{sid}", headers=H_S1).json()
+    assert det2["level"] == "needs_foundation"
+    assert det2["assistance"]["hints"] == 1
+    assert det2["assistance"]["interventions"] == 1
+    rows = TestingSession().query(models.DiagnosticResult).filter_by(session_id=sid).all()
+    assert len(rows) == 1 and rows[0].objective_id == "M03-U02-generalization"
+
+    strong_sid = _ml_session()
+    _eval_on(strong_sid, _attempt(strong_sid, "Hay overfit porque la validación sube con complejidad alta, "
+        "los datos muestran generalización pobre y propongo mitigar con regularización; "
+        "reviso mi hipótesis inicial"))
+    assert client.get(f"/sessions/{strong_sid}", headers=H_S1).json()["level"] in (
+        "guided_practice", "autonomous_challenge")

@@ -272,6 +272,7 @@ class _DataLabState extends State<DataLabPage> {
               final controls = <Widget>[
               LabHeader(
                 crumb: labCrumb(objectives),
+                meta: sessionMeta(lab),
                 objective: lab.posttestMode
                     ? 'Tabla nueva, sin ayuda. Marca anomalías y justifica.'
                     : 'Marca las filas con anomalías y justifica tu plan de limpieza.',
