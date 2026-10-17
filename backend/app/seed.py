@@ -31,12 +31,52 @@ LABS = [
      "El modelo ya está en producción: detecta deriva y decide si reentrenar o seguir monitoreando."),
 ]
 
+# Sprint 1: una unidad (M03-U02) con lección + ejemplo + diagnóstico pequeño.
+# ponytail: constante única — seed y endpoint la comparten, sin duplicar.
+OBJECTIVE_ML_U02 = {
+    "id": "M03-U02-generalization",
+    "lab_template_id": "lab-ml",
+    "title": "Distinguir overfitting de underfitting en curvas de pérdida",
+    "level": "intermedio",
+    "concept_summary": (
+        "Overfitting: el entrenamiento mejora pero la validación empeora al subir "
+        "la complejidad (el modelo memoriza). Underfitting: ambas curvas quedan "
+        "altas y planas (el modelo es demasiado simple). La generalización se lee "
+        "en la brecha y la pendiente de validación, no en una sola curva."
+    ),
+    "worked_example_steps": [
+        "Con complejidad 3, train y validación bajan juntas: aún hay capacidad.",
+        "Con complejidad 7, train sigue bajando pero validación sube: memoriza.",
+        "Con complejidad 2 y ruido alto, ambas quedan altas: ni siquiera ajusta.",
+    ],
+    "misconceptions": [
+        "Creer que más complejidad siempre ayuda.",
+        "Leer solo la curva de entrenamiento.",
+        "Confundir ruido en los datos con overfitting.",
+    ],
+    "rubric_id": "ml-overfitting-v1",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "LearningCurveSimulator",
+             "widget_config": {"complexity": 7, "noise_pct": 20, "seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Antes de mover el slider: ¿qué curva cambiará primero y por qué?"},
+            {"id": "dg-2", "widget_type": "LearningCurveSimulator",
+             "widget_config": {"complexity": 3, "noise_pct": 30, "seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Mismo ejercicio, otros parámetros: predice y compara con dg-1."},
+        ]
+    },
+}
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
 
 
 def seed_if_empty():
+    import json as _json
+
     db = SessionLocal()
     try:
         if db.query(models.Module).count() == 0:
@@ -50,6 +90,16 @@ def seed_if_empty():
                 db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
                                           module_id=mid, order_index=order,
                                           description=desc))
+        # ponytail: tabla nueva → si está vacía se siembra sin tocar el resto
+        if hasattr(models, "LearningObjective") and db.query(models.LearningObjective).count() == 0:
+            o = OBJECTIVE_ML_U02
+            db.add(models.LearningObjective(
+                id=o["id"], lab_template_id=o["lab_template_id"], title=o["title"],
+                level=o["level"], concept_summary=o["concept_summary"],
+                worked_example_json=_json.dumps(o["worked_example_steps"]),
+                misconceptions_json=_json.dumps(o["misconceptions"]),
+                rubric_id=o["rubric_id"],
+                diagnostic_blueprint_json=_json.dumps(o["diagnostic_blueprint"])))
         db.commit()
     finally:
         db.close()

@@ -98,3 +98,17 @@ class InterventionLog(Base):
     strategy: Mapped[str] = mapped_column(String, nullable=False)
     widget_type: Mapped[str] = mapped_column(String, nullable=False)
     spec_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class LearningObjective(Base):
+    """Sprint 1: objetivo + lección + ejemplo + blueprint diagnóstico (una unidad)."""
+    __tablename__ = "learning_objectives"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    lab_template_id: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    level: Mapped[str] = mapped_column(String, default="intermedio")
+    concept_summary: Mapped[str] = mapped_column(Text, default="")
+    worked_example_json: Mapped[str] = mapped_column(Text, default="[]")
+    misconceptions_json: Mapped[str] = mapped_column(Text, default="[]")
+    rubric_id: Mapped[str] = mapped_column(String, default="")
+    diagnostic_blueprint_json: Mapped[str] = mapped_column(Text, default="{}")

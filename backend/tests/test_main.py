@@ -1160,3 +1160,16 @@ def test_intervention_carries_schema_and_events():
         json={"attempt_id": aid}, headers=H_S1).json()
     assert iv["schema_version"] == 1
     assert isinstance(iv["allowed_events"], list) and iv["allowed_events"]
+
+
+# Sprint 1: objetivo + lección + diagnóstico pequeño para lab-ml
+def test_ml_objective_and_diagnostics():
+    objs = client.get("/labs/lab-ml/objectives").json()
+    assert len(objs) == 1 and objs[0]["id"] == "M03-U02-generalization"
+    assert len(objs[0]["concept_summary"]) > 80 and objs[0]["worked_example_steps"]
+    assert objs[0]["rubric_id"] == "ml-overfitting-v1"
+    dg = client.post("/labs/lab-ml/diagnostics").json()
+    assert dg["objective_id"] == "M03-U02-generalization" and len(dg["items"]) == 2
+    assert {i["id"] for i in dg["items"]} == {"dg-1", "dg-2"}
+    assert client.get("/labs/lab-x/objectives").status_code == 404
+    assert client.post("/labs/lab-x/diagnostics").status_code == 404

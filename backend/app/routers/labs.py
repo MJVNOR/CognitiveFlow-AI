@@ -213,6 +213,58 @@ def lab_distributions(lab_id: str, seed: int = 1):
     return {"lab_id": lab_id, "features": ds["features"], "series": ds["series"]}
 
 
+def _objective_out(o) -> dict:
+    # ponytail: parseo tolerante — fila corrupta no tumba el endpoint
+    try:
+        steps = json.loads(o.worked_example_json)
+    except Exception:
+        steps = []
+    try:
+        misc = json.loads(o.misconceptions_json)
+    except Exception:
+        misc = []
+    return {"id": o.id, "lab_template_id": o.lab_template_id, "title": o.title,
+            "level": o.level, "concept_summary": o.concept_summary,
+            "worked_example_steps": steps, "misconceptions": misc,
+            "rubric_id": o.rubric_id}
+
+
+@router.get("/labs/{lab_id}/objectives")
+def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
+    # Sprint 1: lección + ejemplo por unidad; fallback a constante si la tabla aún no se sembró.
+    rows = db.query(models.LearningObjective).filter_by(lab_template_id=lab_id).all()
+    if rows:
+        return [_objective_out(o) for o in rows]
+    if lab_id == "lab-ml":
+        from app.seed import OBJECTIVE_ML_U02 as _o
+        return [{**{k: _o[k] for k in ("id", "lab_template_id", "title", "level",
+                                      "concept_summary", "rubric_id")},
+                 "worked_example_steps": _o["worked_example_steps"],
+                 "misconceptions": _o["misconceptions"]}]
+    raise HTTPException(404, "sin objetivos para ese lab")
+
+
+@router.post("/labs/{lab_id}/diagnostics")
+def lab_diagnostics(lab_id: str, db: Session = Depends(get_db)):
+    # Sprint 1: diagnóstico breve (2 ítems equivalentes, sin pistas ni evaluación).
+    bp = None
+    row = db.query(models.LearningObjective).filter_by(lab_template_id=lab_id).first()
+    if row is not None:
+        try:
+            bp = json.loads(row.diagnostic_blueprint_json)
+        except Exception:
+            bp = None
+    if bp is None:
+        if lab_id != "lab-ml":
+            raise HTTPException(404, "sin diagnóstico para ese lab")
+        from app.seed import OBJECTIVE_ML_U02 as _o
+        bp = _o["diagnostic_blueprint"]
+    items = bp.get("items", []) if isinstance(bp, dict) else []
+    return {"lab_template_id": lab_id,
+            "objective_id": row.id if row is not None else "M03-U02-generalization",
+            "items": items}
+
+
 @router.get("/sessions/{session_id}/attempts")
 def list_attempts(session_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
     session_for(user, db, session_id)
