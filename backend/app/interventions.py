@@ -25,6 +25,22 @@ FALLBACK_WIDGET = "SocraticQuestionCard"
 
 SCHEMA_VERSION = 1
 
+# Sprint 5: unidad Docker → widget de práctica; transferencia = siguiente unidad.
+DOCKER_WIDGETS = {
+    "M08-D01-containers": "ContainerVsVmExplorer",
+    "M08-D02-lifecycle": "ImageContainerLifecycle",
+    "M08-D04-dockerfile": "DockerfileWorkbench",
+    "M08-D07-persistence": "PersistenceExperiment",
+}
+DOCKER_ORDER = ["M08-D01-containers", "M08-D02-lifecycle",
+                "M08-D04-dockerfile", "M08-D07-persistence"]
+_DOCKER_TITLES = {
+    "ContainerVsVmExplorer": "Clasifica cada escenario",
+    "ImageContainerLifecycle": "Avanza el ciclo",
+    "DockerfileWorkbench": "Ordena y reconstruye",
+    "PersistenceExperiment": "Predice y recrea",
+}
+
 # P1.1: contrato mínimo versionado — qué eventos acepta cada widget.
 ALLOWED_EVENTS = {
     "parameterChanged",
@@ -82,7 +98,10 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
     noise = int(input_state.get("noise_pct", 20))
     data_lab = lab_type == "data_detective" or bool(input_state.get("flags"))
     monitor_lab = lab_type == "model_monitoring"
-    lab_hint = "model_monitoring" if monitor_lab else ("data_detective" if data_lab else "ml_experiment")
+    docker_lab = lab_type == "docker"
+    lab_hint = ("docker" if docker_lab else
+                "model_monitoring" if monitor_lab else
+                ("data_detective" if data_lab else "ml_experiment"))
 
     if eval_result is None:
         q = (await socratic_question(answer_text, ["sin evaluación"]))["question"]
@@ -140,6 +159,28 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
 
     if avg <= 2:
         q = (await socratic_question(answer_text, weak, lab_hint))["question"]
+        if docker_lab:
+            extra = input_state.get("extra")
+            unit = extra.get("unit", "") if isinstance(extra, dict) else ""
+            widget = DOCKER_WIDGETS.get(unit, "DockerfileWorkbench")
+            spec = {
+                "type": widget,
+                "version": 1,
+                "learning_objective": unit or "docker",
+                "title": _DOCKER_TITLES.get(widget, widget),
+                "parameters": {},
+                "reasoning_prompt": q,
+                "requires_justification": True,
+            }
+            return {
+                "strategy": strategy,
+                "reason": f"Promedio {avg:.1f}: practica guiada en Docker",
+                "widget_type": widget,
+                "widget_parameters": spec,
+                "socratic_question": q,
+                "difficulty_delta": 0,
+                "give_direct_answer": False,
+            }
         if monitor_lab:
             from app.labs_monitor import generate as _genmon
 
@@ -215,6 +256,30 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
     q = (await socratic_question(answer_text, [], lab_hint))["question"]
     # ponytail: sólida→más dificultad, media→alternativa; mismo widget, distinta estrategia
     strong_strategy = "increase_difficulty" if avg >= 3.5 else "explore_alternative"
+    if docker_lab:
+        extra = input_state.get("extra")
+        unit = extra.get("unit", "") if isinstance(extra, dict) else ""
+        nxt = (DOCKER_ORDER[(DOCKER_ORDER.index(unit) + 1) % len(DOCKER_ORDER)]
+               if unit in DOCKER_ORDER else DOCKER_ORDER[0])
+        widget = DOCKER_WIDGETS[nxt]
+        spec = {
+            "type": widget,
+            "version": 1,
+            "learning_objective": nxt,
+            "title": "Transfiere: " + _DOCKER_TITLES.get(widget, widget),
+            "parameters": {},
+            "reasoning_prompt": q,
+            "requires_justification": True,
+        }
+        return {
+            "strategy": strong_strategy,
+            "reason": f"Promedio {avg:.1f}: domina la unidad, transfiere a {nxt}",
+            "widget_type": widget,
+            "widget_parameters": spec,
+            "socratic_question": q,
+            "difficulty_delta": 1,
+            "give_direct_answer": False,
+        }
     if monitor_lab:
         spec = {
             "type": "HypothesisEditor",

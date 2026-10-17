@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cognitiveflow/widgets/cards.dart';
 import 'package:cognitiveflow/features/ml_lab_page.dart';
 import 'package:cognitiveflow/features/data_lab_page.dart';
+import 'package:cognitiveflow/features/docker_lab_page.dart';
 import 'package:cognitiveflow/session/lab_session.dart';
 
 void main() {
@@ -208,5 +209,13 @@ void main() {
     expect(sessionMeta(LabSession()), isNull);
     expect(sessionMeta(LabSession()..level = 'pending'), isNull);
     expect(levelLabel('autonomous_challenge'), 'desafío autónomo');
+  });
+
+  test('dockerUnitWidget cubre las 4 unidades MVP', () {
+    expect(dockerUnitWidget('M08-D01-containers').widget, 'ContainerVsVmExplorer');
+    expect(dockerUnitWidget('M08-D02-lifecycle').widget, 'ImageContainerLifecycle');
+    expect(dockerUnitWidget('M08-D04-dockerfile').widget, 'DockerfileWorkbench');
+    expect(dockerUnitWidget('M08-D07-persistence').widget, 'PersistenceExperiment');
+    expect(dockerUnitWidget('otra').widget, 'SocraticQuestionCard');
   });
 }

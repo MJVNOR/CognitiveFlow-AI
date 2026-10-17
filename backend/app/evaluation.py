@@ -147,6 +147,93 @@ def jev_evaluate(answer_text: str, input_state: dict) -> dict:
 
 MONITOR_RUBRIC_VERSION = "drift-v1"
 
+DOCKER_RUBRIC_VERSION = "docker-mvp-v1"
+
+_DOCKER_LINES = [
+    "FROM python:3.12-slim",
+    "COPY requirements.txt ./",
+    "RUN pip install --no-cache-dir -r requirements.txt",
+    "COPY ./app ./app",
+]
+
+
+def _docker_order_ok(order: list) -> bool:
+    # ponytail: caché óptima = deps antes que código; comparación por prefijo
+    try:
+        idx = ["".join(order).find("COPY requirements"), "".join(order).find("RUN pip"),
+               "".join(order).find("COPY ./app")]
+        if any(i < 0 for i in idx):
+            names = [str(x) for x in order]
+            i_req = next(i for i, x in enumerate(names) if x.startswith("COPY requirements"))
+            i_run = next(i for i, x in enumerate(names) if x.startswith("RUN pip"))
+            i_app = next(i for i, x in enumerate(names) if x.startswith("COPY ./app"))
+            return i_req < i_run < i_app
+        return idx[0] < idx[1] < idx[2]
+    except (ValueError, StopIteration, TypeError):
+        return False
+
+
+def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int = 1) -> dict:
+    """Rúbrica docker-mvp-v1: checks deterministas por unidad + keywords."""
+    extra = extra if isinstance(extra, dict) else {}
+    unit = extra.get("unit", "")
+    t = (answer_text or "").lower()
+    if unit == "M08-D04-dockerfile":
+        ok = _docker_order_ok(extra.get("order", []))
+        mentions_cache = any(k in t for k in ["cach", "capa", "layer", "orden"])
+        mentions_extra = any(k in t for k in ["dockerignore", "expose", "latest", "version"])
+        scores = {
+            "exactitud": 4 if ok else (2 if extra.get("order") else 0),
+            "evidencia": 4 if ok and mentions_cache else (2 if mentions_cache or ok else 0),
+            "causal": 2 if mentions_cache and ("porqu" in t or "invalid" in t) else 0,
+            "alternativas": 2 if mentions_extra else 0,
+            "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
+        }
+    elif unit == "M08-D07-persistence":
+        pred, obs = extra.get("predicted"), extra.get("observed")
+        match = pred is not None and obs is not None and bool(pred) == bool(obs)
+        mentions_mount = any(k in t for k in ["volumen", "volume", "montaje", "mount", "bind"])
+        scores = {
+            "exactitud": 4 if match else (2 if pred is not None else 0),
+            "evidencia": 4 if match and mentions_mount else (2 if mentions_mount or match else 0),
+            "causal": 2 if "porqu" in t and mentions_mount else 0,
+            "alternativas": 2 if "backup" in t or "sqlite" in t else 0,
+            "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
+        }
+    elif unit == "M08-D01-containers":
+        mentions_kernel = any(k in t for k in ["kernel", "aisl", "proceso"])
+        mentions_cases = sum(
+            1 for k in ["servidor", "reproduc", "driver", "maquina", "pc"] if k in t)
+        mentions_limits = any(k in t for k in ["efímero", "efimero", "localhost", "persist"])
+        scores = {
+            "exactitud": 4 if mentions_kernel and mentions_cases >= 2 else (2 if mentions_kernel else 0),
+            "evidencia": 4 if mentions_cases >= 2 else (2 if mentions_cases >= 1 else 0),
+            "causal": 2 if mentions_limits else 0,
+            "alternativas": 2 if "vm" in t or "máquina" in t or "maquina" in t else 0,
+            "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
+        }
+    elif unit == "M08-D02-lifecycle":
+        stages = sum(1 for k in ["pull", "build", "run", "stop", "rm"] if k in t)
+        mentions_survive = any(k in t for k in ["sobreviv", "imagen", "eliminar", "borrar"])
+        scores = {
+            "exactitud": 4 if stages >= 4 else (2 if stages >= 2 else 0),
+            "evidencia": 4 if stages >= 3 and mentions_survive else (2 if mentions_survive else 0),
+            "causal": 2 if "porqu" in t and mentions_survive else 0,
+            "alternativas": 2 if "volumen" in t or "volume" in t else 0,
+            "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
+        }
+    else:
+        mentions = any(k in t for k in ["docker", "contenedor", "imagen", "volumen", "puerto"])
+        scores = {c: (2 if mentions else 0) for c in
+                  ["exactitud", "evidencia", "causal", "alternativas", "metacognicion"]}
+    return {
+        "evaluator": "mock",
+        "status": "evaluated",
+        "rubric_version": DOCKER_RUBRIC_VERSION,
+        "criteria": [{"id": k, "score": v} for k, v in scores.items()],
+        "feedback_generated_by": "mock",
+    }
+
 
 def mock_evaluate_monitor(answer_text: str, extra: dict, seed: int = 1) -> dict:
     """Rúbrica drift-v1: checks deterministas (feature + changepoint) + keywords."""

@@ -109,3 +109,16 @@ marcar hasta el deploy real.
 Límite: sin capturas de build (no hay navegador en este entorno) — la parte visual
 de los checkboxes 1 queda para revisión humana. Tests: backend 75 passed /
 frontend 61 passed / analyze limpio.
+
+## 18. Docker Academy Lab (Sprint 5, laboratorio real)
+
+Plantilla `lab-docker` (m8, orden 4) + 15 objetivos en DB (ML/M06/M02 + 12 Docker:
+4 `content_ready`, 8 `planned`). Evaluador `docker-mvp-v1` por unidad (orden de
+capas, predicción vs observación, keywords) + intervenciones Docker (práctica en
+la misma unidad; acierto transfiere a la siguiente; `DockerfileWorkbench` etc.
+con allowlist). Página `DockerLabPage`: 4 `ChoiceChip` de unidad, ConceptPrimer
+por unidad, actividad TutorSurface reutilizada (eventos → `/sessions/.../events`),
+evidencia del widget realimentada al intento (`extra.order/mount/...`), justificación,
+postest con unidad bloqueada, reflexión y reanudación heredadas. Ruta `docker` +
+etiqueta en Academia. Tests: backend 78 passed / frontend 62 passed / analyze
+limpio. DB productiva migrada sin pérdidas (40 sesiones).

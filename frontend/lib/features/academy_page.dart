@@ -18,6 +18,7 @@ String labTypeLabel(String? t) => switch (t) {
       'data_detective' => 'Datos tabulares',
       'ml_experiment' => 'Overfitting y generalización',
       'model_monitoring' => 'Deriva y monitoreo',
+      'docker' => 'Contenedores y despliegue',
       _ => t ?? '',
     };
 

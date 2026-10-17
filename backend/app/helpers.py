@@ -12,6 +12,7 @@ from app.evaluation import (
     jev_evaluate,
     mock_evaluate,
     mock_evaluate_data,
+    mock_evaluate_docker,
     mock_evaluate_monitor,
 )
 
@@ -80,6 +81,10 @@ def _evaluate_attempt(db: Session, session, attempt) -> dict:
     elif lab_type == "model_monitoring":
         result = mock_evaluate_monitor(attempt.answer_text, state.get("extra", {}),
                                        state.get("seed", 1))
+    elif lab_type == "docker":
+        # ponytail: Jev solo en ML; Docker MVP con mock determinista por unidad
+        result = mock_evaluate_docker(attempt.answer_text, state.get("extra", {}),
+                                      state.get("seed", 1))
     elif os.getenv("EVALUATOR_MODE", "mock") == "jev":
         result = jev_evaluate(attempt.answer_text, state)
     else:

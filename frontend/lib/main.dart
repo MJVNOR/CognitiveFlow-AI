@@ -7,6 +7,7 @@ import 'package:marionette_flutter/marionette_flutter.dart';
 
 import 'features/academy_page.dart';
 import 'features/data_lab_page.dart';
+import 'features/docker_lab_page.dart';
 import 'features/instructor_page.dart';
 import 'features/login_page.dart';
 import 'features/ml_lab_page.dart';
@@ -68,6 +69,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               'data_detective' => DataLabPage(labId: s.pathParameters['labId']!, title: title),
               'model_monitoring' =>
                 MonitorLabPage(labId: s.pathParameters['labId']!, title: title),
+              'docker' => DockerLabPage(labId: s.pathParameters['labId']!, title: title),
               _ => LabDetailPage(labId: s.pathParameters['labId']!, title: title),
             };
           },

@@ -54,6 +54,7 @@ for lid, title, ltype, mid, order, desc in [
     ("lab-data", "Data Detective", "data_detective", "m2", 1, "datos"),
     ("lab-ml", "ML Experiment Lab", "ml_experiment", "m3", 2, "ml"),
     ("lab-monitor", "Model Monitoring Lab", "model_monitoring", "m6", 3, "monitoreo"),
+    ("lab-docker", "Docker Academy Lab", "docker", "m8", 4, "docker"),
 ]:
     db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
                               module_id=mid, order_index=order, description=desc))
@@ -135,7 +136,7 @@ def test_cross_student_session_forbidden():
 # E1: academia viva — labs con descripción, orden y módulo + estado por estudiante
 def test_labs_expose_description_order_module():
     labs = client.get("/labs").json()
-    assert {l["id"] for l in labs} == {"lab-ml", "lab-data", "lab-monitor"}
+    assert {l["id"] for l in labs} == {"lab-ml", "lab-data", "lab-monitor", "lab-docker"}
     assert all(l["description"] and l["module_id"] for l in labs)
     orders = [l["order_index"] for l in labs]
     assert orders == sorted(orders)
@@ -1363,14 +1364,18 @@ def test_objectives_status_and_docker_units():
     from app.seed import OBJECTIVES as _OBJS
     dock = {o["id"]: o["diagnostic_blueprint"]["items"][0]["widget_type"]
             for o in _OBJS if o["lab_template_id"] == "lab-docker"}
-    assert dock == {"M08-D01-containers": "ContainerVsVmExplorer",
-                    "M08-D02-lifecycle": "ImageContainerLifecycle",
-                    "M08-D04-dockerfile": "DockerfileWorkbench",
-                    "M08-D07-persistence": "PersistenceExperiment"}
+    assert len(dock) == 12
+    assert dock["M08-D01-containers"] == "ContainerVsVmExplorer"
+    assert dock["M08-D02-lifecycle"] == "ImageContainerLifecycle"
+    assert dock["M08-D04-dockerfile"] == "DockerfileWorkbench"
+    assert dock["M08-D07-persistence"] == "PersistenceExperiment"
     objs = client.get("/labs/lab-docker/objectives").json()
-    assert len(objs) == 4 and all(o["status"] == "content_ready" for o in objs)
-    assert {o["id"] for o in objs} == {"M08-D01-containers", "M08-D02-lifecycle",
-                                       "M08-D04-dockerfile", "M08-D07-persistence"}
+    assert len(objs) == 12
+    by_id = {o["id"]: o for o in objs}
+    assert by_id["M08-D01-containers"]["status"] == "content_ready"
+    assert by_id["M08-D12-capstone"]["status"] == "planned"
+    assert {o["id"] for o in objs if o["status"] == "content_ready"} == {
+        "M08-D01-containers", "M08-D02-lifecycle", "M08-D04-dockerfile", "M08-D07-persistence"}
 
 
 def test_data_eval_reports_cell_types():
@@ -1474,3 +1479,81 @@ def test_ensure_columns_adds_status_without_data_loss(tmp_path, monkeypatch):
         "token", "user_id", "created_at"]
     with eng.connect() as c:
         assert c.execute(sa.text("SELECT id FROM learning_objectives")).fetchall() == [("x",)]
+
+
+# Sprint 5: laboratorio Docker — evaluación por unidad, intervención y E2E.
+def _docker_session():
+    return client.post("/sessions", json={"lab_template_id": "lab-docker"},
+                       headers=H_S1).json()["id"]
+
+
+def _docker_attempt(sid, unit, text, **kw):
+    body = {"seed": 1, "answer_text": text, "extra": {"unit": unit, **kw}}
+    return client.post(f"/sessions/{sid}/attempts", json=body, headers=H_S1).json()["id"]
+
+
+def test_docker_eval_units():
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D04-dockerfile",
+        "La caché se invalida porque copié el código antes que instalar; reordeno y reviso.",
+        order=["FROM python:3.12-slim", "COPY requirements.txt ./",
+               "RUN pip install --no-cache-dir -r requirements.txt", "COPY ./app ./app"])
+    r = client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1).json()
+    assert r["rubric_version"] == "docker-mvp-v1" and r["evaluator"] == "mock"
+    assert {c["id"]: c["score"] for c in r["criteria"]}["exactitud"] == 4
+    bad = _docker_attempt(sid, "M08-D04-dockerfile", "x", order=["COPY ./app ./app"])
+    r2 = client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": bad}, headers=H_S1).json()
+    assert {c["id"]: c["score"] for c in r2["criteria"]}["exactitud"] <= 2
+    sid2 = _docker_session()
+    aid2 = _docker_attempt(sid2, "M08-D07-persistence",
+        "El volumen guarda la DB porque el filesystem es efímero",
+        mount="named volume", predicted=True, observed=True)
+    r3 = client.post(f"/sessions/{sid2}/evaluate", json={"attempt_id": aid2}, headers=H_S1).json()
+    assert {c["id"]: c["score"] for c in r3["criteria"]}["exactitud"] == 4
+    sid3 = _docker_session()
+    aid3 = _docker_attempt(sid3, "M08-D01-containers",
+        "El kernel compartido aísla procesos; en el servidor uso contenedor y en mi PC también")
+    r4 = client.post(f"/sessions/{sid3}/evaluate", json={"attempt_id": aid3}, headers=H_S1).json()
+    assert r4["status"] == "evaluated"
+
+
+def test_docker_intervention_widgets():
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D04-dockerfile", "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] == "DockerfileWorkbench"
+    assert iv["schema_version"] == 1 and iv["allowed_events"]
+    sid2 = _docker_session()
+    aid2 = _docker_attempt(sid2, "M08-D04-dockerfile",
+        "Ordeno COPY requirements y RUN pip antes que COPY del código porque la caché se invalida; "
+        "fijo versión y reviso mi hipótesis",
+        order=["FROM python:3.12-slim", "COPY requirements.txt ./",
+               "RUN pip install --no-cache-dir -r requirements.txt", "COPY ./app ./app"])
+    _eval_on(sid2, aid2)
+    iv2 = _intervene_aid(sid2, aid2)
+    assert iv2["widget_type"] == "PersistenceExperiment"
+    assert iv2["widget_parameters"]["title"].startswith("Transfiere")
+
+
+def test_docker_e2e_lab_loop():
+    objs = client.get("/labs/lab-docker/objectives").json()
+    assert len(objs) == 12
+    assert {"M08-D01-containers", "M08-D02-lifecycle",
+            "M08-D04-dockerfile", "M08-D07-persistence"} <= {o["id"] for o in objs}
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers",
+        "El kernel compartido aísla procesos; en el servidor uso contenedor")
+    assert _eval_on(sid, aid)["evaluator"] == "mock"
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] in ("ContainerVsVmExplorer", "DockerfileWorkbench",
+                                 "PersistenceExperiment", "ImageContainerLifecycle")
+    ev = client.post(f"/sessions/{sid}/events",
+        json={"client_event_id": "docker-e2e-1", "widget_type": "ContainerVsVmExplorer",
+              "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 0]}},
+        headers=H_S1).json()
+    assert ev == {"id": "docker-e2e-1", "deduped": False}
+    sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post"}, headers=H_S1).json()
+    assert sub["status"] == "submitted"
+    done = client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1).json()
+    assert done["status"] == "done" and "summary" in done

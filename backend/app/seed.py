@@ -30,6 +30,8 @@ LABS = [
      "Complejidad vs generalización: experimenta con las curvas de pérdida y formula tu hipótesis."),
     ("lab-monitor", "Model Monitoring Lab", "model_monitoring", "m6", 3,
      "El modelo ya está en producción: detecta deriva y decide si reentrenar o seguir monitoreando."),
+    ("lab-docker", "Docker Academy Lab", "docker", "m8", 4,
+     "Conteneriza y despliega: clasifica, construye, persiste y recupera."),
 ]
 
 # Sprint 1: una unidad (M03-U02) con lección + ejemplo + diagnóstico pequeño.
@@ -297,8 +299,120 @@ OBJECTIVE_D07 = {
     },
 }
 
+# Resto de unidades Docker D03/D05/D06/D08–D12: temario real con estado planned
+# (sin widget interactivo ni evaluador aún; el laboratorio cubre el MVP).
+def _docker_planned(uid, title, summary, steps, misconceptions, widget):
+    return {
+        "id": uid, "lab_template_id": "lab-docker", "title": title,
+        "level": "intermedio", "concept_summary": summary,
+        "worked_example_steps": steps, "misconceptions": misconceptions,
+        "rubric_id": uid.lower().replace("m08-", "docker-") + "-v1",
+        "status": "planned",
+        "diagnostic_blueprint": {
+            "items": [
+                {"id": "dg-1", "widget_type": widget,
+                 "widget_config": {"seed": 11},
+                 "expected_evidence": ["prediction"],
+                 "prompt": "Predice antes de experimentar."},
+                {"id": "dg-2", "widget_type": widget,
+                 "widget_config": {"seed": 12},
+                 "expected_evidence": ["prediction"],
+                 "prompt": "Transfiere a un escenario nuevo."},
+            ]
+        },
+    }
+
+
+OBJECTIVE_D03 = _docker_planned(
+    "M08-D03-cli", "Componer comandos Docker CLI sin adivinar",
+    "Las imágenes se listan, los contenedores se inspeccionan y los logs se "
+    "leen: images, ps, logs, exec, inspect con --help. -d separa, --name nombra "
+    "y -p publica puertos. Adivinar flags rompe; leer la ayuda no.",
+    ["Un servicio no responde: logs muestra el error.",
+     "Entrar a depurar: exec con shell interactiva.",
+     "Puerto ocupado: ps + port mapping explícito."],
+    ["-p y EXPOSE hacen lo mismo.", "latest siempre funciona.", "rm borra imágenes."],
+    "ImageContainerLifecycle")
+
+OBJECTIVE_D05 = _docker_planned(
+    "M08-D05-context", "Distinguir contexto, WORKDIR y filesystem efímero",
+    "El build context es lo que ve COPY; fuera de él, COPY falla. WORKDIR fija "
+    "el directorio de trabajo y .dockerignore recorta. Bind mount comparte, "
+    "volumen persiste, nada montado se pierde al recrear.",
+    ["COPY falla: el archivo está fuera del contexto.",
+     "WORKDIR evita rutas absolutas frágiles.",
+     ".dockerignore acelera y evita secretos."],
+    ["COPY ve todo tu disco.", "El contenedor guarda solo.", "WORKDIR crea volumen."],
+    "DockerfileWorkbench")
+
+OBJECTIVE_D06 = _docker_planned(
+    "M08-D06-network", "Conectar servicios sin confundir localhost",
+    "Cada contenedor tiene su localhost; -p mapea host→contenedor y el DNS de "
+    "Compose resuelve por nombre de servicio. El frontend habla con http://api:8000, "
+    "no con localhost del host.",
+    ["API inalcanzable desde frontend: apunta a localhost erróneo.",
+     "Componer red compartida y resolver por nombre.",
+     "Publicar solo los puertos necesarios."],
+    ["localhost es igual en todas partes.", "EXPOSE publica puertos.", "Toda red es plana."],
+    "ImageContainerLifecycle")
+
+OBJECTIVE_D08 = _docker_planned(
+    "M08-D08-compose", "Definir servicios, redes y volúmenes en Compose",
+    "compose.yaml declara services, build/image, ports, volumes, environment, "
+    "networks y depends_on. depends_on ordena el arranque pero no garantiza "
+    "salud: eso es healthcheck. Un archivo, todo el stack reproducible.",
+    ["Frontend + API + DB con una red y un volumen.",
+     "depends_on arranca en orden sin esperar salud.",
+     "Variables por environment, secretos fuera del repo."],
+    ["depends_on espera a que esté listo.", "Compose es solo para dev.", "Un servicio por archivo."],
+    "ContainerVsVmExplorer")
+
+OBJECTIVE_D09 = _docker_planned(
+    "M08-D09-debug", "Diagnosticar builds y contenedores con evidencia",
+    "build muestra capas y caché; logs, exit codes e inspect explican el fallo. "
+    "Multi-stage separa build de runtime. Leer la traza antes de cambiar "
+    "archivos a ciegas.",
+    ["Build falla en COPY: contexto o ruta mal.",
+     "Exit code distinto de cero: leer logs primero.",
+     "Capas cacheadas aceleran la iteración."],
+    ["Reconstruir todo arregla todo.", "Los logs mienten.", "La caché es magia."],
+    "DockerfileWorkbench")
+
+OBJECTIVE_D10 = _docker_planned(
+    "M08-D10-security", "No filtrar secretos y minimizar superficie",
+    "Secretos por entorno o montaje, nunca en imagen ni repo. Usuario no root, "
+    "imágenes mínimas, tags fijados y .dockerignore. Escanear antes de publicar.",
+    ["Credencial en ENV del Dockerfile: filtrada para siempre.",
+     "Correr como root amplía el daño.",
+     "latest + root + secreto = incidente."],
+    ["Si el repo es privado, el secreto está a salvo.", "Root es más cómodo y ya.", "Escanear es opcional."],
+    "ContainerVsVmExplorer")
+
+OBJECTIVE_D11 = _docker_planned(
+    "M08-D11-deploy", "Desplegar reproducible con rollback",
+    "Local→registry→host con HTTPS y reverse proxy; env por entorno, datos en "
+    "volumen con backup y rollback por tag anterior. CI/CD publica imágenes "
+    "trazables, no contenedores a mano.",
+    ["Tag por release para poder volver atrás.",
+     "Backup del volumen antes de migrar.",
+     "HTTPS termina en el proxy, no en la app."],
+    ["latest es rollback suficiente.", "Backup del contenedor basta.", "Desplegar es copiar archivos."],
+    "PersistenceExperiment")
+
+OBJECTIVE_D12 = _docker_planned(
+    "M08-D12-capstone", "Integrar frontend + API + storage en Compose",
+    "Capstone: encadenar D01–D11 en un despliegue completo con decisiones "
+    "documentadas y un incidente nuevo sin pistas. Demuestra transferencia real.",
+    ["Mapa de servicios, redes, volúmenes y healthchecks.",
+     "README con decisiones y cómo recuperarse.",
+     "Incidente nuevo: diagnosticar con evidencia."],
+    ["Juntar YAMLs basta.", "Documentar es opcional.", "Si corre, está listo."],
+    "PersistenceExperiment")
+
 OBJECTIVES = [OBJECTIVE_ML_U02, OBJECTIVE_M06_U04, OBJECTIVE_M02_U02,
-              OBJECTIVE_D01, OBJECTIVE_D02, OBJECTIVE_D04, OBJECTIVE_D07]
+              OBJECTIVE_D01, OBJECTIVE_D02, OBJECTIVE_D04, OBJECTIVE_D07,
+              OBJECTIVE_D03, OBJECTIVE_D05, OBJECTIVE_D06, OBJECTIVE_D08,
+              OBJECTIVE_D09, OBJECTIVE_D10, OBJECTIVE_D11, OBJECTIVE_D12]
 
 
 def init_db():

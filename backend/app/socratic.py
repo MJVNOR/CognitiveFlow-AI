@@ -15,10 +15,12 @@ MOCK_QUESTION = (
 )
 MOCK_QUESTION_DATA = "¿Qué filas te hacen sospechar y qué harías con cada una?"
 MOCK_QUESTION_MONITOR = "¿Qué cambió entre referencia y actual, y justifica reentrenar o solo monitorear?"
+MOCK_QUESTION_DOCKER = "¿Qué sobreviviría al recrear y qué comando lo demuestra?"
 
 MOCK_QUESTIONS = {
     "data_detective": MOCK_QUESTION_DATA,
     "model_monitoring": MOCK_QUESTION_MONITOR,
+    "docker": MOCK_QUESTION_DOCKER,
 }
 
 # P2.5: etiquetas humanas del feedback determinista (mismo set que el frontend).
