@@ -23,10 +23,10 @@ uv run uvicorn app.main:app --reload --port 8000
 
 - `evaluation_results` es append-only; la revisión humana va a `instructor_reviews`.
 - Catálogo GenUI cerrado: `backend/app/interventions.py::CATALOG` debe coincidir
-  con `frontend/lib/genui/catalog.dart::cognitiveFlowWidgets`.
+  con `frontend/lib/ui/tutor/catalog.dart::cognitiveFlowWidgets`.
 - `ui_spec` interna (`{type, version, parameters...}`) ≠ mensajes A2UI del wire
   (`{version: v0.9, createSurface|updateComponents}`); la traducción vive en
-  `frontend/lib/genui/tutor_surface.dart`.
+  `frontend/lib/ui/tutor/tutor_surface.dart`.
 - Rúbricas mock etiquetadas (`evaluator: mock`); Jev real solo en ML
   (`EVALUATOR_MODE=jev`), datos/monitoreo usan mock determinista.
 - Auth demo: login por `user_id` (`s1-s4`, `i1`), token opaco en tabla `auth_tokens`
@@ -54,9 +54,11 @@ flutter analyze --no-pub; flutter test; flutter build web
 - `genui 0.10.4` fijado en `pubspec.lock`; builders usan `BoundString` +
   `CatalogItemContext`; `Surface` se obtiene con `controller.contextFor(id)`.
 - Backend sin `CORSMiddleware` ⇒ el login web falla (preflight `OPTIONS` 404).
-- **Estado global con Riverpod (`flutter_riverpod`):** `lib/state/app_state.dart`
-  (`authProvider`, `themeModeProvider`; `routerProvider` en `main.dart` se
-  recrea al cambiar auth). Lo local de labs/charts/forms sigue en `setState`;
+- **Estado global con Riverpod (`flutter_riverpod`):** `lib/core/auth/auth_state.dart`
+  (`authProvider`), `lib/ui/core/themes/cognitive_theme.dart`
+  (`themeModeProvider`); `lib/config/routing/router.dart` (`routerProvider`)
+  se recrea al cambiar auth; `lib/main.dart` solo hace bootstrap
+  (`lib/app/app.dart`). Lo local de labs/charts/forms sigue en `setState`;
   borradores en `SharedPreferences` (`draft:<labId>:<campo>`, se limpian al
   cerrar la reflexión). No meter labs/GenUI/fetch en providers sin motivo.
 
