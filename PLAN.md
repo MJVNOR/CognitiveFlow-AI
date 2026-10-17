@@ -550,19 +550,19 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 **Regla de seguimiento:** conservar historial de completados del plan anterior; estas son NUEVAS tareas de mejora sin estados predeterminados. Después de cada PR registrar archivos cambiados, pruebas ejecutadas, evidencia/captura y decisiones. No declarar completado sin evidencia real.
 
 ### Sprint 0 — Auditoría no destructiva (P0)
-- [ ] Levantar estructura frontend/backend actual, `pubspec.lock`, versión genui, rutas, tests y esquema SQLite; escribir `docs/current-state-audit.md` con pruebas.
-- [ ] Ejecutar `flutter analyze`, `flutter test`, `uv run pytest` y reproducir flujo lab real; reportar resultados exactos sin inventarlos.
-- [ ] Documentar bugs de screenshots: scroll excesivo, ejes ilegibles, botones ambiguos, postest prematuro y tablero de instructor con mutaciones.
-- [ ] Snapshot/backup SQLite y commit antes de migraciones.
+- [x] Levantar estructura frontend/backend actual, `pubspec.lock`, versión genui, rutas, tests y esquema SQLite; escribir `docs/current-state-audit.md` con pruebas.
+- [x] Ejecutar `flutter analyze`, `flutter test`, `uv run pytest` y reproducir flujo lab real; reportar resultados exactos sin inventarlos.
+- [x] Documentar bugs de screenshots: scroll excesivo, ejes ilegibles, botones ambiguos, postest prematuro y tablero de instructor con mutaciones.
+- [x] Snapshot/backup SQLite y commit antes de migraciones.
 
 ### Sprint 1 — Un recorrido educativo completo con Data Detective o ML (P0)
-- [ ] Introducir `LearningObjective` + lección + ejemplo + diagnóstico pequeño para una unidad.
-- [ ] Rehacer el workspace con actividad principal y tutor contextual responsive; una sola acción principal; no tabs internos de orquestador.
-- [ ] Convertir `LearningCurveSimulator` o `DataTableExplorer` en widget bidireccional; eventos reales A2UI→backend y refresh/reanudación.
-- [ ] Guardar predicción, evidencia seleccionada, revisión y ayudas usadas en SQLite.
-- [ ] Implementar next activity DIFERENTE y explícita según dos errores distintos, no nueva tarjeta genérica.
-- [ ] Postest variante nueva autorizado por backend; asegurar modo sin ayuda.
-- [ ] E2E automatizado sobre la unidad completa.
+- [x] Introducir `LearningObjective` + lección + ejemplo + diagnóstico pequeño para una unidad.
+- [x] Rehacer el workspace con actividad principal y tutor contextual responsive; una sola acción principal; no tabs internos de orquestador.
+- [x] Convertir `LearningCurveSimulator` o `DataTableExplorer` en widget bidireccional; eventos reales A2UI→backend y refresh/reanudación.
+- [x] Guardar predicción, evidencia seleccionada, revisión y ayudas usadas en SQLite.
+- [x] Implementar next activity DIFERENTE y explícita según dos errores distintos, no nueva tarjeta genérica.
+- [x] Postest variante nueva autorizado por backend; asegurar modo sin ayuda.
+- [x] E2E automatizado sobre la unidad completa.
 
 ### Sprint 2 — Gemini + Jev con gobernanza (P0)
 - [ ] Confirmar proveedor Jev comprado, SDK/request/response real; credenciales backend y request sample mínimo seguro.
