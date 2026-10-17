@@ -143,12 +143,7 @@ class _LabDetailState extends State<LabDetailPage> {
   }
 
   /// Miga Ruta > Módulo > Unidad derivada del objetivo (sin hardcodear textos).
-  String? _crumb() {
-    if (objectives == null || objectives!.isEmpty) return null;
-    final parts = '${objectives!.first['id']}'.split('-');
-    if (parts.length >= 2) return 'Módulo ${parts[0]} · Unidad ${parts[1]}';
-    return 'Unidad ${objectives!.first['id']}';
-  }
+  String? _crumb() => labCrumb(objectives);
 
   @override
   Widget build(BuildContext context) {
@@ -400,8 +395,12 @@ class CurvePainter extends StatelessWidget {
   final List<num> val;
   final Color trainColor;
   final Color valColor;
+  final double labelInterval;
   const CurvePainter(this.train, this.val,
-      {super.key, required this.trainColor, required this.valColor});
+      {super.key,
+      required this.trainColor,
+      required this.valColor,
+      this.labelInterval = 5});
 
   List<FlSpot> _spots(List<num> ys) => [
         for (var i = 0; i < ys.length; i++)
@@ -440,8 +439,8 @@ class CurvePainter extends StatelessWidget {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 22,
-              interval: 5,
+              reservedSize: 28,
+              interval: labelInterval,
               getTitlesWidget: (v, _) => Text(
                 'e${v.toInt()}',
                 style: const TextStyle(fontSize: 10),
@@ -485,7 +484,8 @@ class AccessibleCurveChart extends StatelessWidget {
   final List<num> val;
   final String label;
   final double height;
-  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label, this.height = 180});
+  final double labelInterval;
+  const AccessibleCurveChart({super.key, required this.train, required this.val, required this.label, this.height = 180, this.labelInterval = 5});
 
   String _summary(List<num> ys) {
     if (ys.isEmpty) return 'sin datos';
@@ -505,7 +505,10 @@ class AccessibleCurveChart extends StatelessWidget {
           label: '$label. Entrenamiento: ${_summary(train)}. Validación: ${_summary(val)}.',
           child: SizedBox(
             height: height,
-            child: CurvePainter(train, val, trainColor: cs.primary, valColor: cs.tertiary),
+            child: CurvePainter(train, val,
+                trainColor: cs.primary,
+                valColor: cs.tertiary,
+                labelInterval: labelInterval),
           ),
         ),
         const SizedBox(height: 4),

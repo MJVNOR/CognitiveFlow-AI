@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cognitiveflow/widgets/cards.dart';
+import 'package:cognitiveflow/features/ml_lab_page.dart';
 import 'package:cognitiveflow/session/lab_session.dart';
 
 void main() {
@@ -137,5 +138,26 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Continuar: Compara ambas curvas'), findsOneWidget);
     expect(find.text('Siguiente actividad'), findsNothing);
+  });
+
+  testWidgets('ConceptPrimer muestra concepto y ejemplo colapsable', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConceptPrimer(objective: const {
+            'title': 'T',
+            'concept_summary': 'resumen',
+            'worked_example_steps': ['paso 1', 'paso 2'],
+          }),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('El concepto en 1 minuto'), findsOneWidget);
+    expect(find.text('resumen'), findsOneWidget);
+    expect(find.text('paso 1'), findsNothing);
+    await tester.tap(find.text('Ver ejemplo resuelto'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('paso 1'), findsOneWidget);
   });
 }

@@ -1318,3 +1318,14 @@ def test_frozen_contract_versions():
                        "PipelineDAGBuilder", "RubricFeedbackCard", "ReflectionSummary"}
     for wt, evs in ALLOWED_BY_WIDGET.items():
         assert wt in CATALOG and evs
+
+
+# Sprint 3: objetivo M06-U04 + diagnóstico de monitoreo.
+def test_monitor_objective_and_diagnostics():
+    objs = client.get("/labs/lab-monitor/objectives").json()
+    assert len(objs) == 1 and objs[0]["id"] == "M06-U04-drift"
+    assert "etiquetas" in objs[0]["concept_summary"]
+    assert objs[0]["rubric_id"] == "drift-v1"
+    dg = client.post("/labs/lab-monitor/diagnostics").json()
+    assert dg["objective_id"] == "M06-U04-drift" and len(dg["items"]) == 2
+    assert {i["widget_type"] for i in dg["items"]} == {"DriftDistributionExplorer"}

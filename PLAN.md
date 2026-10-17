@@ -574,7 +574,7 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 ### Sprint 3 — Laboratorios bien diseñados (P1)
 - [ ] Rediseñar Data Detective con inspector por celda y simulación de limpieza.
 - [ ] Rediseñar ML Experiment con predicción, comparación de dos runs y selección de evidencia.
-- [ ] Rediseñar Model Monitoring con ejes legibles, feature/periodo y contraste drift vs performance.
+- [x] Rediseñar Model Monitoring con ejes legibles, feature/periodo y contraste drift vs performance.
 - [ ] Seeds curricular completos de nueve módulos y doce unidades Docker con estado real de preparación.
 - [ ] Docker D01/D02/D04/D07 con widgets del MVP y prueba de transferencia.
 

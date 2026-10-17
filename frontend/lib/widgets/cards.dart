@@ -122,6 +122,14 @@ class LabSteps extends StatelessWidget {
   }
 }
 
+/// Miga Ruta > Módulo > Unidad derivada del objetivo (sin hardcodear textos).
+String? labCrumb(List<Map<String, dynamic>>? objectives) {
+  if (objectives == null || objectives.isEmpty) return null;
+  final parts = '${objectives.first['id']}'.split('-');
+  if (parts.length >= 2) return 'Módulo ${parts[0]} · Unidad ${parts[1]}';
+  return 'Unidad ${objectives.first['id']}';
+}
+
 /// Cabecera común: objetivo del lab + pasos. Va arriba del contenido propio.
 class LabHeader extends StatelessWidget {
   final String objective;

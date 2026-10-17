@@ -245,13 +245,14 @@ def _objective_out(o) -> dict:
 
 @router.get("/labs/{lab_id}/objectives")
 def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
-    # Sprint 1: lección + ejemplo por unidad; fallback a constante si la tabla aún no se sembró.
+    # Sprint 1/3: fallback a constante si aún no se sembró.
     rows = db.query(models.LearningObjective).filter_by(lab_template_id=lab_id).all()
     if rows:
         return [_objective_out(o) for o in rows]
-    if lab_id == "lab-ml":
-        from app.seed import OBJECTIVE_ML_U02 as _o
-        return [{**{k: _o[k] for k in ("id", "lab_template_id", "title", "level",
+    from app.seed import OBJECTIVES as _OBJS
+    for _o in _OBJS:
+        if _o["lab_template_id"] == lab_id:
+            return [{**{k: _o[k] for k in ("id", "lab_template_id", "title", "level",
                                       "concept_summary", "rubric_id")},
                  "worked_example_steps": _o["worked_example_steps"],
                  "misconceptions": _o["misconceptions"]}]
@@ -260,7 +261,8 @@ def lab_objectives(lab_id: str, db: Session = Depends(get_db)):
 
 @router.post("/labs/{lab_id}/diagnostics")
 def lab_diagnostics(lab_id: str, db: Session = Depends(get_db)):
-    # Sprint 1: diagnóstico breve (2 ítems equivalentes, sin pistas ni evaluación).
+    # Sprint 1/3: diagnóstico breve (2 ítems equivalentes, sin pistas ni evaluación).
+    from app.seed import OBJECTIVES as _OBJS
     bp = None
     row = db.query(models.LearningObjective).filter_by(lab_template_id=lab_id).first()
     if row is not None:
@@ -269,13 +271,16 @@ def lab_diagnostics(lab_id: str, db: Session = Depends(get_db)):
         except Exception:
             bp = None
     if bp is None:
-        if lab_id != "lab-ml":
-            raise HTTPException(404, "sin diagnóstico para ese lab")
-        from app.seed import OBJECTIVE_ML_U02 as _o
-        bp = _o["diagnostic_blueprint"]
+        for _o in _OBJS:
+            if _o["lab_template_id"] == lab_id:
+                bp = _o["diagnostic_blueprint"]
+                break
+    if bp is None:
+        raise HTTPException(404, "sin diagnóstico para ese lab")
     items = bp.get("items", []) if isinstance(bp, dict) else []
     return {"lab_template_id": lab_id,
-            "objective_id": row.id if row is not None else "M03-U02-generalization",
+            "objective_id": row.id if row is not None else next(
+                _o["id"] for _o in _OBJS if _o["lab_template_id"] == lab_id),
             "items": items}
 
 

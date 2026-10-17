@@ -33,6 +33,46 @@ LABS = [
 
 # Sprint 1: una unidad (M03-U02) con lección + ejemplo + diagnóstico pequeño.
 # ponytail: constante única — seed y endpoint la comparten, sin duplicar.
+# Sprint 3: M06-U04 con conceptos drift vs performance + diagnóstico pequeño.
+OBJECTIVE_M06_U04 = {
+    "id": "M06-U04-drift",
+    "lab_template_id": "lab-monitor",
+    "title": "Distinguir deriva de datos, cambio de concepto y caída de métrica",
+    "level": "intermedio",
+    "concept_summary": (
+        "Deriva de datos: cambia la entrada X (ej. la media de temp sube) aunque el "
+        "modelo siga igual. Cambio de concepto: cambia la relación X→Y (lo que antes "
+        "era normal ahora es falla). Caída de métrica: empeoran los aciertos, y solo "
+        "se afirma con etiquetas reales. Causas típicas: sensor, mezcla de población "
+        "o etiqueta tardía. Antes de reentrenar (caro), monitorea con un umbral."
+    ),
+    "worked_example_steps": [
+        "Compara referencia vs actual de temp: la media actual es mayor.",
+        "Ubica en la serie cuándo se separa (t≈120): deriva de datos.",
+        "Decide: monitorear con umbral antes de reentrenar; sin etiquetas no afirmes caída de precisión.",
+    ],
+    "misconceptions": [
+        "Toda deriva implica caída de precisión.",
+        "Reentrenar siempre arregla el problema.",
+        "Confundir cambio de concepto con deriva de datos.",
+    ],
+    "rubric_id": "drift-v1",
+    "diagnostic_blueprint": {
+        "items": [
+            {"id": "dg-1", "widget_type": "DriftDistributionExplorer",
+             "widget_config": {"features": ["temp", "pressure", "vibration"], "seed": 11},
+             "expected_evidence": ["prediction"],
+             "prompt": "Antes de comparar: ¿qué feature crees que cambió y por qué?"},
+            {"id": "dg-2", "widget_type": "DriftDistributionExplorer",
+             "widget_config": {"features": ["temp", "pressure", "vibration"], "seed": 12},
+             "expected_evidence": ["prediction"],
+             "prompt": "Mismo ejercicio, otros datos: predice y compara con dg-1."},
+        ]
+    },
+}
+
+# Sprint 1: una unidad (M03-U02) con lección + ejemplo + diagnóstico pequeño.
+# ponytail: constante única — seed y endpoint la comparten, sin duplicar.
 OBJECTIVE_ML_U02 = {
     "id": "M03-U02-generalization",
     "lab_template_id": "lab-ml",
@@ -69,6 +109,8 @@ OBJECTIVE_ML_U02 = {
     },
 }
 
+OBJECTIVES = [OBJECTIVE_ML_U02, OBJECTIVE_M06_U04]
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -90,16 +132,17 @@ def seed_if_empty():
                 db.add(models.LabTemplate(id=lid, title=title, lab_type=ltype,
                                           module_id=mid, order_index=order,
                                           description=desc))
-        # ponytail: tabla nueva → si está vacía se siembra sin tocar el resto
-        if hasattr(models, "LearningObjective") and db.query(models.LearningObjective).count() == 0:
-            o = OBJECTIVE_ML_U02
-            db.add(models.LearningObjective(
-                id=o["id"], lab_template_id=o["lab_template_id"], title=o["title"],
-                level=o["level"], concept_summary=o["concept_summary"],
-                worked_example_json=_json.dumps(o["worked_example_steps"]),
-                misconceptions_json=_json.dumps(o["misconceptions"]),
-                rubric_id=o["rubric_id"],
-                diagnostic_blueprint_json=_json.dumps(o["diagnostic_blueprint"])))
+        # ponytail: por id → agrega el que falte sin tocar el resto ni duplicar
+        if hasattr(models, "LearningObjective"):
+            for o in OBJECTIVES:
+                if not db.query(models.LearningObjective).filter_by(id=o["id"]).first():
+                    db.add(models.LearningObjective(
+                        id=o["id"], lab_template_id=o["lab_template_id"], title=o["title"],
+                        level=o["level"], concept_summary=o["concept_summary"],
+                        worked_example_json=_json.dumps(o["worked_example_steps"]),
+                        misconceptions_json=_json.dumps(o["misconceptions"]),
+                        rubric_id=o["rubric_id"],
+                        diagnostic_blueprint_json=_json.dumps(o["diagnostic_blueprint"])))
         db.commit()
     finally:
         db.close()
