@@ -565,11 +565,11 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 - [x] E2E automatizado sobre la unidad completa.
 
 ### Sprint 2 — Gemini + Jev con gobernanza (P0)
-- [ ] Confirmar proveedor Jev comprado, SDK/request/response real; credenciales backend y request sample mínimo seguro.
-- [ ] Integrar Gemini con salida estructurada + allowlist de estrategias y widgets.
-- [ ] Verificación determinista + Jev por criterio; feedback muestra evidencia textual específica y nueva acción.
-- [ ] Tolerar fallo/rate limits; distinguir mock, real, incierto y pendiente; tests con fake clients.
-- [ ] Congelar/versionar rúbricas/prompts, log de decisiones breve y seguro.
+- [x] Confirmar proveedor Jev comprado, SDK/request/response real; credenciales backend y request sample mínimo seguro.
+- [x] Integrar Gemini con salida estructurada + allowlist de estrategias y widgets.
+- [x] Verificación determinista + Jev por criterio; feedback muestra evidencia textual específica y nueva acción.
+- [x] Tolerar fallo/rate limits; distinguir mock, real, incierto y pendiente; tests con fake clients.
+- [x] Congelar/versionar rúbricas/prompts, log de decisiones breve y seguro.
 
 ### Sprint 3 — Laboratorios bien diseñados (P1)
 - [ ] Rediseñar Data Detective con inspector por celda y simulación de limpieza.

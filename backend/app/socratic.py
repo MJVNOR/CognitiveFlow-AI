@@ -21,6 +21,22 @@ MOCK_QUESTIONS = {
     "model_monitoring": MOCK_QUESTION_MONITOR,
 }
 
+# P2.5: etiquetas humanas del feedback determinista (mismo set que el frontend).
+CRITERION_LABELS = {
+    "exactitud": "exactitud conceptual",
+    "evidencia": "uso de evidencia",
+    "causal": "causalidad",
+    "alternativas": "alternativas",
+    "metacognicion": "revisión",
+}
+
+
+def _clean(text: str | None, limit: int) -> str | None:
+    # ponytail: el proveedor no fija el tamaño del render; tope duro + colapso
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return " ".join(text.split())[:limit] or None
+
 FEEDBACK_PROMPT_V1 = (
     "Eres un tutor socrático. Con la rúbrica 0-4 y la respuesta del estudiante, "
     "redacta UN feedback de máximo 2 frases: fortaleza observada → evidencia faltante, "
@@ -76,15 +92,22 @@ async def feedback_text(answer_text: str, criteria: list[dict], question: str) -
     scored = [(c.get("id", "?"), c.get("score", 0)) for c in criteria]
     fortaleza = max(scored, key=lambda t: t[1])[0] if scored else None
     brecha = min(scored, key=lambda t: t[1])[0] if scored else None
-    base = {"fortaleza": fortaleza, "brecha": brecha, "texto": None,
-            "prompt_version": "feedback-v1"}
     if fortaleza == brecha:
         brecha = None
-        base["brecha"] = None
+    # Sprint 2: mock determinista con evidencia textual (solo criterios reales, sin scores).
+    if fortaleza:
+        need = (f"; a trabajar: {CRITERION_LABELS.get(brecha, brecha)} "
+                "con evidencia concreta") if brecha else ""
+        mock_texto = (f"Vas bien en {CRITERION_LABELS.get(fortaleza, fortaleza)}"
+                      f"{need}.")
+    else:
+        mock_texto = None
+    base = {"fortaleza": fortaleza, "brecha": brecha, "texto": mock_texto,
+            "prompt_version": "feedback-v1"}
     rubric = ", ".join(f"{cid}={s}" for cid, s in scored) or "sin criterios"
     prompt = (FEEDBACK_PROMPT_V1.format(question=question[:500])
               + f"\nRúbrica: {rubric}\nRespuesta: {(answer_text or '')[:1200]}")
-    text = await _gemini_ask(prompt)
+    text = _clean(await _gemini_ask(prompt), 600)
     if text:
         return {**base, "provider": "gemini", "model": os.getenv("LLM_MODEL", "?"),
                 "texto": text}
@@ -95,7 +118,7 @@ async def socratic_question(answer_text: str, weak_points: list[str], lab_type: 
         f"{SYSTEM_PROMPT_V1}{lab_hint}\nRespuesta del estudiante: {answer_text[:1500]}\n"
         f"Puntos débiles: {', '.join(weak_points) or 'ninguno detectado'}"
     )
-    text = await _gemini_ask(prompt)
+    text = _clean(await _gemini_ask(prompt), 500)
     base = {"prompt_version": "socratic-v1"}
     if text:
         return {**base, "provider": "gemini", "model": os.getenv("LLM_MODEL", "?"), "question": text}
