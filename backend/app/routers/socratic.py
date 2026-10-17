@@ -96,10 +96,17 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     if len(_practice_attempts(db, session_id)) > MAX_REVISIONS:
         limited = await safe_intervention(
             f"Límite de {MAX_REVISIONS} revisiones alcanzado; ve al postest")
+        # ponytail: se guarda la intervención completa (pregunta incluida) para
+        # poder restaurarla al reanudar sin re-evaluar ni gastar proveedor.
         db.add(models.InterventionLog(id=uuid.uuid4().hex[:8], session_id=session_id,
                                       attempt_id=attempt.id, strategy=limited["strategy"],
                                       widget_type=limited["widget_type"],
-                                      spec_json=json.dumps(limited["widget_parameters"])))
+                                      spec_json=json.dumps({
+                                          "widget_type": limited["widget_type"],
+                                          "widget_parameters": limited["widget_parameters"],
+                                          "socratic_question": limited.get("socratic_question"),
+                                          "strategy": limited["strategy"],
+                                          "reason": limited.get("reason")})))
         db.commit()
         return limited
     ev = (
@@ -124,10 +131,16 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     intervention["schema_version"] = SCHEMA_VERSION
     intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])
     # F5: audit trail — qué estrategia se decidió por intento (append-only).
+    # Guarda la intervención completa para restaurarla al reanudar la sesión.
     db.add(models.InterventionLog(id=uuid.uuid4().hex[:8], session_id=session_id,
                                   attempt_id=attempt.id,
                                   strategy=intervention["strategy"],
                                   widget_type=intervention["widget_type"],
-                                  spec_json=json.dumps(intervention["widget_parameters"])))
+                                  spec_json=json.dumps({
+                                      "widget_type": intervention["widget_type"],
+                                      "widget_parameters": intervention["widget_parameters"],
+                                      "socratic_question": intervention.get("socratic_question"),
+                                      "strategy": intervention["strategy"],
+                                      "reason": intervention.get("reason")})))
     db.commit()
     return intervention

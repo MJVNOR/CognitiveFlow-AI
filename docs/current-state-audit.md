@@ -63,3 +63,7 @@ Backup local `backend/cognitiveflow.backup-20261017.db` (86 KB, 2026-10-17, `*.d
 ## 10. Sprint 1 (primera tarea, 2026-10-17)
 
 `learning_objectives` (id, lab_template_id, title, level, concept_summary, worked_example_json, misconceptions_json, rubric_id, diagnostic_blueprint_json) + seed `M03-U02-generalization` (lab-ml: overfitting vs underfitting, ejemplo 3 pasos, 3 misconceptions, rúbrica `ml-overfitting-v1`) + `GET /labs/{id}/objectives` y `POST /labs/{id}/diagnostics` (2 ítems `LearningCurveSimulator` dg-1/dg-2, 404 en lab desconocido). Tests: `test_ml_objective_and_diagnostics` (65 passed, 1 skipped). Pendiente siguiente checkbox: workspace 65/35 + widget bidireccional.
+
+## 11. Sprint 1 cierre (2026-10-17)
+
+Workspace: pasos en lenguaje estudiante (`Aprende el concepto…Aplica sin ayuda`), postest con puerta tras 1ª evaluación (3 labs), ConceptPrimer ML + miga Módulo·Unidad, next `Continuar: <título>` y breakpoint 1100. Bidireccional: `InterventionLog` guarda la intervención completa y `GET interventions` devuelve spec + pregunta; `resume()` la restaura sin re-evaluar (no en postest). E2E `test_e2e_full_ml_unit`: débil→`EvidenceComparison`, fuerte→`HypothesisEditor`, 3 eventos en `ui_events`, postest seed≥100 + reflexión. Tests: backend 66 passed / frontend 39 passed / analyze limpio.

@@ -63,10 +63,24 @@ def my_sessions(lab_template_id: str = "", user=Depends(current_user),
 def session_interventions(session_id: str, user=Depends(current_user),
                           db: Session = Depends(get_db)):
     # F5: audit trail legible (estrategia por intento); ownership primero.
+    # Sprint 1: devuelve la spec completa para restaurar la actividad al
+    # reanudar sin re-evaluar. Filas viejas = solo widget_parameters (tolerado).
     session_for(user, db, session_id)
     rows = db.query(models.InterventionLog).filter_by(session_id=session_id).all()
-    return [{"attempt_id": r.attempt_id, "strategy": r.strategy,
-             "widget_type": r.widget_type} for r in rows]
+    out = []
+    for r in rows:
+        try:
+            spec = json.loads(r.spec_json)
+        except Exception:
+            spec = {}
+        params = (spec.get("widget_parameters")
+                  if isinstance(spec, dict) and isinstance(spec.get("widget_parameters"), dict)
+                  else (spec if isinstance(spec, dict) else {}))
+        out.append({"attempt_id": r.attempt_id, "strategy": r.strategy,
+                    "widget_type": r.widget_type, "widget_parameters": params,
+                    "socratic_question": spec.get("socratic_question")
+                    if isinstance(spec, dict) else None})
+    return out
 
 
 class SessionIn(BaseModel):

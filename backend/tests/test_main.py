@@ -1173,3 +1173,53 @@ def test_ml_objective_and_diagnostics():
     assert {i["id"] for i in dg["items"]} == {"dg-1", "dg-2"}
     assert client.get("/labs/lab-x/objectives").status_code == 404
     assert client.post("/labs/lab-x/diagnostics").status_code == 404
+
+
+# Sprint 1: recorrido completo ML (objetivos → diagnóstico → práctica →
+# intervención distinta por error → eventos → postest → reflexión).
+def test_e2e_full_ml_unit():
+    objs = client.get("/labs/lab-ml/objectives").json()
+    assert objs[0]["id"] == "M03-U02-generalization"
+    assert len(client.post("/labs/lab-ml/diagnostics").json()["items"]) == 2
+
+    # error débil → EvidenceComparison; acierto → HypothesisEditor (distintas)
+    weak_sid = _ml_session()
+    weak_aid = _attempt(weak_sid, "no sé")
+    _eval_on(weak_sid, weak_aid)
+    weak_iv = _intervene_aid(weak_sid, weak_aid)
+    strong_sid = _ml_session()
+    strong_aid = _attempt(strong_sid, "Hay overfit porque la validación sube con complejidad alta, "
+        "los datos muestran generalización pobre y propongo mitigar con regularización; "
+        "reviso mi hipótesis inicial")
+    _eval_on(strong_sid, strong_aid)
+    strong_iv = _intervene_aid(strong_sid, strong_aid)
+    assert weak_iv["widget_type"] == "EvidenceComparison"
+    assert strong_iv["widget_type"] == "HypothesisEditor"
+
+    # predicción, evidencia y ayuda persisten en SQLite
+    for i, (wt, et) in enumerate([("LearningCurveSimulator", "predictionSubmitted"),
+                                  ("EvidenceComparison", "evidenceSelected"),
+                                  ("EvidenceComparison", "hintRequested")]):
+        r = client.post(f"/sessions/{weak_sid}/events",
+            json={"client_event_id": f"e2e-full-{i}", "widget_type": wt,
+                  "event_type": et, "payload": {"v": i}}, headers=H_S1).json()
+        assert r["deduped"] is False
+    assert TestingSession().query(models.UiEvent).filter(
+        models.UiEvent.session_id == weak_sid).count() >= 3
+
+    # la intervención se restaura al reanudar (spec completa, sin re-evaluar)
+    log = client.get(f"/sessions/{weak_sid}/interventions", headers=H_S1).json()
+    assert log[-1]["widget_type"] == weak_iv["widget_type"]
+    assert log[-1]["widget_parameters"]["title"]
+    assert log[-1]["socratic_question"]
+
+    # postest variante nueva + reflexión honesta
+    pt = client.post(f"/sessions/{weak_sid}/posttest",
+                     json={"answer_text": ""}, headers=H_S1).json()
+    assert pt["status"] == "begin" and pt["seed"] >= 100
+    sub = client.post(f"/sessions/{weak_sid}/posttest",
+                      json={"answer_text": "postest"}, headers=H_S1).json()
+    assert sub["status"] == "submitted"
+    done = client.post(f"/sessions/{weak_sid}/reflection",
+                       json={"text": "x"}, headers=H_S1).json()
+    assert done["status"] == "done" and "summary" in done

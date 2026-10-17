@@ -172,6 +172,24 @@ class LabSession {
       feedback = null;
       intervention = null;
       await loadHistory();
+      // Sprint 1: restaurar la última actividad al reanudar (sin re-evaluar ni gastar).
+      if (!posttestMode) {
+        try {
+          final ivs = await fetchJson('/sessions/$sessionId/interventions');
+          if (ivs.isNotEmpty) {
+            final last = Map<String, dynamic>.from(ivs.last as Map);
+            final params = last['widget_parameters'];
+            if (params is Map) {
+              intervention = {
+                'widget_type': last['widget_type'],
+                'widget_parameters': Map<String, dynamic>.from(params),
+                'socratic_question': last['socratic_question'],
+                'strategy': last['strategy'],
+              };
+            }
+          }
+        } catch (_) {}
+      }
       return true;
     } catch (_) {
       return false;
