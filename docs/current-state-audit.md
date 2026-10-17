@@ -94,3 +94,10 @@ Data Detective: inspector por fila (tipo + acción, diálogo con drafts) sin che
 honesta simulado-vs-real. Pendiente humano: deploy + HTTPS, video, deck,
 documento ético, piloto, critique Impeccable. Checkbox 4 de Sprint 5 queda sin
 marcar hasta el deploy real.
+
+## 17. Sprint 5.5 piloto — kit listo, ejecución pendiente (2026-10-17)
+
+`docs/piloto-protocolo.md`: consentimiento, guion comparable (3 labs),
+métricas sin causalidad, calibración Jev offline vía CSV anonimizado y tabla de
+hallazgos vacía. Checkbox 5 queda sin marcar hasta correr el piloto real y
+archivar §5 con fecha. Nada que ejecutar aquí gastaría datos reales.
