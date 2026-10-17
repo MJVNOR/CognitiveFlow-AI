@@ -366,4 +366,22 @@ void main() {
             (g[2] as Map)['match'] == true),
         isTrue);
   });
+
+  test('interventionToComponent: forma A2UI estable por widget', () {
+    for (final name in cognitiveFlowWidgets) {
+      final c = interventionToComponent({
+        'widget_type': name,
+        'widget_parameters': {'title': 'T'},
+        'socratic_question': 'q',
+      });
+      expect(c['id'], 'root');
+      expect(c['component'], name);
+    }
+    final unknown = interventionToComponent({
+      'widget_type': 'NoExiste',
+      'widget_parameters': {'title': 'T'},
+      'socratic_question': 'q',
+    });
+    expect(unknown['component'], 'SocraticQuestionCard');
+  });
 }

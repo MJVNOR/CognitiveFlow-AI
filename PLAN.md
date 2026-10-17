@@ -585,10 +585,10 @@ Respetar API preexistente; los nombres arriba son sugerencias, **no mandato de d
 - [x] Métricas de dominio SOLO de postests versionados; histórico con evidencia real y estados vacíos.
 
 ### Sprint 5 — Calidad de producto, investigación y entrega (P1/P2)
-- [ ] Aplicar `DESIGN.md`, Impeccable para critique/layout/typeset/polish/audit sobre capturas y builds Flutter, sin asumir parser Dart automático.
-- [ ] Test accesibilidad, keyboard, responsive y densidad de gráficos en pantallas similares a screenshots.
-- [ ] Pruebas de ownership instructor/student, postest sin IA y prompt injection, esquema A2UI, errores de proveedores y migraciones.
-- [ ] URL HTTPS real, persistencia SQLite, secrets, backup/restore, README, diagrama, video 5 min, deck, documento ético 3–5 páginas.
+- [ ] Aplicar `DESIGN.md`, Impeccable para critique/layout/typeset/polish sobre capturas y builds Flutter (auditoría técnica a nivel código hecha en §17; falta captura visual humana).
+- [x] Test accesibilidad, keyboard, responsive y densidad de gráficos en pantallas similares a screenshots.
+- [x] Pruebas de ownership instructor/student, postest sin IA y prompt injection, esquema A2UI, errores de proveedores y migraciones.
+- [ ] URL HTTPS real, video 5 min, deck, documento ético 3–5 páginas. (Hecho: persistencia SQLite, secrets por entorno, backup/restore, README, diagrama. Falta: deploy + HTTPS, video, deck, ético.)
 - [ ] Prueba exploratoria consentida con cuatro estudiantes; documentar hallazgos sin generalizaciones.
 
 ### DoD (aceptación obligatoria)

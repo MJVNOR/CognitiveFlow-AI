@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../models/models.dart';
 import '../session/lab_session.dart';
 import '../widgets/cards.dart';
+import '../widgets/theme.dart';
 
 class AcademyPage extends StatefulWidget {
   const AcademyPage({super.key});
@@ -46,9 +47,9 @@ class _AcademyState extends State<AcademyPage> {
     return switch (st) {
       'done' => (
           Icons.check_circle,
-          const Color(0xFF166534),
-          const Color(0xFFDCFCE7),
-          const Color(0xFF166534),
+          CognitiveColors.success,
+          CognitiveColors.successSoft,
+          CognitiveColors.success,
         ),
       'active' => (
           Icons.play_arrow,

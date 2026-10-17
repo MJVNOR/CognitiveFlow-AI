@@ -92,12 +92,20 @@ Data Detective: inspector por fila (tipo + acción, diálogo con drafts) sin che
 `.env.example` (backend, solo vars que el código lee), README con arquitectura
 (mermaid), contratos GenUI, tabla de tests, procedimiento backup/restore y tabla
 honesta simulado-vs-real. Pendiente humano: deploy + HTTPS, video, deck,
-documento ético, piloto, critique Impeccable. Checkbox 4 de Sprint 5 queda sin
+documento ético, piloto, critique visual Impeccable. Checkbox 4 de Sprint 5 queda sin
 marcar hasta el deploy real.
 
-## 17. Sprint 5.5 piloto — kit listo, ejecución pendiente (2026-10-17)
+## 17. Auditoría técnica Impeccable (2026-10-17, a nivel código — sin capturas)
 
-`docs/piloto-protocolo.md`: consentimiento, guion comparable (3 labs),
-métricas sin causalidad, calibración Jev offline vía CSV anonimizado y tabla de
-hallazgos vacía. Checkbox 5 queda sin marcar hasta correr el piloto real y
-archivar §5 con fecha. Nada que ejecutar aquí gastaría datos reales.
+| # | Dimensión | Score | Hallazgo clave |
+|---|---|---|---|
+| 1 | Accesibilidad | 3 | Contraste AA calculado en test; Semantics/header/liveRegion presentes; Tab y zoom 1.3 verificados. Sin manejo explícito de reduced-motion (no hay animaciones propias). |
+| 2 | Performance | 3 | Sin imágenes ni animaciones; gráficas acotadas (≤180 pts); sliders con `onChangeEnd`; tablas ≤30 filas (serie 180 colapsada). |
+| 3 | Theming | 3 | Tokens 1:1 con DESIGN §3 (test HEX + dark); única deriva (`success` duplicado en academia) unificada. Dark mode existe pero sin verificación visual. |
+| 4 | Responsive | 3 | Breakpoints 1100/900, columna única en móvil, sin anchos fijos rotos; botones ≥44 verificado. ChoiceChips ~32px (pasan WCAG AA 24px, bajo el recomendado 44 de DESIGN). |
+| 5 | Integridad | 4 | CATALOG 16/16 con test, sin TODO/lorem, etiquetas honestas (simulación/mock/pending). |
+| **Total** | | **16/20** | **Good** |
+
+Límite: sin capturas de build (no hay navegador en este entorno) — la parte visual
+de los checkboxes 1 queda para revisión humana. Tests: backend 75 passed /
+frontend 61 passed / analyze limpio.

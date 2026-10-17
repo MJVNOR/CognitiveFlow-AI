@@ -1451,3 +1451,26 @@ def test_recall_schedule_due_and_done():
     other = TestingSession().query(models.RecallItem).filter_by(
         student_id="s1", status="pending").first()
     assert client.post(f"/me/recall/{other.id}/done", headers=H_S2).status_code == 404
+
+
+# Sprint 5: la migración agrega columnas sin borrar datos (sin Alembic).
+def test_ensure_columns_adds_status_without_data_loss(tmp_path, monkeypatch):
+    import sqlalchemy as sa
+    import app.db as dbmod
+
+    url = f"sqlite:///{tmp_path}/old.db"
+    eng = sa.create_engine(url, connect_args={"check_same_thread": False})
+    with eng.begin() as c:
+        c.exec_driver_sql("CREATE TABLE learning_objectives "
+                          "(id VARCHAR PRIMARY KEY, lab_template_id VARCHAR)")
+        c.exec_driver_sql("CREATE TABLE auth_tokens (token VARCHAR PRIMARY KEY, user_id VARCHAR)")
+        c.exec_driver_sql("INSERT INTO learning_objectives (id, lab_template_id) "
+                          "VALUES ('x', 'lab-ml')")
+    monkeypatch.setattr(dbmod, "engine", eng)
+    dbmod.ensure_columns()
+    cols = [c["name"] for c in sa.inspect(eng).get_columns("learning_objectives")]
+    assert "status" in cols
+    assert [c["name"] for c in sa.inspect(eng).get_columns("auth_tokens")] == [
+        "token", "user_id", "created_at"]
+    with eng.connect() as c:
+        assert c.execute(sa.text("SELECT id FROM learning_objectives")).fetchall() == [("x",)]
