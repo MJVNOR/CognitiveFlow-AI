@@ -185,6 +185,17 @@ class _ProgressState extends State<ProgressPage> {
                           ],
                         ),
                       ),
+                    if ((prog[l.id]?['baseline'] as Map?)?.isNotEmpty == true ||
+                        (prog[l.id]?['posttest'] as Map?)?.isNotEmpty == true)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Text(
+                          (prog[l.id]?['mastery_status'] == 'demonstrated')
+                              ? 'Dominio demostrado con postest ✓'
+                              : 'Sin dominio demostrado todavía (la práctica no cuenta)',
+                          style: TextStyle(
+                              fontSize: 12, color: cs.onSurfaceVariant)),
+                      ),
                     ListTile(
                       dense: true,
                       trailing: const Icon(Icons.chevron_right),

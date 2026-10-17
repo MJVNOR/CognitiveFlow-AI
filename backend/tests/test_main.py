@@ -873,10 +873,12 @@ def test_progress_baseline_vs_posttest():
     ml = next(x for x in p if x["lab_template_id"] == "lab-ml")
     assert ml["attempts"] == 1 and ml["baseline"]["exactitud"] == 4
     assert ml["posttest"] is None and ml["status"] == "active"
+    assert ml["mastery"] is None and ml["mastery_status"] == "not_demonstrated"
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": "postest"}, headers=H_S1)
     ml2 = next(x for x in client.get("/me/progress", headers=H_S1).json()
                if x["lab_template_id"] == "lab-ml")
     assert ml2["posttest"] is not None and ml2["status"] == "posttest"
+    assert ml2["mastery"] == ml2["posttest"] and ml2["mastery_status"] == "demonstrated"
 
 
 def test_matrix_instructor_only_and_shaped():

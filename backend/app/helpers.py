@@ -142,4 +142,7 @@ def _lab_progress(db: Session, student_id: str, lab_template_id: str) -> dict:
         models.InstructorReview.attempt_id.in_(aids)).first())
     pending_review = bool(aids and not reviewed and (baseline or posttest))
     return {"status": s.status, "attempts": len(practice), "baseline": baseline,
-            "posttest": posttest, "reviewed": reviewed, "pending_review": pending_review}
+            "posttest": posttest, "reviewed": reviewed, "pending_review": pending_review,
+            # Sprint 4: el dominio SOLO lo demuestra el postest; la práctica no cuenta.
+            "mastery": posttest,
+            "mastery_status": "demonstrated" if posttest else "not_demonstrated"}
