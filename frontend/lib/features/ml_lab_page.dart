@@ -23,6 +23,7 @@ class _LabDetailState extends State<LabDetailPage> {
   double noise = 20;
   final hypo = TextEditingController();
   Map<String, dynamic>? curve;
+  List<Map<String, dynamic>>? objectives;
 
   int get seed => lab.posttestMode ? lab.variantSeed(99) : 1;
 
@@ -42,6 +43,14 @@ class _LabDetailState extends State<LabDetailPage> {
         return;
       }
     }
+    // Sprint 1: lección del objetivo (no bloquea el experimento si falla).
+    try {
+      final objs = await fetchJson('/labs/${widget.labId}/objectives');
+      if (!mounted) return;
+      setState(() => objectives = [
+            for (final o in objs) Map<String, dynamic>.from(o as Map)
+          ]);
+    } catch (_) {}
     await _loadCurve();
     final cx = await loadDraft(widget.labId, 'complexity');
     final nz = await loadDraft(widget.labId, 'noise');
@@ -133,6 +142,14 @@ class _LabDetailState extends State<LabDetailPage> {
     super.dispose();
   }
 
+  /// Miga Ruta > Módulo > Unidad derivada del objetivo (sin hardcodear textos).
+  String? _crumb() {
+    if (objectives == null || objectives!.isEmpty) return null;
+    final parts = '${objectives!.first['id']}'.split('-');
+    if (parts.length >= 2) return 'Módulo ${parts[0]} · Unidad ${parts[1]}';
+    return 'Unidad ${objectives!.first['id']}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final train = (curve?['train'] as List?)?.cast<num>() ?? [];
@@ -145,12 +162,17 @@ class _LabDetailState extends State<LabDetailPage> {
         lab.posttestMode ? null : cs.secondary;
     final controls = [
       LabHeader(
+        crumb: _crumb(),
         objective: lab.posttestMode
             ? 'Variante nueva. Sin pistas ni tutor hasta entregar.'
             : 'Predice el efecto de la complejidad y justifica por qué',
         step: lab.step,
       ),
       const SizedBox(height: 12),
+      if (objectives != null && objectives!.isNotEmpty)
+        ConceptPrimer(objective: objectives!.first),
+      if (objectives != null && objectives!.isNotEmpty)
+        const SizedBox(height: 12),
       if (lab.posttestMode) const PosttestBanner(),
       if (lab.posttestMode) const SizedBox(height: 12),
       SectionCard(
@@ -258,7 +280,8 @@ class _LabDetailState extends State<LabDetailPage> {
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!lab.posttestMode)
+        // Una sola acción principal: el postest solo aparece tras la primera evaluación.
+        if (!lab.posttestMode && (lab.evalResult != null || lab.intervention != null))
           TextButton(
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null
@@ -311,7 +334,7 @@ class _LabDetailState extends State<LabDetailPage> {
           constraints: const BoxConstraints(maxWidth: 1100),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (constraints.maxWidth >= 1024) {
+              if (constraints.maxWidth >= 1100) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -328,6 +351,43 @@ class _LabDetailState extends State<LabDetailPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Microlección del objetivo antes del reto (Sprint 1): concepto siempre
+/// visible + ejemplo resuelto colapsable para avanzados.
+class ConceptPrimer extends StatelessWidget {
+  final Map<String, dynamic> objective;
+  const ConceptPrimer({super.key, required this.objective});
+  @override
+  Widget build(BuildContext context) {
+    final steps =
+        (objective['worked_example_steps'] as List?)?.cast<String>() ?? [];
+    return SectionCard(
+      icon: Icons.menu_book_outlined,
+      title: 'El concepto en 1 minuto',
+      children: [
+        Text('${objective['title'] ?? ''}',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text('${objective['concept_summary'] ?? ''}'),
+        if (steps.isNotEmpty)
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text('Ver ejemplo resuelto',
+                style: TextStyle(fontSize: 13)),
+            children: [
+              for (var i = 0; i < steps.length; i++)
+                ListTile(
+                  dense: true,
+                  leading: Text('${i + 1}.'),
+                  title:
+                      Text(steps[i], style: const TextStyle(fontSize: 13)),
+                ),
+            ],
+          ),
+      ],
     );
   }
 }

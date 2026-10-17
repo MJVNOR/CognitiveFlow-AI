@@ -228,7 +228,8 @@ class _MonitorState extends State<MonitorLabPage> {
     final result = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (!lab.posttestMode)
+        if (!lab.posttestMode &&
+            (lab.evalResult != null || lab.intervention != null))
           TextButton(
             key: const ValueKey('go_posttest'),
             onPressed: lab.sessionId == null

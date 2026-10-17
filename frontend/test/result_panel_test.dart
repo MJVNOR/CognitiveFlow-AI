@@ -112,4 +112,30 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byKey(const ValueKey('tutor_history')), findsNothing);
   });
+
+  test('pasos con lenguaje de estudiante, sin jerga de orquestador', () {
+    expect(labStepLabels, hasLength(4));
+    for (final l in labStepLabels) {
+      expect(['Explorar', 'Evaluar', 'Intervenir', 'Postest'], isNot(contains(l)));
+    }
+  });
+
+  testWidgets('siguiente actividad con título real de la intervención', (tester) async {
+    final lab = LabSession()
+      ..socraticQ = '¿Qué curva cambió?'
+      ..intervention = {
+        'widget_type': 'EvidenceComparison',
+        'widget_parameters': {'title': 'Compara ambas curvas'},
+      };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Continuar: Compara ambas curvas'), findsOneWidget);
+    expect(find.text('Siguiente actividad'), findsNothing);
+  });
 }

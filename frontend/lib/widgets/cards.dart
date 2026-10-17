@@ -126,12 +126,17 @@ class LabSteps extends StatelessWidget {
 class LabHeader extends StatelessWidget {
   final String objective;
   final int step;
-  const LabHeader({super.key, required this.objective, required this.step});
+  final String? crumb;
+  const LabHeader({super.key, required this.objective, required this.step, this.crumb});
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (crumb != null)
+          Text(crumb!, style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        if (crumb != null) const SizedBox(height: 2),
         Text(objective, style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         LabSteps(current: step),
@@ -639,14 +644,21 @@ class ResultPanel extends StatelessWidget {
             ],
           ),
         if (lab.socraticQ.isNotEmpty || lab.tutorHistory.isNotEmpty) ...[
-          FilledButton.tonal(
-            key: const ValueKey('next_activity'),
-            onPressed: lab.nextBusy ? null : onNext,
-            style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
-            child: const SizedBox(
-                width: double.infinity,
-                child: Text('Siguiente actividad', textAlign: TextAlign.center)),
-          ),
+          Builder(builder: (context) {
+            // Título accionable desde la intervención real, nunca «Siguiente actividad» a secas.
+            final spec = lab.intervention?['widget_parameters'];
+            final ivTitle = spec is Map ? '${spec['title'] ?? ''}' : '';
+            return FilledButton.tonal(
+              key: const ValueKey('next_activity'),
+              onPressed: lab.nextBusy ? null : onNext,
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+              child: SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                      ivTitle.isNotEmpty ? 'Continuar: $ivTitle' : 'Ver mi siguiente actividad',
+                      textAlign: TextAlign.center)),
+            );
+          }),
           const Text('La evaluación es evidencia; la actividad sigue con el tutor.',
               style: TextStyle(fontSize: 12)),
         ] else if (lab.evalResult != null &&
@@ -742,5 +754,5 @@ String labStatusLabel(String? status) => switch (status) {
     };
 
 /// Ciclo compartido de un lab: sesión → intento → evaluar → intervenir → postest.
-const labStepLabels = ['Explorar', 'Evaluar', 'Intervenir', 'Postest'];
+const labStepLabels = ['Aprende el concepto', 'Prueba tu hipótesis', 'Explica lo que observaste', 'Aplica sin ayuda'];
 
