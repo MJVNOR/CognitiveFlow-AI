@@ -188,8 +188,8 @@ class _DockerState extends ConsumerState<DockerLabPage> {
         step: lab.step,
       ),
       const SizedBox(height: 12),
-      if (obj != null) ConceptPrimer(objective: obj),
-      if (obj != null) const SizedBox(height: 12),
+      if (obj != null && !lab.posttestMode) ConceptPrimer(objective: obj),
+      if (obj != null && !lab.posttestMode) const SizedBox(height: 12),
       if (lab.posttestMode) const PosttestBanner(),
       if (lab.posttestMode) const SizedBox(height: 12),
       SectionCard(

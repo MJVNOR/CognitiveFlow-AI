@@ -38,3 +38,6 @@ Google-Scholar-MCP-Server/
 
 # Config local de opencode (puede contener secrets de MCP en este equipo)
 opencode.json
+
+# Salida de las figuras (los PNG exportados sí se versionan)
+figures/out/

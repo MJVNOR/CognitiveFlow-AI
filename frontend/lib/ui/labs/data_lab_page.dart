@@ -273,7 +273,7 @@ class _DataLabState extends ConsumerState<DataLabPage> {
                 step: lab.step,
               ),
               const SizedBox(height: 12),
-              if (lab.objectives.isNotEmpty)
+              if (lab.objectives.isNotEmpty && !lab.posttestMode)
                 ConceptPrimer(objective: lab.objectives.first),
               if (lab.objectives.isNotEmpty)
                 const SizedBox(height: 12),
