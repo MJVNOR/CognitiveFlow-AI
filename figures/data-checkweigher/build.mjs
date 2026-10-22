@@ -26,6 +26,16 @@ figure({
     "La cinta trae seis puestos: dos llegan vacíos (faltan datos), uno trae la pieza repetida (duplicado) y uno trae una pieza que pega la aguja al tope (fuera de rango). Antes de calcular nada, hay que decidir qué hacer con cada uno.",
   label:
     "Una cinta transportadora sobre un banco con seis puestos. Dos puestos están vacíos, uno lleva dos piezas apiladas y el último, bajo un reloj comparador, lleva una pieza más grande que hace que la aguja marque el tope de la escala.",
+  // La aguja queda pegada al tope y tiembla contra él: no puede marcar más.
+  live: `
+const hub = part("hub").querySelector("circle");
+const HX = hub.getAttribute("cx");
+const HY = hub.getAttribute("cy");
+function pose(t) {
+  const a = -7 + 7 * Math.cos(t * Math.PI * 2);
+  part("needle").setAttribute("transform", "rotate(" + a.toFixed(2) + " " + HX + " " + HY + ")");
+}
+`,
   scene({ P, S, L, D }) {
     const out = [bench(P, PLATE, { grooveY: [-16] })];
 
@@ -86,10 +96,10 @@ figure({
     out.push(L(k.ring(d.x, d.y, d.r - 3.6, d.z + 10, P, 48), { tone: "faint" }));
     out.push(L(k.ring(d.x, d.y, d.r - 4.8, d.z + 10, P, 48), { tone: "faint" }));
     out.push(L(ticks.minor, { tone: "lo" }), L(ticks.major, { tone: "mid" }));
-    // Aguja al tope: marca el máximo de la escala.
+    // Aguja al tope: marca el máximo de la escala y tiembla contra el tope.
     const angle = -Math.PI * 0.28;
     out.push(
-      L(
+      `<g data-part="needle">${L(
         k.lineOnTop(
           [d.x - Math.sin(angle) * 3, d.y + Math.cos(angle) * 3],
           [d.x + Math.sin(angle) * (d.r - 2.6), d.y - Math.cos(angle) * (d.r - 2.6)],
@@ -97,11 +107,11 @@ figure({
           P,
         ),
         { tone: "hi", free: true },
-      ),
+      )}</g>`,
     );
     out.push(L(k.ring(d.x, d.y, 1.6, d.z + 10, P, 16), { tone: "mid" }));
     out.push(S(k.slabOf({ x: d.x + d.r - 1, y: -2.4, w: 4.6, d: 4.8, r: 1.2 }, d.z + 1, 4, P, 3, 0.4), { tone: "mid" }));
-    out.push(D([k.iso([d.x, d.y, d.z + 10.2], P)], { size: 0.4, tone: "hi" }));
+    out.push(`<g data-part="hub">${D([k.iso([d.x, d.y, d.z + 10.2], P)], { size: 0.4, tone: "hi" })}</g>`);
 
     return out.join("");
   },

@@ -10,7 +10,7 @@ const CASE = { x: -40, y: -14, w: 62, d: 30, r: 3 };
 const CASE_Z = 16;
 const STRIP = { x: -37, y: -11, w: 56, d: 24, r: 1 };
 const STRIP_Z = CASE_Z + 0.8;
-const BEAM_X = 12;
+const BEAM_X = 16;
 
 figure({
   id: "monitor-recorder",
@@ -25,6 +25,30 @@ figure({
     "Las dos plumas escriben a la vez sobre la misma cinta: una deriva despacio, sin que la métrica de negocio se mueva; la otra pega un escalón de golpe. Son dos problemas distintos y se detectan de forma distinta.",
   label:
     "Un registrador de cinta sobre un banco: una caja con el rollo de papel detrás, la cinta sobre la tapa y una brida con dos plumas. En la cinta, una traza baja despacio y la otra da un escalón y sigue plana.",
+  // La cinta corre bajo dos plumas quietas: la traza crece desde la pluma hacia
+  // la izquierda y al final se desvanece, así el bucle no da un salto.
+  live: `
+function pose(t) {
+  // 0: cinta escrita (el cartel) · se desvanece · vuelve a empezar.
+  const FADE0 = 0.14, CLEAR = 0.26;
+  let s = 1, fade = 1;
+  if (t < FADE0) {
+    s = 1;
+  } else if (t < CLEAR) {
+    fade = 1 - (t - FADE0) / (CLEAR - FADE0);
+  } else {
+    const u = (t - CLEAR) / (1 - CLEAR);
+    s = 1 - Math.pow(1 - u, 3);
+  }
+  for (const name of ["drift", "step"]) {
+    const path = part(name).querySelector("path");
+    const total = path.getTotalLength();
+    path.style.strokeDasharray = total;
+    path.style.strokeDashoffset = total * (1 - s);
+    path.parentNode.style.opacity = fade.toFixed(3);
+  }
+}
+`,
   scene({ P, S, L, D }) {
     const out = [bench(P, PLATE, { grooveY: [-16] })];
 
@@ -55,21 +79,22 @@ figure({
     out.push(S(k.cylinder(CASE.x + CASE.w + 6, -4, 2.6, 0, 1.4, P, 20), { tone: "mid" }));
 
     // --- las dos trazas sobre la cinta -------------------------------------
-    const trace = (valueAt, tone, extra = "") => {
+    const trace = (valueAt, tone) => {
       const points = [];
       const N = 40;
       for (let i = 0; i <= N; i++) {
         const t = i / N;
-        points.push([STRIP.x + 2 + t * (STRIP.w - 4), valueAt(t)]);
+        points.push([STRIP.x + 3 + t * (BEAM_X - STRIP.x - 3), valueAt(t)]);
       }
-      return k.onTop(points, STRIP_Z + 0.05 + extra, P);
+      // Se dibuja de derecha a izquierda: la pluma está quieta y la cinta corre.
+      return k.onTop(points.reverse(), STRIP_Z + 0.05, P);
     };
     // Deriva: baja despacio, sin escalón.
     const drift = (t) => -4 + 8 * t + 0.5 * Math.sin(t * 9);
     // Escalón: plana hasta la mitad y luego salta.
     const step = (t) => (t < 0.55 ? 2.5 + 0.25 * Math.sin(t * 12) : -3.5 + 0.25 * Math.sin(t * 12));
-    out.push(L(trace(drift, "faint"), { tone: "mid", className: "iso-trace" }));
-    out.push(L(trace(step), { tone: "hi", className: "iso-trace" }));
+    out.push(`<g data-part="drift">${L(trace(drift, "faint"), { tone: "mid", className: "iso-trace" })}</g>`);
+    out.push(`<g data-part="step">${L(trace(step), { tone: "hi", className: "iso-trace" })}</g>`);
 
     // --- brida con las dos plumas ------------------------------------------
     out.push(S(k.slabOf({ x: STRIP.x - 2, y: STRIP.y - 3, w: STRIP.w + 4, d: 3, r: 1 }, STRIP_Z, 2, P, 3, 0.3), { tone: "mid" }));

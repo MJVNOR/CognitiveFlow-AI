@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import * as k from "../kit/iso-kit.mjs";
 import * as G from "../kit/lathe.mjs";
 import { bench as benchPlate } from "../kit/bench.mjs";
-import { themeCss, FIGURE_CSS } from "../theme.mjs";
+import { figure } from "../kit/figure.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "..", "out");
@@ -88,23 +88,26 @@ function vise(cx) {
 }
 
 // Lo que cuelga del eje en cada cabezal: broca, portabrocas, husillo y caja.
+// Devuelve separado lo que baja al taladrar (broca, portabrocas, husillo) de la
+// caja, que se queda sujeta al eje.
 function spindleStack(cx) {
-  const out = [];
-  out.push(S(k.cylinder(cx, HEAD_Y, 1.2, WORK_TOP, CHUCK_Z - WORK_TOP, P, 14), { tone: "hi", crease: "none" }));
-  out.push(S(k.cylinder(cx, HEAD_Y, 6.4, CHUCK_Z, 8, P, 40), { tone: "hi", crease: "lo" }));
-  out.push(L(k.knurl(cx, HEAD_Y, 6.4, CHUCK_Z, CHUCK_Z + 8, 44, P, 0), { tone: "lo" }));
-  out.push(L(k.sideArc(cx, HEAD_Y, 6.4, CHUCK_Z + 1.4, P, 32), { tone: "faint" }));
-  out.push(S(k.cylinder(cx, HEAD_Y, 7.2, CHUCK_Z + 8, 2, P, 40), { tone: "mid" }));
-  out.push(L(k.ring(cx, HEAD_Y, 5.6, CHUCK_Z + 10, P, 32), { tone: "faint" }));
-  out.push(S(k.cylinder(cx, HEAD_Y, 2.6, CHUCK_Z + 10, BOX_Z - CHUCK_Z - 10, P, 24), { tone: "hi", crease: "none" }));
-  out.push(S(k.cylinder(cx, HEAD_Y, 4.4, BOX_Z - 5, 4, P, 24), { tone: "mid" }));
+  const moving = [];
+  moving.push(S(k.cylinder(cx, HEAD_Y, 1.2, WORK_TOP, CHUCK_Z - WORK_TOP, P, 14), { tone: "hi", crease: "none" }));
+  moving.push(S(k.cylinder(cx, HEAD_Y, 6.4, CHUCK_Z, 8, P, 40), { tone: "hi", crease: "lo" }));
+  moving.push(L(k.knurl(cx, HEAD_Y, 6.4, CHUCK_Z, CHUCK_Z + 8, 44, P, 0), { tone: "lo" }));
+  moving.push(L(k.sideArc(cx, HEAD_Y, 6.4, CHUCK_Z + 1.4, P, 32), { tone: "faint" }));
+  moving.push(S(k.cylinder(cx, HEAD_Y, 7.2, CHUCK_Z + 8, 2, P, 40), { tone: "mid" }));
+  moving.push(L(k.ring(cx, HEAD_Y, 5.6, CHUCK_Z + 10, P, 32), { tone: "faint" }));
+  moving.push(S(k.cylinder(cx, HEAD_Y, 2.6, CHUCK_Z + 10, BOX_Z - CHUCK_Z - 10, P, 24), { tone: "hi", crease: "none" }));
+  moving.push(S(k.cylinder(cx, HEAD_Y, 4.4, BOX_Z - 5, 4, P, 24), { tone: "mid" }));
   // Caja del cabezal: el eje se apoya arriba, en su tapa.
+  const out = [];
   const box = { x: cx - 7.5, y: HEAD_Y - 7.5, w: 15, d: 15, r: 1.4 };
   out.push(S(k.slabOf(box, BOX_Z, BOX_TOP - BOX_Z, P, 5, 0.6), { tone: "mid" }));
   out.push(L(k.planOutline(k.insetPlan(box, 1.5), BOX_TOP, P), { tone: "faint" }));
   out.push(L(k.lineOnTop([cx - 5.6, HEAD_Y - 7.5], [cx - 5.6, HEAD_Y + 7.5], BOX_Z, P), { tone: "faint" }));
   out.push(D([at([cx + 5, HEAD_Y + 5, BOX_TOP]), at([cx + 5, HEAD_Y - 5, BOX_TOP])], { size: 0.45 }));
-  return out.join("");
+  return { moving: moving.join(""), fixed: out.join("") };
 }
 
 // Tapa de apoyo del eje sobre cada caja: el eje entra dentro de ella.
@@ -205,11 +208,13 @@ function partsBin() {
 // ------------------------------------------------------------- composición
 // Lejos → cerca: banco, soportes del fondo, puestos, lo que cuelga, el eje y
 // por último las tapas y bornes que lo abrazan.
+const heads = HEAD_X.map((cx) => spindleStack(cx));
 const body = [
   bench(),
   ...(shared ? [pillowBracket(70)] : [partsBin()]),
   ...HEAD_X.map((cx) => vise(cx)),
-  ...HEAD_X.map((cx) => spindleStack(cx)),
+  ...heads.map((head) => `<g data-part="head">${head.moving}</g>`),
+  ...heads.map((head) => head.fixed),
   shared ? lineShaft() : "",
   ...HEAD_X.map((cx) => bearingCap(cx)),
   shared ? pillowBlock(70) : "",
@@ -217,40 +222,42 @@ const body = [
   ...(shared ? [] : HEAD_X.map((cx) => motorCan(cx, HEAD_Y, BOX_TOP))),
 ].join("");
 
-const svg = k.figureSvg({
+figure({
+  id: `d01-kernel-${mode}`,
+  extent: k.boxCorners(PLATE, PLATE_Z - FEET, tall),
+  title: shared ? "Un motor, tres cabezales" : "Tres motores, tres cabezales",
+  readout: shared ? "1 motor · 3 cabezales" : "3 motores · 3 cabezales",
   width: WIDTH,
   height: HEIGHT,
+  keys: shared
+    ? [
+        { mark: "lit", label: "El motor: única fuente; si se para, se paran los tres" },
+        { mark: "raised", label: "Reductor y eje de línea con dos soportes" },
+        { mark: "raised", label: "Tres cabezales colgados del mismo eje" },
+      ]
+    : [
+        { mark: "lit", label: "Tres motores: cada cabezal trae el suyo" },
+        { mark: "raised", label: "Sin eje, sin soportes, sin fuente común" },
+      ],
+  caption: shared
+    ? "Un motor sube por un reductor y mueve un eje del que cuelgan tres cabezales: comparten el movimiento. Si el motor cambia o se para, los tres cambian con él."
+    : "Tres cabezales, cada uno con su propio motor encima: cada uno funciona y se para por su cuenta, y cada uno carga con el coste de tener su máquina completa.",
   label: shared
     ? "Un banco de taladros por eje de línea: un solo motor sube por un reductor y mueve un eje del que cuelgan tres cabezales, que comparten esa única fuente de movimiento."
     : "Tres cabezales de taladro independientes: cada uno lleva encima su propio motor y su propia caja, sin eje ni fuente de movimiento compartida.",
-  body,
+  // Compartido: los tres bajan a la vez. Propio: cada cabezal lleva su ritmo.
+  live: `
+const RATES = ${JSON.stringify(shared ? [1, 1, 1] : [1, 1.6, 0.62])};
+const PHASES = ${JSON.stringify(shared ? [0, 0, 0] : [0, 0.34, 0.67])};
+function pose(t) {
+  parts("head").forEach((head, index) => {
+    const u = (t * RATES[index] + PHASES[index]) % 1;
+    const lift = 7 * (0.5 - 0.5 * Math.cos(u * Math.PI * 2));
+    head.setAttribute("transform", mov(0, 0, lift));
+  });
+}
+`,
+  scene() {
+    return body;
+  },
 });
-
-const keys = shared
-  ? [
-      { mark: "lit", label: "El motor: única fuente; si se para, se paran los tres" },
-      { mark: "raised", label: "Reductor y eje de línea con dos soportes" },
-      { mark: "raised", label: "Tres cabezales colgados del mismo eje" },
-    ]
-  : [
-      { mark: "lit", label: "Tres motores: cada cabezal trae el suyo" },
-      { mark: "raised", label: "Sin eje, sin soportes, sin fuente común" },
-    ];
-
-const caption = shared
-  ? "Un motor sube por un reductor y mueve un eje del que cuelgan tres cabezales: comparten el movimiento. Si el motor cambia o se para, los tres cambian con él."
-  : "Tres cabezales, cada uno con su propio motor encima: cada uno funciona y se para por su cuenta, y cada uno carga con el coste de tener su máquina completa.";
-
-const name = `d01-kernel-${mode}${theme === "light" ? "-light" : ""}`;
-const plate = k.plateHtml({
-  fig: shared ? "Fig 1" : "Fig 2",
-  title: shared ? "Un motor, tres cabezales" : "Tres motores, tres cabezales",
-  hint: "",
-  readout: shared ? "1 motor · 3 cabezales" : "3 motores · 3 cabezales",
-  keys,
-  caption,
-  body: `<div class="iso-stage">${svg}</div>`,
-});
-const html = k.pageHtml({ title: plate, theme, body: plate }).replace("</head>", `<style>${themeCss(theme)}${FIGURE_CSS}</style></head>`);
-writeFileSync(join(OUT, `${name}.html`), html);
-console.log("wrote", join(OUT, `${name}.html`));

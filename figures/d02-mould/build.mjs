@@ -22,6 +22,13 @@ figure({
     "El molde queda montado y vuelve a cerrarse igual en cada ciclo; la pieza sale, se usa y se descarta. La imagen es el molde; el contenedor es la pieza.",
   label:
     "Un molde de dos placas montado en un banco, con su husillo y cuatro columnas. Una pieza recién colada descansa sobre el banco y otras dos están en una caja: el molde se reutiliza, las piezas se van.",
+  // La tapa sube y baja: cada ciclo abre, saca la pieza y vuelve a cerrar.
+  live: `
+function pose(t) {
+  const lift = 13 * (0.5 - 0.5 * Math.cos(t * Math.PI * 2));
+  part("cope").setAttribute("transform", mov(0, 0, lift));
+}
+`,
   scene({ P, S, L, D }) {
     const out = [bench(P, PLATE, { grooveY: [-16] })];
 
@@ -60,16 +67,18 @@ figure({
       out.push(S(k.cylinder(px, py, 2.4, 0, 30, P, 20), { tone: "mid", crease: "none" }));
       out.push(S(k.cylinder(px, py, 3.6, 26, 2, P, 20), { tone: "mid" }));
     }
-    out.push(S(k.slabOf(cope, 30, 7, P, 6, 0.8), { tone: "mid" }));
-    out.push(L(k.planOutline(k.insetPlan(cope, 2), 37, P), { tone: "faint" }));
-    out.push(D([k.iso([cope.x + 4, cope.y + 4, 37], P), k.iso([cope.x + cope.w - 4, cope.y + 4, 37], P)], { size: 0.45 }));
+    const copeParts = [];
+    copeParts.push(S(k.slabOf(cope, 30, 7, P, 6, 0.8), { tone: "mid" }));
+    copeParts.push(L(k.planOutline(k.insetPlan(cope, 2), 37, P), { tone: "faint" }));
+    copeParts.push(D([k.iso([cope.x + 4, cope.y + 4, 37], P), k.iso([cope.x + cope.w - 4, cope.y + 4, 37], P)], { size: 0.45 }));
     // Husillo de cierre con su volante estriado.
-    out.push(S(k.cylinder(x, 0, 4.6, 37, 4, P, 24), { tone: "mid" }));
-    out.push(S(k.cylinder(x, 0, 4.2, 41, 2.4, P, 24), { tone: "mid" }));
-    out.push(S(k.cylinder(x, 0, 7.6, 43.4, 3.4, P, 36), { tone: "hi", crease: "lo" }));
-    out.push(L(k.knurl(x, 0, 7.6, 43.4, 46.8, 40, P, 0), { tone: "lo" }));
-    out.push(L(k.sideArc(x, 0, 7.6, 43.4, P, 32), { tone: "faint" }));
-    out.push(L(k.lineOnTop([x - 7.6, 0], [x + 7.6, 0], 46.8, P), { tone: "mid" }));
+    copeParts.push(S(k.cylinder(x, 0, 4.6, 37, 4, P, 24), { tone: "mid" }));
+    copeParts.push(S(k.cylinder(x, 0, 4.2, 41, 2.4, P, 24), { tone: "mid" }));
+    copeParts.push(S(k.cylinder(x, 0, 7.6, 43.4, 3.4, P, 36), { tone: "hi", crease: "lo" }));
+    copeParts.push(L(k.knurl(x, 0, 7.6, 43.4, 46.8, 40, P, 0), { tone: "lo" }));
+    copeParts.push(L(k.sideArc(x, 0, 7.6, 43.4, P, 32), { tone: "faint" }));
+    copeParts.push(L(k.lineOnTop([x - 7.6, 0], [x + 7.6, 0], 46.8, P), { tone: "mid" }));
+    out.push(`<g data-part="cope">${copeParts.join("")}</g>`);
 
     // --- la pieza ya sacada, sobre el banco --------------------------------
     castPart(-4, 4, 0);

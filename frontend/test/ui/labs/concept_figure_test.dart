@@ -36,7 +36,7 @@ void main() {
             widget is Image &&
             widget.image is AssetImage &&
             (widget.image as AssetImage).assetName ==
-                '${variant.asset}-light.png'),
+                '${variant.asset}-light.webp'),
         findsOneWidget,
       );
     }
@@ -69,7 +69,7 @@ void main() {
       find.byWidgetPredicate((widget) =>
           widget is Image &&
           widget.image is AssetImage &&
-          (widget.image as AssetImage).assetName.endsWith('-dark.png')),
+          (widget.image as AssetImage).assetName.endsWith('-dark.webp')),
       findsNWidgets(figure.variants.length),
     );
   });
@@ -97,14 +97,14 @@ void main() {
     expect(find.text('Sin figura.'), findsOneWidget);
   });
 
-  test('cada figura del mapa tiene su PNG claro y oscuro', () async {
+  test('cada figura del mapa tiene su WebP claro y oscuro', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     for (final entry in labFigures.entries) {
       for (final variant in entry.value.variants) {
         for (final theme in ['light', 'dark']) {
-          final data = await rootBundle.load('${variant.asset}-$theme.png');
+          final data = await rootBundle.load('${variant.asset}-$theme.webp');
           expect(data.lengthInBytes, greaterThan(1000),
-              reason: '${variant.asset}-$theme.png (${entry.key})');
+              reason: '${variant.asset}-$theme.webp (${entry.key})');
         }
         expect(variant.caption.trim(), isNotEmpty, reason: entry.key);
         expect(variant.alt.trim(), isNotEmpty, reason: entry.key);

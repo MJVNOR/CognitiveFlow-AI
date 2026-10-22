@@ -22,6 +22,13 @@ figure({
     "Las capas de abajo ya están hechas y se reutilizan tal cual. Solo la capa que cambia se reconstruye: por eso el COPY del código va al final del Dockerfile.",
   label:
     "Una pila de placas de acero bajo una brida: las tres de abajo descansan ya montadas y la cuarta, la de arriba, es la única marcada. A la derecha, las tres capas de abajo se guardan en una bandeja para reutilizarlas.",
+  // La capa de arriba se levanta y vuelve a apoyarse: es la única que se rehace.
+  live: `
+function pose(t) {
+  const lift = 9 * (0.5 - 0.5 * Math.cos(t * Math.PI * 2));
+  part("toplayer").setAttribute("transform", mov(0, 0, lift));
+}
+`,
   scene({ P, S, L, D }) {
     const out = [bench(P, PLATE, { grooveY: [-16] })];
 
@@ -53,9 +60,10 @@ figure({
       out.push(S(k.slabOf({ x: x - 17, y: -12, w: 34, d: 24, r: 1 }, z, thick, P, 5, 0.5), { tone: "hi", crease: "lo" }));
       z += thick;
     }
-    // La capa que cambia, marcada.
-    out.push(S(k.slabOf({ x: x - 17, y: -12, w: 34, d: 24, r: 1 }, z, 4, P, 5, 0.5), { tone: "hi", lit: true, crease: "lo" }));
-    out.push(L(k.planOutline(k.insetPlan({ x: x - 17, y: -12, w: 34, d: 24, r: 1 }, 2.4), z + 4, P), { tone: "faint" }));
+    // La capa que cambia, marcada: se levanta para que se vea que se rehace.
+    out.push(
+      `<g data-part="toplayer">${S(k.slabOf({ x: x - 17, y: -12, w: 34, d: 24, r: 1 }, z, 4, P, 5, 0.5), { tone: "hi", lit: true, crease: "lo" })}${L(k.planOutline(k.insetPlan({ x: x - 17, y: -12, w: 34, d: 24, r: 1 }, 2.4), z + 4, P), { tone: "faint" })}</g>`,
+    );
     z += 4;
     // --- bandeja con la terna reutilizada ---------------------------------
     const tray = TRAY;

@@ -59,7 +59,7 @@ class _VariantTile extends StatelessWidget {
         AspectRatio(
           aspectRatio: _figureAspect,
           child: Image.asset(
-            '${variant.asset}-${dark ? 'dark' : 'light'}.png',
+            '${variant.asset}-${dark ? 'dark' : 'light'}.webp',
             fit: BoxFit.contain,
             semanticLabel: variant.alt,
             excludeFromSemantics: false,

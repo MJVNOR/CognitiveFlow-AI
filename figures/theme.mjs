@@ -32,5 +32,5 @@ export const FIGURE_CSS = `
 .iso-pad>.iso-fill{fill:var(--fig-pad)}
 .iso-pad>.iso-bevel{stroke:var(--anatomy-lo)}
 .iso-liquid{}.iso-liquid>.iso-top,.iso-liquid>.iso-fill{fill:var(--fig-liquid)}
-.iso-trace{stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.iso-trace{stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
 `;
