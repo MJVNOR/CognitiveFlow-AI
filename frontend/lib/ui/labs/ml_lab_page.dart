@@ -1,18 +1,27 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../ui/labs/view_models/lab_session_viewmodel.dart';
-import '../../ui/core/widgets/chrome.dart';
+import '../../ui/core/motion.dart';
 import '../../ui/core/widgets/strings.dart';
-import '../../ui/labs/widgets/lab_chrome.dart';
-import '../../ui/labs/widgets/posttest.dart';
-import '../../ui/labs/widgets/reflection.dart';
-import '../../ui/labs/widgets/result_panel.dart';
+import '../../ui/labs/ml/ml_missions.dart';
+import '../../ui/labs/view_models/lab_session_viewmodel.dart';
 import '../../ui/labs/widgets/concept_primer.dart';
 import '../../ui/labs/widgets/curve_chart.dart';
+import '../../ui/core/widgets/chrome.dart' show ParamSlider;
+import '../../ui/labs/widgets/lab_chrome.dart' show sessionMeta;
+import '../../ui/labs/widgets/posttest.dart';
+import '../../ui/labs/workspace/contextual_tutor_panel.dart';
+import '../../ui/labs/workspace/learning_feedback.dart';
+import '../../ui/labs/workspace/learning_studio.dart';
+import '../../ui/labs/workspace/mission_navigation.dart';
+import '../../ui/labs/workspace/studio_stages.dart';
 
-/// View del lab ML (MVVM): estado efímero local (sliders, controllers,
-/// curva) en el State; ciclo de sesión en [LabSessionViewModel].
+/// Lab de curvas de aprendizaje en el Learning Studio: predecir → experimentar
+/// → justificar (envío + evaluación) → reto GenUI del servidor → prueba sin ayuda.
+/// Simulación sintética (no entrena un modelo real): se etiqueta como tal.
 class LabDetailPage extends ConsumerStatefulWidget {
   final String labId;
   final String title;
@@ -22,26 +31,57 @@ class LabDetailPage extends ConsumerStatefulWidget {
 }
 
 class _LabDetailState extends ConsumerState<LabDetailPage> {
-  final statusKey = GlobalKey();
   double complexity = 5;
   double noise = 20;
+  final prediction = TextEditingController();
   final hypo = TextEditingController();
+  final hintsShown = <String, int>{};
+  final titleFocus = FocusNode(debugLabel: 'mission-title');
+  final scrollCtrl = ScrollController();
   Map<String, dynamic>? curve;
   List<num>? savedVal;
   String? savedLabel;
   double epochSel = 0;
+  int? markedEpoch;
 
-  LabSessionViewModel get _vm =>
-      ref.read(labSessionProvider(widget.labId).notifier);
-  LabSession get _lab => ref.watch(labSessionProvider(widget.labId));
+  bool ready = false;
+  int mission = 0;
+  int localMax = 0;
 
-  int get seed => _lab.posttestMode ? _lab.variantSeed(99) : 1;
+  LabSessionViewModel get _vm => ref.read(labSessionProvider(widget.labId).notifier);
+  LabSession get lab => ref.watch(labSessionProvider(widget.labId));
+  LabSession get _snap => ref.read(labSessionProvider(widget.labId));
+
+  int get seed => _snap.posttestMode ? _snap.variantSeed(99) : 1;
+
+  /// El postest usa su propio borrador: nunca hereda la justificación de práctica.
+  String _k(String field) => _snap.posttestMode ? 'post_$field' : field;
+
+  static const _draftFields = [
+    'complexity', 'noise', 'hypo', 'prediction', 'mission_max', 'hints', 'epoch', 'post_hypo',
+  ];
 
   @override
   void initState() {
     super.initState();
-    hypo.addListener(() => _vm.saveDraft(widget.labId, 'hypo', hypo.text));
+    prediction.addListener(() {
+      _vm.saveDraft(widget.labId, 'prediction', prediction.text);
+      setState(() {});
+    });
+    hypo.addListener(() {
+      _vm.saveDraft(widget.labId, _k('hypo'), hypo.text);
+      setState(() {});
+    });
     _init();
+  }
+
+  @override
+  void dispose() {
+    prediction.dispose();
+    hypo.dispose();
+    titleFocus.dispose();
+    scrollCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -49,103 +89,151 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
     if (!await _vm.resume(widget.labId)) {
       await _vm.init(widget.labId);
       if (!mounted) return;
-      if (ref.read(labSessionProvider(widget.labId)).sessionId == null) {
-        setState(() {});
+      if (_snap.sessionId == null) {
+        setState(() => ready = true);
         return;
       }
     }
-    // Sprint 1: lección del objetivo (no bloquea el experimento si falla).
     await _vm.loadObjectives(widget.labId);
+    await _restoreDrafts();
+    // En postest manda la variante del servidor, no el borrador.
+    final v = _snap.posttestVariant;
+    if (_snap.posttestMode && v != null) _applyVariant(v);
     await _loadCurve();
-    final cx = await _vm.loadDraft(widget.labId, 'complexity');
-    final nz = await _vm.loadDraft(widget.labId, 'noise');
-    final h = await _vm.loadDraft(widget.labId, 'hypo');
     if (!mounted) return;
     setState(() {
-      if (cx != null) complexity = double.tryParse(cx) ?? complexity;
-      if (nz != null) noise = double.tryParse(nz) ?? noise;
-      if (h != null) hypo.text = h;
+      mission = studioDefaultMission(mlMissions, _snap, localMax);
+      ready = true;
     });
-    if (cx != null || nz != null) await _loadCurve();
-    // En postest manda la variante del servidor, no el borrador.
-    final v = ref.read(labSessionProvider(widget.labId)).posttestVariant;
-    final posttestMode =
-        ref.read(labSessionProvider(widget.labId)).posttestMode;
-    if (posttestMode && v != null) {
-      if (!mounted) return;
-      setState(() {
-        complexity = (v['complexity'] as num).toDouble();
-        noise = (v['noise_pct'] as num).toDouble();
-      });
-      await _loadCurve();
+  }
+
+  Future<void> _restoreDrafts() async {
+    final cx = await _vm.loadDraft(widget.labId, 'complexity');
+    final nz = await _vm.loadDraft(widget.labId, 'noise');
+    final h = await _vm.loadDraft(widget.labId, _k('hypo'));
+    final p = await _vm.loadDraft(widget.labId, 'prediction');
+    final mm = await _vm.loadDraft(widget.labId, 'mission_max');
+    final hs = await _vm.loadDraft(widget.labId, 'hints');
+    final ep = await _vm.loadDraft(widget.labId, 'epoch');
+    if (!mounted) return;
+    complexity = double.tryParse(cx ?? '') ?? complexity;
+    noise = double.tryParse(nz ?? '') ?? noise;
+    if (h != null) hypo.text = h;
+    if (p != null) prediction.text = p;
+    localMax = int.tryParse(mm ?? '') ?? 0;
+    markedEpoch = int.tryParse(ep ?? '');
+    if (hs != null && hs.isNotEmpty) {
+      try {
+        hintsShown.addAll(Map<String, int>.from(jsonDecode(hs) as Map));
+      } catch (_) {}
     }
+    // Sin borrador local: la evidencia enviada vive en el servidor.
+    final last = _snap.lastInput;
+    if (!_snap.posttestMode && last != null) {
+      complexity = (last['complexity'] as num?)?.toDouble() ?? complexity;
+      noise = (last['noise_pct'] as num?)?.toDouble() ?? noise;
+      final extra = last['extra'];
+      if (extra is Map) {
+        if (prediction.text.isEmpty && extra['prediction'] is String) {
+          prediction.text = extra['prediction'] as String;
+        }
+        markedEpoch ??= (extra['epoch'] as num?)?.toInt();
+      }
+      if (hypo.text.isEmpty) hypo.text = '${last['answer_text'] ?? ''}';
+    }
+  }
+
+  void _applyVariant(Map v) {
+    complexity = (v['complexity'] as num?)?.toDouble() ?? complexity;
+    noise = (v['noise_pct'] as num?)?.toDouble() ?? noise;
   }
 
   Future<void> _loadCurve() async {
     try {
-      final c = await _vm.fetchCurve(
-        widget.labId,
-        complexity.round(),
-        noise.round(),
-        seed,
-      );
+      final c = await _vm.fetchCurve(widget.labId, complexity.round(), noise.round(), seed);
       if (!mounted) return;
       setState(() => curve = c);
     } catch (e) {
-      _vm.setStatus('Error curva: $e');
+      _vm.setStatus('No se pudieron cargar las curvas: $e');
     }
   }
 
-  Future<void> _send() async {
-    final lab = ref.read(labSessionProvider(widget.labId));
-    if (lab.sessionId == null || lab.evaluating) return;
-    if (hypo.text.trim().isEmpty) {
-      _vm.setStatus(lab.posttestMode
-          ? 'El diagnóstico es obligatorio'
-          : 'La hipótesis es obligatoria');
-      return;
-    }
-    _vm.setEvaluating(true);
+  // ── Navegación ───────────────────────────────────────────────────────────
+  void _goto(int i) {
+    setState(() {
+      mission = i;
+      if (_snap.attemptId == null && i <= mlJustify && i > localMax) localMax = i;
+    });
+    _vm.saveDraft(widget.labId, 'mission_max', '$localMax');
     _vm.setStatus('');
+    // Foco al título de la nueva misión (lector de pantalla y teclado).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) titleFocus.requestFocus();
+    });
+  }
+
+  Future<void> _emit(String event, Map<String, Object?> payload) async {
     try {
-      await _vm.send({
+      await _vm.emitEvent('LearningCurveSimulator', event, payload);
+    } catch (_) {
+      // La evidencia también viaja en el intento; un evento perdido no la borra.
+    }
+  }
+
+  void _registerPrediction() {
+    _emit('predictionSubmitted', {'prediction': prediction.text});
+    _goto(mlExperiment);
+  }
+
+  void _markEvidence() {
+    final e = epochSel.round();
+    setState(() => markedEpoch = e);
+    _vm.saveDraft(widget.labId, 'epoch', '$e');
+    _emit('evidenceSelected', {
+      'epoch': e,
+      'complexity': complexity.round(),
+      'noise_pct': noise.round(),
+      'mode': _snap.posttestMode ? 'posttest' : 'practice',
+    });
+  }
+
+  void _hint() {
+    final id = mlMissions[mission].id;
+    final n = (hintsShown[id] ?? 0) + 1;
+    setState(() => hintsShown[id] = n);
+    _vm.saveDraft(widget.labId, 'hints', jsonEncode(hintsShown));
+    _emit('hintRequested', {'mission': id, 'level': n});
+  }
+
+  // ── Envío, evaluación e intervención ─────────────────────────────────────
+  Map<String, dynamic> _attempt() => {
         'complexity': complexity.round(),
         'noise_pct': noise.round(),
         'seed': seed,
         'answer_text': hypo.text,
-      }, posttest: lab.posttestMode);
-      _vm.markDelivered(
-          posttest:
-              ref.read(labSessionProvider(widget.labId)).posttestMode,
-          savedMessage: 'Guardado ✓ (simulación, sin IA)',
-          posttestMessage: 'Postest entregado (sin ayuda de IA)');
-      if (!ref.read(labSessionProvider(widget.labId)).posttestMode) {
-        await _vm.evaluate();
-      }
+        'extra': {
+          if (!_snap.posttestMode) 'prediction': prediction.text,
+          if (markedEpoch != null) 'epoch': markedEpoch,
+        },
+      };
+
+  Future<void> _submitPractice() async {
+    final s = _snap;
+    if (s.sessionId == null || s.evaluating) return;
+    _vm.setEvaluating(true);
+    _vm.setStatus('');
+    try {
+      await _vm.send(_attempt(), posttest: false);
     } catch (e) {
       _vm.setEvaluating(false);
-      _vm.setStatus('Error envío: $e');
+      _vm.setStatus('No se pudo enviar: $e. Tu respuesta sigue aquí; vuelve a intentarlo.');
+      return;
     }
+    await _vm.evaluate();
+    _vm.setEvaluating(false);
   }
 
-  /// Sprint 3: la época marcada queda en ui_events como evidencia seleccionada.
-  Future<void> _markEvidence() async {
-    final lab = ref.read(labSessionProvider(widget.labId));
-    if (lab.sessionId == null) return;
-    try {
-      await _vm.emitEvent('LearningCurveSimulator', 'evidenceSelected', {
-        'epoch': epochSel.round(),
-        'complexity': complexity.round(),
-        'noise_pct': noise.round(),
-        'mode': lab.posttestMode ? 'posttest' : 'practice',
-      });
-      _vm.setStatus('Evidencia guardada: época ${epochSel.round()}');
-    } catch (e) {
-      _vm.setStatus('No se guardó la evidencia: $e');
-    }
-  }
-
-  Future<void> _retry() async {
+  Future<void> _retryEval() async {
     _vm.setEvaluating(true);
     await _vm.evaluate();
     _vm.setEvaluating(false);
@@ -155,72 +243,340 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
     _vm.setNextBusy(true);
     await _vm.next();
     _vm.setNextBusy(false);
+    if (mounted && _snap.intervention != null) _goto(mlScenario);
   }
 
-  @override
-  void dispose() {
-    hypo.dispose();
-    super.dispose();
+  bool get scenarioDone => lab.canEnterPosttest;
+
+  Future<void> _onScenarioEvent(String wt, String et, Map<String, Object?> payload) async {
+    final before = _snap.canEnterPosttest;
+    try {
+      await _vm.emitEvent(wt, et, payload); // refresca el permiso del postest
+    } catch (e) {
+      _vm.setStatus('No se guardó tu respuesta: $e. Vuelve a enviarla.');
+      return;
+    }
+    if (!before && _snap.canEnterPosttest) _vm.setStatus('Respuesta guardada ✓');
   }
 
-  /// Miga Ruta > Módulo > Unidad derivada del objetivo (sin hardcodear textos).
-  String? _crumb() => labCrumb(_lab.objectives);
+  Future<void> _beginPosttest() => confirmEnterPosttestVm(context, _vm, () async {
+        setState(() {
+          hypo.text = '';
+          savedVal = null;
+          markedEpoch = null;
+          epochSel = 0;
+        });
+        await _loadCurve();
+        if (mounted) _goto(mlMastery);
+      }, () {
+        final v = _snap.posttestVariant;
+        if (v != null) setState(() => _applyVariant(v));
+      });
+
+  Future<void> _sendPosttest() async {
+    final s = _snap;
+    if (s.sessionId == null || s.evaluating) return;
+    _vm.setEvaluating(true);
+    try {
+      await _vm.send(_attempt(), posttest: true);
+      _vm.markDelivered(posttest: true, posttestMessage: 'Prueba entregada (sin ayuda de IA)');
+    } catch (e) {
+      _vm.setEvaluating(false);
+      _vm.setStatus('No se pudo entregar: $e. Tu respuesta sigue aquí.');
+    }
+  }
+
+  // ── Vistas ───────────────────────────────────────────────────────────────
+  bool get _postPhase => inPosttestPhase(lab);
+  bool get _submitted => lab.attemptId != null;
+  bool get _editable => !_submitted && !_postPhase;
 
   @override
   Widget build(BuildContext context) {
-    final lab = _lab;
-    final train = (curve?['train'] as List?)?.cast<num>() ?? [];
-    final val = (curve?['val'] as List?)?.cast<num>() ?? [];
-    final sent = lab.posttestSent;
-    // P4.1: variante fijada por el servidor; en postest no se toca.
-    final locked = sent || lab.posttestMode;
-    final cs = Theme.of(context).colorScheme;
-    final experimentAccent =
-        lab.posttestMode ? null : cs.secondary;
-    final controls = [
-      LabHeader(
-        crumb: _crumb(),
-        meta: sessionMeta(lab),
-        objective: lab.posttestMode
-            ? 'Variante nueva. Sin pistas ni tutor hasta entregar.'
-            : 'Predice el efecto de la complejidad y justifica por qué',
-        step: lab.step,
-      ),
-      const SizedBox(height: 12),
-      if (lab.objectives.isNotEmpty && !lab.posttestMode)
-        ConceptPrimer(objective: lab.objectives.first),
-      if (lab.objectives.isNotEmpty)
-        const SizedBox(height: 12),
-      if (lab.posttestMode) const PosttestBanner(),
-      if (lab.posttestMode) const SizedBox(height: 12),
-      SectionCard(
-        icon: Icons.science,
-        title: '1 · Experimenta con las curvas',
-        accent: experimentAccent,
-        trailing: curve?['simulated'] == true
+    final l = lab;
+    if (!ready) return const Center(child: CircularProgressIndicator());
+    if (l.sessionId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(l.status.isEmpty ? 'No se pudo abrir el laboratorio.' : l.status),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () {
+                setState(() => ready = false);
+                _init();
+              },
+              child: const Text('Reintentar'),
+            ),
+          ]),
+        ),
+      );
+    }
+    final views = studioMissionViews(mlMissions, l,
+        localMax: localMax, scenarioDone: scenarioDone, selected: mission);
+    final m = mlMissions[mission];
+    final module = l.objectives.isEmpty
+        ? 'Machine Learning'
+        : 'Módulo ${'${l.objectives.first['id']}'.split('-').first}';
+    return LearningStudioScaffold(
+      stageScroll: scrollCtrl,
+      stageKey: ValueKey('scroll-$mission-${l.posttestMode}'),
+      header: StudioHeader(
+        backRoute: '/labs',
+        crumbs: [('Academia', '/academy'), (module, null), (widget.title, null)],
+        title: '¿Aprende o memoriza?',
+        missionLabel: 'Misión ${mission + 1} de ${mlMissions.length} · ${m.title}',
+        meta: _postPhase ? null : sessionMeta(l),
+        done: views.where((v) => v.status == MissionStatus.done).length,
+        total: mlMissions.length,
+        trailing: l.posttestMode
             ? const Chip(
-                label: Text(Strings.simulated,
-                    style: TextStyle(fontSize: 11)),
+                avatar: Icon(Icons.lock_outline, size: 14),
+                label: Text('Prueba sin ayuda', style: TextStyle(fontSize: 12)),
                 visualDensity: VisualDensity.compact,
               )
             : null,
-        children: [
-          if (train.isEmpty && val.isEmpty && lab.status.isNotEmpty)
-            Row(
-              children: [
-                Expanded(child: Text(lab.status)),
-                TextButton(onPressed: _loadCurve, child: const Text(Strings.retry)),
-              ],
+      ),
+      stage: KeyedSubtree(
+        key: ValueKey('stage-$mission-${l.posttestMode}'),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          MissionIntro(mission: m, focusNode: titleFocus),
+          _stage(l),
+        ]),
+      ).enterMission(context, ValueKey('enter-$mission-${l.posttestMode}')),
+      tutor: _tutor(l, m),
+      tutorSummary: l.socraticQ.isNotEmpty
+          ? l.socraticQ
+          : mlCoach(m.id, markedEpoch: markedEpoch, submitted: _submitted),
+      actionBar: _actionBar(l) ?? const SizedBox.shrink(),
+      missions: MissionNavigation(missions: views, selected: mission, onSelect: _goto),
+    );
+  }
+
+  Widget _tutor(LabSession l, Mission m) {
+    final locked = l.posttestMode || (mission == mlMastery && !l.done);
+    final hints = (_editable || mission == mlScenario) && !locked
+        ? (mlHints[m.id] ?? const <String>[])
+        : const <String>[];
+    return ContextualTutorPanel(
+      locked: locked,
+      guidance: mlCoach(m.id,
+          markedEpoch: markedEpoch, savedRun: savedVal != null, submitted: _submitted),
+      hypothesis: mission == mlPredict ? null : prediction.text,
+      hints: hints,
+      hintsShown: hintsShown[m.id] ?? 0,
+      onHint: _hint,
+      evidence: [
+        if (markedEpoch != null)
+          TutorEvidence('Época $markedEpoch', 'donde la validación se despega'),
+        if (savedLabel != null) TutorEvidence('Corrida guardada', savedLabel!),
+      ],
+      question: mission == mlScenario
+          ? '${l.intervention?['socratic_question'] ?? ''}'
+          : (_submitted ? l.socraticQ : null),
+      questionWhy: mission == mlScenario ? '${l.intervention?['reason'] ?? ''}' : null,
+      history: l.tutorHistory,
+    );
+  }
+
+  Widget? _actionBar(LabSession l) {
+    final status = l.status.isEmpty ? null : l.status;
+    ActivityActionBar bar(String label, IconData icon, VoidCallback? onPressed,
+            {String? helper, bool busy = false, required String key}) =>
+        ActivityActionBar(
+          buttonKey: ValueKey(key),
+          label: label,
+          icon: icon,
+          onPressed: onPressed,
+          helper: status ?? helper,
+          busy: busy,
+        );
+    final frontier = studioDefaultMission(mlMissions, l, localMax);
+    final backToCurrent = bar('Volver a la misión actual', Icons.arrow_forward,
+        () => _goto(frontier),
+        key: 'ml_back_current',
+        helper: 'Esta misión ya está entregada: puedes revisarla sin cambiarla.');
+    switch (mission) {
+      case mlPredict:
+        if (!_editable) return backToCurrent;
+        final ok = prediction.text.trim().isNotEmpty;
+        return bar('Registrar predicción', Icons.lightbulb_outline,
+            ok ? _registerPrediction : null,
+            key: 'ml_cta_predict',
+            helper: ok
+                ? 'Tu predicción queda guardada; la contrastarás con las curvas.'
+                : 'Escribe qué esperas antes de mirar las curvas.');
+      case mlExperiment:
+        if (!_editable) return backToCurrent;
+        return bar('Continuar a justificar', Icons.edit_note,
+            markedEpoch == null ? null : () => _goto(mlJustify),
+            key: 'ml_cta_experiment',
+            helper: markedEpoch == null
+                ? 'Marca la época donde se despegan las curvas como evidencia.'
+                : 'Evidencia registrada: época $markedEpoch.');
+      case mlJustify:
+        if (_postPhase) return backToCurrent;
+        if (!_submitted) {
+          final ok = hypo.text.trim().isNotEmpty;
+          return bar('Evaluar mi razonamiento', Icons.fact_check_outlined,
+              ok ? _submitPractice : null,
+              key: 'ml_send',
+              busy: l.evaluating,
+              helper: l.evaluating
+                  ? 'Evaluando tu razonamiento…'
+                  : ok
+                      ? 'Se envían tu predicción, la época marcada y tu justificación.'
+                      : 'Escribe tu justificación citando las dos curvas.');
+        }
+        final r = l.evalResult;
+        if (l.evaluating) {
+          return bar('Evaluando…', Icons.fact_check_outlined, null,
+              key: 'ml_send', busy: true, helper: 'Evaluando tu razonamiento…');
+        }
+        if (r == null || r['status'] == 'pending' || l.evalError != null) {
+          return bar('Reintentar evaluación', Icons.refresh, _retryEval,
+              key: 'ml_retry_eval',
+              helper: l.evalError ?? 'Tu intento está guardado; falta la evaluación.');
+        }
+        if (l.intervention != null) {
+          return bar('Ir al nuevo escenario', Icons.auto_awesome, () => _goto(mlScenario),
+              key: 'ml_goto_scenario');
+        }
+        return bar('Explorar nuevo desafío', Icons.auto_awesome, _next,
+            key: 'next_activity',
+            busy: l.nextBusy,
+            helper: l.nextError ?? 'El tutor elegirá el reto según esta evaluación.');
+      case mlScenario:
+        if (_postPhase) return backToCurrent;
+        if (!scenarioDone) return null; // la CTA es la del propio widget GenUI
+        return bar('Demostrar dominio', Icons.verified_outlined, () => _goto(mlMastery),
+            key: 'ml_goto_mastery', helper: 'Ya puedes hacer la prueba sin ayuda.');
+      default:
+        if (!l.posttestMode) {
+          return bar('Comenzar prueba sin ayuda', Icons.lock_outline,
+              l.canEnterPosttest ? _beginPosttest : null,
+              key: 'ml_begin_posttest',
+              helper: 'Curvas nuevas, sin tutor. No podrás volver a la práctica.');
+        }
+        if (!l.posttestSent) {
+          final ok = hypo.text.trim().isNotEmpty;
+          return bar('Entregar prueba', Icons.send, ok ? _sendPosttest : null,
+              key: 'ml_send',
+              busy: l.evaluating,
+              helper: ok ? null : 'Escribe tu diagnóstico antes de entregar.');
+        }
+        if (!l.done) return null; // la reflexión lleva su propio botón
+        return bar('Volver a la academia', Icons.school_outlined,
+            () => context.go('/academy'),
+            key: 'ml_to_academy');
+    }
+  }
+
+  Widget _stage(LabSession l) => switch (mission) {
+        mlPredict => _predictStage(l),
+        mlExperiment => _experimentStage(l, locked: !_editable),
+        mlJustify => _justifyStage(l),
+        mlScenario =>
+          ScenarioStage(lab: l, scenarioDone: scenarioDone, onEvent: _onScenarioEvent),
+        _ => _masteryStage(l),
+      };
+
+  Widget _predictStage(LabSession l) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cs.primaryContainer.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text(
+          'Situación: un equipo entrena un modelo cada vez más complejo y el error en '
+          'entrenamiento sigue bajando. Antes de desplegarlo, quieren saber si de verdad '
+          'aprendió o solo memorizó. Tú vas a averiguarlo con sus curvas.',
+          style: TextStyle(height: 1.45),
+        ),
+      ),
+      if (l.objectives.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Material(
+            color: cs.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: cs.outlineVariant),
             ),
+            clipBehavior: Clip.antiAlias,
+            child: ExpansionTile(
+              key: const ValueKey('ml_concept'),
+              initiallyExpanded: l.level == 'needs_foundation',
+              leading: Icon(Icons.menu_book_outlined, color: cs.primary),
+              title: const Text('El concepto en 1 minuto',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text('${l.objectives.first['title'] ?? ''}'),
+              childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              children: [ConceptPrimer(objective: l.objectives.first)],
+            ),
+          ),
+        ),
+      StudioCard(
+        title: 'Tu predicción',
+        icon: Icons.lightbulb_outline,
+        accent: cs.tertiary,
+        child: TextField(
+          key: const ValueKey('ml_prediction'),
+          controller: prediction,
+          enabled: _editable,
+          minLines: 2,
+          maxLines: 4,
+          decoration: InputDecoration(
+              // Ya enviada: sin pista visible, la etiqueta da nombre al lector de pantalla.
+              labelText: _editable ? null : 'Tu respuesta (enviada)',
+            hintText: 'Si subo la complejidad, el error de validación… porque…',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _experimentStage(LabSession l, {required bool locked}) {
+    final train = (curve?['train'] as List?)?.cast<num>() ?? [];
+    final val = (curve?['val'] as List?)?.cast<num>() ?? [];
+    final variant = l.posttestMode;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      StudioCard(
+        title: variant ? 'Curvas de la prueba' : 'Curvas de entrenamiento y validación',
+        icon: Icons.show_chart,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (curve?['simulated'] == true)
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Chip(
+                label: Text(Strings.simulated, style: TextStyle(fontSize: 11)),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          if (curve == null && l.status.isNotEmpty)
+            Row(children: [
+              Expanded(child: Text(l.status)),
+              TextButton(onPressed: _loadCurve, child: const Text(Strings.retry)),
+            ]),
           AccessibleCurveChart(
             train: train,
             val: val,
             val2: savedVal,
-            height: 220,
-            label: lab.posttestMode ? 'Curvas del postest' : 'Curvas de pérdida',
+            height: 240,
+            label: variant ? 'Curvas del postest' : 'Curvas de pérdida',
           ),
-          const SizedBox(height: 12),
-          // P4.1: variante fijada por el servidor; en postest no se toca.
+        ]),
+      ),
+      StudioCard(
+        title: variant ? 'Variante fijada por el servidor' : 'Controles del experimento',
+        icon: Icons.tune,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           ParamSlider(
             label: 'Complejidad del modelo',
             value: '${complexity.round()} / 10',
@@ -229,8 +585,8 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
             min: 1,
             max: 10,
             divisions: 9,
-            onChanged: locked ? null : (v) => setState(() => complexity = v),
-            onChangeEnd: locked
+            onChanged: locked || variant ? null : (v) => setState(() => complexity = v),
+            onChangeEnd: locked || variant
                 ? null
                 : (_) {
                     _loadCurve();
@@ -245,8 +601,8 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
             min: 0,
             max: 50,
             divisions: 10,
-            onChanged: locked ? null : (v) => setState(() => noise = v),
-            onChangeEnd: locked
+            onChanged: locked || variant ? null : (v) => setState(() => noise = v),
+            onChangeEnd: locked || variant
                 ? null
                 : (_) {
                     _loadCurve();
@@ -263,162 +619,130 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
               min: 0,
               max: (train.length - 1).toDouble(),
               divisions: train.length > 1 ? train.length - 1 : 1,
-              onChanged: locked ? null : (v) => setState(() => epochSel = v),
+              onChanged: locked && !variant ? null : (v) => setState(() => epochSel = v),
               onChangeEnd: null,
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.tonal(
-                  key: const ValueKey('ml_mark_evidence'),
-                  onPressed:
-                      lab.sessionId == null || sent ? null : _markEvidence,
-                  child: const Text('Marcar época como evidencia'),
-                ),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              FilledButton.tonal(
+                key: const ValueKey('ml_mark_evidence'),
+                onPressed: (locked && !variant) || l.posttestSent ? null : _markEvidence,
+                child: Text(markedEpoch == epochSel.round()
+                    ? 'Evidencia: época $markedEpoch ✓'
+                    : 'Marcar época ${epochSel.round()} como evidencia'),
+              ),
+              if (!variant)
                 OutlinedButton(
                   key: const ValueKey('ml_save_run'),
-                  onPressed: curve == null
+                  onPressed: curve == null || locked
                       ? null
                       : () => setState(() {
                             savedVal = List<num>.from(val);
-                            savedLabel =
-                                'C${complexity.round()}·R${noise.round()}';
+                            savedLabel = 'complejidad ${complexity.round()} · ruido ${noise.round()} %';
                           }),
-                  child: Text(savedVal == null
-                      ? 'Guardar corrida'
-                      : 'Guardada: $savedLabel (reemplazar)'),
+                  child: Text(savedVal == null ? 'Guardar corrida para comparar' : 'Reemplazar corrida guardada'),
                 ),
-                if (savedVal != null)
-                  TextButton(
-                    key: const ValueKey('ml_clear_run'),
-                    onPressed: () => setState(() => savedVal = null),
-                    child: const Text('Quitar guardada'),
-                  ),
-              ],
-            ),
+            ]),
           ],
-        ],
+        ]),
       ),
-      const SizedBox(height: 12),
-      SectionCard(
-        icon: Icons.edit_note,
-        title: '2 · Predice y justifica',
-        accent: lab.posttestMode ? null : cs.tertiary,
-        children: [
-          TextField(
-            key: const ValueKey('ml_hypo'),
-            controller: hypo,
-            maxLines: 4,
-            minLines: 3,
-            enabled: !sent,
-            decoration: InputDecoration(
-              labelText: lab.posttestMode
-                  ? 'Tu diagnóstico y justificación *'
-                  : 'Hipótesis / justificación (obligatoria)',
-              helperText: lab.posttestMode
-                  ? 'Cita ambas curvas y tu decisión.'
-                  : 'Predice qué pasa al subir la complejidad y cita las dos curvas.',
-              border: const OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (!sent)
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                key: const ValueKey('ml_send'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 48),
-                ),
-                onPressed: lab.evaluating ? null : _send,
-                child: Text(lab.posttestMode
-                    ? Strings.deliverPosttest
-                    : Strings.sendAttempt),
-              ),
-            ),
-        ],
-      ),
-      const SizedBox(height: 12),
-    ];
-    final result = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Una sola acción principal: el postest solo aparece tras la primera evaluación.
-        if (!lab.posttestMode && (lab.evalResult != null || lab.intervention != null))
-          TextButton(
-            key: const ValueKey('go_posttest'),
-            onPressed: lab.sessionId == null
+    ]);
+  }
+
+  Widget _justifyStage(LabSession l) {
+    final cs = Theme.of(context).colorScheme;
+    final r = l.evalResult;
+    final interventionTitle = '${(l.intervention?['widget_parameters'] as Map?)?['title'] ?? ''}';
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (l.evaluating && r == null)
+        const EvaluatingCard(detail: 'El evaluador está revisando tu predicción y tu justificación.'),
+      if (r != null && _submitted)
+        StudioCard(
+          title: 'Resultado de tu intento',
+          icon: Icons.fact_check_outlined,
+          child: LearningFeedbackView(
+            evalResult: r,
+            feedback: l.feedback,
+            strengthEvidence: markedEpoch == null
                 ? null
-                : () => confirmEnterPosttestVm(context, _vm, _loadCurve, () {
-                      final v = ref
-                          .read(labSessionProvider(widget.labId))
-                          .posttestVariant;
-                      if (v != null) {
-                        setState(() {
-                          complexity = (v['complexity'] as num).toDouble();
-                          noise = (v['noise_pct'] as num).toDouble();
-                        });
-                      }
-                    }),
-            child: const Text(Strings.goPosttestNoAI),
+                : 'Anclaste tu explicación en la época $markedEpoch',
+            revisit: l.socraticQ,
+            nextExperiment: interventionTitle.isNotEmpty
+                ? 'Reto elegido: $interventionTitle'
+                : 'Al continuar, el tutor elegirá un escenario nuevo según estas brechas.',
+            onRetry: _retryEval,
           ),
-        if (!lab.posttestMode &&
-            (lab.evalResult != null ||
-                lab.evaluating ||
-                lab.evalError != null ||
-                lab.intervention != null))
-          SectionCard(
-            icon: Icons.fact_check,
-            title: '3 · Evidencia y siguiente paso',
-            children: [
-              ResultPanel(lab: lab, onNext: _next, onRetry: _retry, onEvent: _vm.emitEvent),
-            ],
-          ),
-        if (!lab.posttestMode &&
-            lab.evalResult == null &&
-            !lab.evaluating &&
-            lab.evalError == null &&
-            lab.intervention == null)
-          ResultPanel(lab: lab, onNext: _next, onRetry: _retry),
-        if (lab.posttestMode && sent)
-          PosttestReflection(
-              lab: lab,
-              labId: widget.labId,
-              onUpdate: () {
-                if (ref.read(labSessionProvider(widget.labId)).done) {
-                  _vm.clearDrafts(widget.labId, const ['complexity', 'noise', 'hypo']);
-                }
-                _vm.touch();
-              }),
-        StatusText(lab.status, key: statusKey),
-      ],
-    );
-    return Scaffold(
-      appBar: DoubleTitleBar(
-          title: widget.title, backRoute: '/labs', posttest: lab.posttestMode),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth >= 1100) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: ListView(padding: const EdgeInsets.all(16), children: controls)),
-                    SizedBox(
-                      width: (constraints.maxWidth * 0.35).clamp(320.0, 420.0),
-                      child: ListView(padding: const EdgeInsets.all(16), children: [result]),
-                    ),
-                  ],
-                );
-              }
-              return ListView(padding: const EdgeInsets.all(16), children: [...controls, result]);
-            },
+        ).enterNote(context, const ValueKey('ml-feedback')),
+      StudioCard(
+        title: 'Lo que observaste',
+        icon: Icons.push_pin_outlined,
+        child: Text(
+          markedEpoch == null
+              ? 'Aún no marcas una época. Vuelve a «Experimenta con las curvas».'
+              : 'Época $markedEpoch con complejidad ${complexity.round()} y ruido ${noise.round()} %'
+                  '${savedLabel == null ? '' : '; comparada con la corrida ($savedLabel)'}.',
+        ),
+      ),
+      if (prediction.text.trim().isNotEmpty)
+        StudioCard(
+          title: 'Tu predicción inicial',
+          icon: Icons.lightbulb_outline,
+          accent: cs.tertiary,
+          child: Text('«${prediction.text.trim()}» — ¿se confirmó, cambió o faltó algo?',
+              style: const TextStyle(fontStyle: FontStyle.italic)),
+        ),
+      StudioCard(
+        title: 'Justifica con las dos curvas',
+        icon: Icons.edit_note,
+        accent: cs.tertiary,
+        child: TextField(
+          key: const ValueKey('ml_hypo'),
+          controller: hypo,
+          enabled: _editable,
+          minLines: 4,
+          maxLines: 8,
+          decoration: InputDecoration(
+              // Ya enviada: sin pista visible, la etiqueta da nombre al lector de pantalla.
+              labelText: _editable ? null : 'Tu respuesta (enviada)',
+            hintText: 'Predije… / Observé (época, curvas)… / Causa… / Qué haría…',
+            border: OutlineInputBorder(),
           ),
         ),
       ),
-    );
+    ]);
+  }
+
+  Widget _masteryStage(LabSession l) {
+    if (!l.posttestMode) {
+      return const PosttestRulesCard(novelty: 'Curvas nuevas con otra complejidad y ruido.');
+    }
+    if (l.posttestSent) {
+      return PosttestClosing(
+        lab: l,
+        labId: widget.labId,
+        onUpdate: () {
+          if (_snap.done) _vm.clearDrafts(widget.labId, _draftFields);
+          _vm.touch();
+        },
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const PosttestBanner(),
+      const SizedBox(height: 16),
+      _experimentStage(l, locked: true),
+      StudioCard(
+        title: 'Tu diagnóstico',
+        icon: Icons.edit_note,
+        child: TextField(
+          key: const ValueKey('ml_hypo'),
+          controller: hypo,
+          minLines: 3,
+          maxLines: 8,
+          decoration: const InputDecoration(
+            hintText: '¿Aprende o memoriza? Cita ambas curvas y la época, y di qué harías.',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+    ]);
   }
 }

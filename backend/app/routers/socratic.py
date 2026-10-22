@@ -15,6 +15,7 @@ from app.helpers import (
     _lab_type,
     _practice_attempts,
     _require_active,
+    submit_count,
 )
 from app.interventions import (
     ALLOWED_BY_WIDGET,
@@ -128,6 +129,8 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     if errors or intervention["widget_type"] not in CATALOG:
         return await safe_intervention(f"ui_spec inválida: {errors}")
     # P1.1: contrato versionado — el cliente valida tipo, versión y eventos.
+    # Lo que delataría la respuesta (p. ej. tipos a contrastar) vive solo en el log.
+    private = intervention.pop("_private", None)
     intervention["schema_version"] = SCHEMA_VERSION
     intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])
     # F5: audit trail — qué estrategia se decidió por intento (append-only).
@@ -141,6 +144,12 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
                                       "widget_parameters": intervention["widget_parameters"],
                                       "socratic_question": intervention.get("socratic_question"),
                                       "strategy": intervention["strategy"],
-                                      "reason": intervention.get("reason")})))
+                                      "reason": intervention.get("reason"),
+                                      "decided_by": intervention.get("decided_by"),
+                                      "activity": intervention.get("activity"),
+                                      "activity_params": intervention.get("activity_params"),
+                                      "private": private,
+                                      "submits_before": submit_count(
+                                          db, session_id, intervention["widget_type"])})))
     db.commit()
     return intervention

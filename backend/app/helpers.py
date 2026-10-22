@@ -54,6 +54,42 @@ def _phase(db: Session, session) -> str:
     return "intervencion" if nev else "evaluacion"
 
 
+def _can_enter_posttest(db: Session, session) -> bool:
+    """UX: postest solo tras intento evaluado + respuesta al último reto GenUI
+    (o ya en postest). «Respuesta» = el evento de entrega que ese widget emite;
+    un widget sin entrega (p. ej. SocraticQuestionCard) cuenta al mostrarse."""
+    from app.interventions import SUBMIT_EVENT
+
+    if session.status in ("posttest", "done"):
+        return True
+    evaluated = any(
+        e.status == "evaluated"
+        for a in _practice_attempts(db, session.id)
+        for e in db.query(models.EvaluationResult).filter_by(attempt_id=a.id).all())
+    ivs = db.query(models.InterventionLog).filter_by(session_id=session.id).all()
+    if not evaluated or not ivs:
+        return False
+    if ivs[-1].widget_type not in SUBMIT_EVENT:
+        return True
+    try:
+        before = int(json.loads(ivs[-1].spec_json).get("submits_before", 0))
+    except (ValueError, TypeError, AttributeError):
+        before = 0
+    # Solo cuentan entregas posteriores al reto (la práctica puede usar el mismo widget).
+    return submit_count(db, session.id, ivs[-1].widget_type) > before
+
+
+def submit_count(db: Session, session_id: str, widget_type: str) -> int:
+    """Entregas registradas de ese widget en la sesión (según su evento de entrega)."""
+    from app.interventions import SUBMIT_EVENT
+
+    if widget_type not in SUBMIT_EVENT:
+        return 0
+    return db.query(models.UiEvent).filter_by(
+        session_id=session_id, widget_type=widget_type,
+        event_type=SUBMIT_EVENT[widget_type]).count()
+
+
 def _posttest_variant(session_id: str) -> dict:
     """P4.1: variante equivalente pero nueva por sesión (determinista)."""
     h = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)

@@ -2,6 +2,7 @@
 // El backend sigue emitiendo ui_spec validada; aquí se traduce a mensajes
 // createSurface/updateComponents y se alimenta al SurfaceController local.
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:a2ui_core/a2ui_core.dart' as core;
 import 'package:flutter/material.dart';
@@ -32,11 +33,28 @@ Map<String, Object?> interventionToComponent(Map intervention) {
 
   final props = switch (type) {
     'EvidenceComparison' => {'title': title, 'evidence': question},
-    'HypothesisEditor' => {'title': title, 'hypothesis': question},
+    'HypothesisEditor' => {
+        'title': title,
+        'hypothesis': question,
+        if (paramNum('complexity') != null) 'complexity': paramNum('complexity'),
+        if (params['curve'] is Map) 'curve': params['curve'],
+      },
+    // Docker: el escenario (sin respuestas) lo genera el servidor por unidad y semilla.
+    'ContainerVsVmExplorer' ||
+    'ImageContainerLifecycle' ||
+    'DockerfileWorkbench' ||
+    'PersistenceExperiment' =>
+      {
+        'title': title,
+        'question': question,
+        for (final k in const ['scenarios', 'ask_stage', 'options', 'lines', 'app', 'story', 'path'])
+          if (params[k] != null) k: params[k],
+      },
     'DataTableExplorer' => {
         'title': title,
         'hint': question,
         if (params['n_rows'] is num) 'n_rows': params['n_rows'],
+        if (params['rows'] is List) 'rows': params['rows'],
       },
     'DriftDistributionExplorer' => {
         'title': title,
@@ -93,7 +111,8 @@ class _TutorSurfaceState extends State<TutorSurface> {
   void didUpdateWidget(covariant TutorSurface old) {
     super.didUpdateWidget(old);
     TutorEvents.emit = widget.onEvent;
-    if (!identical(old.intervention, widget.intervention)) {
+    // Por contenido: cada emit del VM copia el mapa y no debe reiniciar el widget.
+    if (jsonEncode(old.intervention) != jsonEncode(widget.intervention)) {
       _transport.addMessage(core.A2uiMessage.fromJson({
         'version': 'v0.9',
         'updateComponents': {

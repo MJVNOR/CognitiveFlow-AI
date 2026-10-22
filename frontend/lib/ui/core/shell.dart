@@ -26,6 +26,15 @@ class ThemeToggleButton extends ConsumerWidget {
 
 const _shellTabs = ['/academy', '/labs', '/progress', '/instructor'];
 
+/// Rail compacto (solo iconos) para ceder ancho al laboratorio.
+class RailCollapsed extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void toggle() => state = !state;
+}
+
+final railCollapsedProvider = NotifierProvider<RailCollapsed, bool>(RailCollapsed.new);
+
 class Shell extends ConsumerWidget {
   final String location;
   final Widget child;
@@ -44,7 +53,9 @@ class Shell extends ConsumerWidget {
       await ref.read(authProvider.notifier).logout();
       if (context.mounted) context.go('/login');
     }
-    final isInstructor = ref.watch(authProvider)?.isStudent == false;
+    final auth = ref.watch(authProvider);
+    final isInstructor = auth?.isStudent == false;
+    final collapsed = ref.watch(railCollapsedProvider);
     final tabs = isInstructor ? _shellTabs : _shellTabs.sublist(0, 3);
     final sel = _index >= tabs.length ? 0 : _index;
 
@@ -56,7 +67,14 @@ class Shell extends ConsumerWidget {
         final rail = NavigationRail(
           selectedIndex: sel,
           onDestinationSelected: go,
-          labelType: NavigationRailLabelType.all,
+          labelType: collapsed ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+          minWidth: collapsed ? 56 : 72,
+          leading: IconButton(
+            key: const ValueKey('nav_collapse'),
+            tooltip: collapsed ? 'Expandir navegación' : 'Compactar navegación',
+            icon: Icon(collapsed ? Icons.menu : Icons.menu_open),
+            onPressed: () => ref.read(railCollapsedProvider.notifier).toggle(),
+          ),
           useIndicator: true,
           backgroundColor: cs.surface,
           indicatorColor: cs.primaryContainer,
@@ -108,12 +126,32 @@ class Shell extends ConsumerWidget {
         );
         return Scaffold(
           appBar: AppBar(
-            title: const Text(
-              Strings.appTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            title: Row(children: [
+              Icon(Icons.hub_outlined, color: cs.primary),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text(
+                  Strings.appTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
             actions: [
+              if (auth != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Tooltip(
+                    message: auth.isStudent ? 'Estudiante ${auth.userId}' : 'Instructor ${auth.userId}',
+                    child: CircleAvatar(
+                      key: const ValueKey('nav_profile'),
+                      radius: 16,
+                      backgroundColor: cs.primaryContainer,
+                      child: Text(auth.userId.toUpperCase(),
+                          style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer)),
+                    ),
+                  ),
+                ),
               const ThemeToggleButton(),
               if (!wide)
                 IconButton(

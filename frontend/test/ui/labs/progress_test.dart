@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cognitiveflow/domain/models/models.dart';
 import 'package:cognitiveflow/ui/academy/view_models/academy_viewmodel.dart';
 import 'package:cognitiveflow/ui/labs/widgets/reflection.dart';
-import 'package:cognitiveflow/ui/labs/widgets/result_panel.dart';
+import 'package:cognitiveflow/ui/labs/workspace/learning_feedback.dart';
 import 'package:cognitiveflow/ui/labs/view_models/lab_session.dart';
 import 'package:cognitiveflow/utils/criteria.dart';
 
@@ -54,52 +54,55 @@ void main() {
     expect(find.textContaining('sin evidencias para comparar'), findsOneWidget);
   });
 
-  testWidgets('feedback con texto muestra tarjeta Tu avance', (tester) async {
-    final lab = LabSession()
-      ..evalResult = {
-        'evaluator': 'gemini',
-        'status': 'evaluated',
-        'criteria': [
-          {'id': 'exactitud', 'score': 4},
-        ],
-      }
-      ..socraticQ = '¿Qué curva?'
-      ..feedback = {
-        'fortaleza': 'exactitud',
-        'brecha': 'evidencia',
-        'texto': 'Vas bien en exactitud; cita las curvas.',
-        'provider': 'gemini',
-      };
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+  testWidgets('feedback redactado por Gemini se muestra; números solo bajo demanda',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LearningFeedbackView(
+            evalResult: const {
+              'evaluator': 'mock',
+              'status': 'evaluated',
+              'criteria': [
+                {'id': 'exactitud', 'score': 4},
+                {'id': 'evidencia', 'score': 1},
+              ],
+            },
+            feedback: const {
+              'fortaleza': 'exactitud',
+              'brecha': 'evidencia',
+              'texto': 'Vas bien en exactitud; cita las curvas.',
+              'provider': 'gemini',
+            },
+            nextExperiment: 'Reto elegido: Compara ambas curvas',
+          ),
         ),
       ),
-    );
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Tu avance'), findsOneWidget);
-    expect(find.text('Vas bien en exactitud; cita las curvas.'), findsOneWidget);
+    ));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Vas bien en exactitud; cita las curvas.'), findsOneWidget);
+    expect(find.text('4 / 4'), findsNothing);
   });
 
-  testWidgets('feedback mock sin texto no duplica el resumen', (tester) async {
-    final lab = LabSession()
-      ..evalResult = {
-        'evaluator': 'mock',
-        'status': 'evaluated',
-        'criteria': [
-          {'id': 'exactitud', 'score': 2},
-        ],
-      }
-      ..feedback = {'fortaleza': 'exactitud', 'brecha': null, 'texto': null};
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ResultPanel(lab: lab, onNext: () {}, onRetry: () {}),
+  testWidgets('feedback mock sin texto no inventa un resumen', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LearningFeedbackView(
+            evalResult: const {
+              'evaluator': 'mock',
+              'status': 'evaluated',
+              'criteria': [
+                {'id': 'exactitud', 'score': 2},
+              ],
+            },
+            feedback: const {'fortaleza': 'exactitud', 'texto': 'Vas bien en exactitud', 'provider': 'mock'},
+            nextExperiment: 'x',
+          ),
         ),
       ),
-    );
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Tu avance'), findsNothing);
+    ));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Vas bien en exactitud'), findsNothing);
   });
 }

@@ -41,3 +41,8 @@ opencode.json
 
 # Salida de las figuras (los PNG exportados sí se versionan)
 figures/out/
+
+# Capturas y trazas de navegador (evidencia local, no fuente)
+.playwright-mcp/
+.impeccable/
+

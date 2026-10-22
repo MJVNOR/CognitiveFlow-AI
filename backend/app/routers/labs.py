@@ -11,7 +11,9 @@ from app.auth import current_user, session_for
 from app.db import get_db
 from app.helpers import (
     _evaluate_attempt,
+    _lab_type,
     _lab_progress,
+    _can_enter_posttest,
     _phase,
     _posttest_attempt,
     _posttest_variant,
@@ -30,7 +32,8 @@ from app.schemas import (
     SessionDetailOut,
     TutorHistoryItemOut,
 )
-from app.interventions import ALLOWED_BY_WIDGET, ALLOWED_EVENTS, CATALOG
+from app.checks import check_challenge
+from app.interventions import ALLOWED_BY_WIDGET, ALLOWED_EVENTS, CATALOG, SUBMIT_EVENT
 from app.labs_data import generate as generate_dataset
 from app.labs_ml import ml_curve
 from app.labs_monitor import generate as generate_monitor
@@ -143,6 +146,7 @@ def get_session(session_id: str, user=Depends(current_user), db: Session = Depen
             "status": s.status, "phase": _phase(db, s), "attempt_count": len(attempts),
             "last_eval": last_eval, "level": diag.level if diag else "pending",
             "assistance": assistance,
+            "can_enter_posttest": _can_enter_posttest(db, s),
             "variant": _posttest_variant(session_id) if s.status == "posttest" else None}
 
 
@@ -198,18 +202,43 @@ def record_event(session_id: str, body: EventIn, user=Depends(current_user),
     # ponytail: dedup por PK (client_event_id) — reintento seguro, un solo registro
     existing = db.query(models.UiEvent).filter_by(id=body.client_event_id).first()
     if existing:
-        return {"id": existing.id, "deduped": True}
+        prev = json.loads(existing.payload_json).get("server_check")
+        return {"id": existing.id, "deduped": True, **({"check": prev} if prev else {})}
+    check = _scenario_check(db, session_id, body)
+    payload = {**body.payload, "server_check": check} if check else body.payload
     db.add(
         models.UiEvent(
             id=body.client_event_id,
             session_id=session_id,
             widget_type=body.widget_type,
             event_type=body.event_type,
-            payload_json=json.dumps(body.payload),
+            payload_json=json.dumps(payload),
         )
     )
     db.commit()
-    return {"id": body.client_event_id, "deduped": False}
+    # Campo aditivo: solo eventos corregidos por el servidor llevan "check".
+    return {"id": body.client_event_id, "deduped": False, **({"check": check} if check else {})}
+
+
+def _scenario_check(db: Session, session_id: str, body: EventIn) -> dict | None:
+    """La entrega del último reto GenUI se corrige en el servidor (determinista) contra
+    lo que él mismo generó; el cliente no aporta la verdad. Solo cuenta el evento de
+    entrega del widget del reto vigente (la práctica la evalúa el intento)."""
+    logs = db.query(models.InterventionLog).filter_by(session_id=session_id).all()
+    log = logs[-1] if logs else None  # orden de inserción, como _can_enter_posttest
+    if (not log or body.widget_type != log.widget_type
+            or body.event_type != SUBMIT_EVENT.get(body.widget_type)):
+        return None
+    attempt = db.query(models.LabAttempt).filter_by(id=log.attempt_id).first()
+    if not attempt:
+        return None
+    try:
+        spec = json.loads(log.spec_json)
+        state = json.loads(attempt.input_state_json)
+    except ValueError:
+        return None
+    return check_challenge(_lab_type(db, session_id), body.widget_type, body.payload,
+                           spec if isinstance(spec, dict) else {}, state)
 
 
 @router.post("/sessions/{session_id}/attempts")
@@ -244,11 +273,44 @@ def lab_dataset(lab_id: str, seed: int = 1):
     return {"lab_id": lab_id, "columns": ds["columns"], "rows": ds["rows"]}
 
 
+@router.get("/labs/{lab_id}/docker-activity")
+def lab_docker_activity(lab_id: str, unit: str, seed: int = 1):
+    # Escenario público de la unidad (sin respuestas); semilla 1 = práctica.
+    from app.labs_docker import UNITS, activity
+
+    if unit not in UNITS:
+        raise HTTPException(404, "unidad desconocida")
+    return activity(unit, seed)
+
+
+@router.get("/me/docker-units")
+def my_docker_units(user=Depends(current_user), db: Session = Depends(get_db)):
+    """Estado por unidad Docker derivado de los intentos (una sesión = una unidad).
+    Sin cambio de esquema: la unidad viaja en `extra.unit` de cada intento."""
+    rank = {"active": 1, "posttest": 2, "done": 3}
+    out: dict[str, str] = {}
+    tpl_ids = [t.id for t in db.query(models.LabTemplate).filter_by(lab_type="docker").all()]
+    for s in db.query(models.LearningSession).filter(
+            models.LearningSession.student_id == user.id,
+            models.LearningSession.lab_template_id.in_(tpl_ids)).all():
+        unit = None
+        for a in db.query(models.LabAttempt).filter_by(session_id=s.id).all():
+            try:
+                extra = json.loads(a.input_state_json).get("extra") or {}
+            except ValueError:
+                continue
+            unit = unit or (extra.get("unit") if isinstance(extra, dict) else None)
+        if unit and rank.get(s.status, 0) > rank.get(out.get(unit), 0):
+            out[unit] = s.status
+    return out
+
+
 @router.get("/labs/{lab_id}/distributions")
 def lab_distributions(lab_id: str, seed: int = 1):
     # ponytail: verdad (truth) jamás sale al cliente
     ds = generate_monitor(seed)
-    return {"lab_id": lab_id, "features": ds["features"], "series": ds["series"]}
+    return {"lab_id": lab_id, "features": ds["features"], "series": ds["series"],
+            "series_by_feature": ds["series_by_feature"]}
 
 
 def _objective_out(o) -> dict:
@@ -336,6 +398,9 @@ def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
     if s.status == "done":
         raise HTTPException(403, "sesión terminada")
     variant = _posttest_variant(session_id)
+    # El alumno no entra al postest por payload: el servidor decide (AGENTS §3).
+    if not _can_enter_posttest(db, s):
+        raise HTTPException(403, "postest aún no habilitado: responde el reto pendiente")
     if s.status == "active":
         s.status = "posttest"
         db.commit()

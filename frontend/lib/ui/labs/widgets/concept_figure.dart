@@ -1,12 +1,15 @@
 // Figura isométrica del concepto: una o varias variantes comparables, con su
 // leyenda como texto (seleccionable, traducible) y descripción para lector.
 // El raster se genera con `node figures/shoot.mjs` (clear/oscuro).
+// El dibujo va sobre papel de plano; la leyenda queda en superficie limpia.
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/bench_plate.dart';
 import 'lab_figures.dart';
 
-// Proporción del recorte generado (602x365 unidades de la tarjeta de origen).
-const double _figureAspect = 602 / 365;
+// El recorte generado respira dentro de su caja (602x365): se acota la altura
+// para que el experimento no quede bajo el pliegue en pantallas de 768 px.
+const double _figureMaxHeight = 232;
 
 class ConceptFigure extends StatelessWidget {
   final LabFigure figure;
@@ -23,12 +26,12 @@ class ConceptFigure extends StatelessWidget {
         const SizedBox(height: 8),
         LayoutBuilder(
           builder: (context, constraints) {
-            final wide = constraints.maxWidth >= 560;
+            final wide = constraints.maxWidth >= 560 && figure.variants.length > 1;
             final tiles = [
               for (final variant in figure.variants)
                 _VariantTile(variant: variant, dark: dark),
             ];
-            if (tiles.length == 1 || !wide) return Column(children: tiles);
+            if (!wide) return Column(children: tiles);
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -56,17 +59,21 @@ class _VariantTile extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        AspectRatio(
-          aspectRatio: _figureAspect,
-          child: Image.asset(
-            '${variant.asset}-${dark ? 'dark' : 'light'}.webp',
-            fit: BoxFit.contain,
-            semanticLabel: variant.alt,
-            excludeFromSemantics: false,
-            filterQuality: FilterQuality.medium,
+        DraftPaper(
+          padding: const EdgeInsets.all(6),
+          child: SizedBox(
+            height: _figureMaxHeight,
+            width: double.infinity,
+            child: Image.asset(
+              '${variant.asset}-${dark ? 'dark' : 'light'}.webp',
+              fit: BoxFit.contain,
+              semanticLabel: variant.alt,
+              excludeFromSemantics: false,
+              filterQuality: FilterQuality.medium,
+            ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
           variant.caption,
           style: theme.textTheme.bodySmall?.copyWith(

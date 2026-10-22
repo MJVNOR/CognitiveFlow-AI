@@ -26,13 +26,14 @@ class SessionRepository {
   }
 
   /// Evento GenUI → backend (deduplicado por client_event_id).
-  Future<void> emitEvent(
+  /// Devuelve la respuesta del servidor (con `check` si corrigió la entrega).
+  Future<Map<String, dynamic>> emitEvent(
     String sessionId,
     String widgetType,
     String eventType,
     Map<String, Object?> payload,
-  ) async {
-    await api.post('/sessions/$sessionId/events', {
+  ) {
+    return api.post('/sessions/$sessionId/events', {
       'client_event_id': newEventId(),
       'widget_type': widgetType,
       'event_type': eventType,

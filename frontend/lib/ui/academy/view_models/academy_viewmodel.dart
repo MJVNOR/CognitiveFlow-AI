@@ -10,10 +10,14 @@ class AcademyData {
   final List<Module> modules;
   final List<Lab> labs;
   final Map statusMap;
+
+  /// Estado por unidad Docker ({unidad: active|posttest|done}); vacío si falla.
+  final Map dockerUnits;
   const AcademyData({
     required this.modules,
     required this.labs,
     required this.statusMap,
+    this.dockerUnits = const {},
   });
 }
 
@@ -27,10 +31,18 @@ class AcademyViewModel extends AsyncNotifier<AcademyData> {
       ref.read(labRepositoryProvider).fetchLabs(),
       ref.read(progressRepositoryProvider).fetchLabStatus(),
     ]);
+    final labs = results[1] as List<Lab>;
+    Map dockerUnits = const {};
+    if (labs.any((l) => l.labType == 'docker')) {
+      try {
+        dockerUnits = await ref.read(labRepositoryProvider).fetchDockerUnits();
+      } catch (_) {} // el temario se muestra igual, sin estado por unidad
+    }
     return AcademyData(
       modules: results[0] as List<Module>,
-      labs: results[1] as List<Lab>,
+      labs: labs,
       statusMap: results[2] as Map,
+      dockerUnits: dockerUnits,
     );
   }
 

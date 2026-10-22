@@ -25,4 +25,11 @@ class LabRepository {
 
   Future<Map<String, dynamic>> fetchDistributions(String labId, int seed) =>
       api.getMap('/labs/$labId/distributions?seed=$seed');
+
+  /// Escenario público de una unidad Docker (sin respuestas).
+  Future<Map<String, dynamic>> fetchDockerActivity(String labId, String unit, int seed) =>
+      api.getMap('/labs/$labId/docker-activity?unit=$unit&seed=$seed');
+
+  /// Estado por unidad Docker del estudiante: {unidad: active|posttest|done}.
+  Future<Map<String, dynamic>> fetchDockerUnits() => api.getMap('/me/docker-units');
 }

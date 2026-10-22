@@ -7,11 +7,14 @@ import 'package:intl/intl.dart';
 import '../../domain/models/models.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/criteria.dart';
+import '../../ui/core/widgets/bench_plate.dart';
 import '../../ui/core/widgets/chrome.dart';
+import '../../ui/core/widgets/dial_gauge.dart';
 import '../../ui/core/widgets/strings.dart';
-import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/core/themes/cognitive_theme.dart';
+import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/progress/view_models/progress_viewmodel.dart';
+import '../../ui/progress/widgets/route_progress_bar.dart';
 
 final _int = NumberFormat.decimalPattern('es');
 
@@ -107,19 +110,62 @@ class ProgressPage extends ConsumerWidget {
         return Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
+            constraints: const BoxConstraints(maxWidth: 880),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
-                Semantics(
-                    header: true,
-                    child: Text(routeLabel,
-                        style: Theme.of(context).textTheme.titleMedium)),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: done / labs.length,
-                  semanticsLabel: routeLabel,
-                  semanticsValue: '${((done / labs.length) * 100).round()}%',
+                BenchPlate(
+                  code: 'REGISTRO',
+                  title: 'Cinta de evidencias',
+                  note: '${_int.format(labs.length)} PUESTOS',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          DialGauge(
+                            value: labs.isEmpty ? 0 : done / labs.length,
+                            readout: '$done/${labs.length}',
+                            size: 80,
+                            semanticLabel: routeLabel,
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(
+                                    header: true,
+                                    child: Text(routeLabel,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'El avance cuenta puestos cerrados. El dominio solo lo demuestra el postest.',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                          color: cs.onSurfaceVariant,
+                                          height: 1.35),
+                                ),
+                                const SizedBox(height: 8),
+                                // Recorrido: se llena una vez, sin reiniciar.
+                                RouteProgressBar(
+                                  value: labs.isEmpty
+                                      ? 0
+                                      : done / labs.length,
+                                  label: 'Recorrido de la ruta',
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (value.recalls.isNotEmpty) ...[
@@ -201,12 +247,25 @@ class ProgressPage extends ConsumerWidget {
                         (prog[l.id]?['posttest'] as Map?)?.isNotEmpty == true)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: Text(
-                          (prog[l.id]?['mastery_status'] == 'demonstrated')
-                              ? 'Dominio demostrado con postest ✓'
-                              : 'Sin dominio demostrado todavía (la práctica no cuenta)',
-                          style: TextStyle(
-                              fontSize: 12, color: cs.onSurfaceVariant)),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                (prog[l.id]?['mastery_status'] == 'demonstrated')
+                                    ? 'Dominio demostrado con postest ✓'
+                                    : 'Sin dominio demostrado todavía (la práctica no cuenta)',
+                                style: TextStyle(
+                                    fontSize: 12, color: cs.onSurfaceVariant),
+                              ),
+                            ),
+                            if (prog[l.id]?['mastery_status'] ==
+                                'demonstrated')
+                              MasteryStamp(
+                                text: 'DOMINIO DEMOSTRADO',
+                                color: statusColor('done'),
+                              ),
+                          ],
+                        ),
                       ),
                     ListTile(
                       dense: true,
@@ -232,4 +291,3 @@ class ProgressPage extends ConsumerWidget {
     };
   }
 }
-

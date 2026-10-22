@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/auth/auth_state.dart';
+import '../../domain/models/models.dart';
 import '../../ui/academy/academy_page.dart';
+import '../../ui/academy/view_models/academy_viewmodel.dart';
 import '../../ui/labs/data_lab_page.dart';
 import '../../ui/labs/docker_lab_page.dart';
 import '../../ui/instructor/instructor_page.dart';
@@ -40,17 +42,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         GoRoute(path: '/labs', builder: (c, s) => const LabsPage()),
         GoRoute(
           path: '/labs/:labId',
-          builder: (c, s) {
-            final extra = s.extra as Map? ?? {};
-            final title = (extra['title'] ?? s.pathParameters['labId']!) as String;
-            return switch (extra['lab_type']) {
-              'data_detective' => DataLabPage(labId: s.pathParameters['labId']!, title: title),
-              'model_monitoring' =>
-                MonitorLabPage(labId: s.pathParameters['labId']!, title: title),
-              'docker' => DockerLabPage(labId: s.pathParameters['labId']!, title: title),
-              _ => LabDetailPage(labId: s.pathParameters['labId']!, title: title),
-            };
-          },
+          builder: (c, s) => LabRoute(
+            labId: s.pathParameters['labId']!,
+            extra: s.extra as Map? ?? const {},
+            unit: s.uri.queryParameters['unit'],
+          ),
         ),
         GoRoute(path: '/progress', builder: (c, s) => const ProgressPage()),
         GoRoute(path: '/instructor', builder: (c, s) => const InstructorPage()),
@@ -63,3 +59,41 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Ruta de lab: `extra` es el atajo desde academia/progreso; en deep link
+/// no lo hay, así que tipo y título salen del servidor.
+class LabRoute extends ConsumerWidget {
+  const LabRoute({super.key, required this.labId, this.extra = const {}, this.unit});
+  final String labId;
+  final Map extra;
+
+  /// Unidad del temario (Docker Academy): `/labs/lab-docker?unit=M08-D02-lifecycle`.
+  final String? unit;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(labsListViewModelProvider);
+    final labs = switch (state) {
+      AsyncData(:final value) => value,
+      _ => null,
+    };
+    Lab? lab;
+    for (final l in labs ?? const <Lab>[]) {
+      if (l.id == labId) {
+        lab = l;
+        break;
+      }
+    }
+    final type = extra['lab_type'] as String? ?? lab?.labType;
+    final title = (extra['title'] ?? lab?.title ?? labId) as String;
+    if (type == null && state is AsyncLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return switch (type) {
+      'data_detective' => DataLabPage(labId: labId, title: title),
+      'model_monitoring' => MonitorLabPage(labId: labId, title: title),
+      'docker' => DockerLabPage(labId: labId, title: title, unit: unit),
+      _ => LabDetailPage(labId: labId, title: title),
+    };
+  }
+}

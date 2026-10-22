@@ -49,6 +49,7 @@ class SessionDetailOut(BaseModel):
     last_eval: dict | None = None
     level: str
     assistance: dict = {}
+    can_enter_posttest: bool = False
     variant: dict | None = None
 
 

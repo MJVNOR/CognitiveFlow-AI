@@ -2,6 +2,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+import os
+
 import pytest
 from app.main import app
 from app.db import Base, get_db
@@ -11,9 +13,14 @@ from app.evaluation import JEV_QUESTIONS
 
 @pytest.fixture(autouse=True)
 def _no_live_llm(monkeypatch):
-    # Los tests nunca gastan llamadas reales a Gemini
+    # Los tests nunca gastan llamadas reales a Gemini ni a Jev, aunque el .env
+    # local active EVALUATOR_MODE=jev (los tests de Jev lo activan con HTTP simulado).
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    if os.getenv("JEV_LIVE_TEST", "") != "1":  # opt-in explícito de test_jev_live_opt_in
+        monkeypatch.delenv("JEV_API_KEY", raising=False)
+        monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("EVALUATOR_MODE", "mock")
 
 engine = create_engine(
     "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -148,6 +155,7 @@ def test_my_lab_status_tracks_session():
     assert client.get("/me/lab-status").status_code == 401
     sid = client.post("/sessions", json={"lab_template_id": "lab-data"}, headers=h_s4).json()["id"]
     assert client.get("/me/lab-status", headers=h_s4).json() == {"lab-data": "active"}
+    _unlock_posttest(sid, h_s4)
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": "x"}, headers=h_s4)
     assert client.get("/me/lab-status", headers=h_s4).json() == {"lab-data": "posttest"}
 
@@ -496,6 +504,7 @@ def test_posttest_locks_session():
         "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
     ).json()["id"]
     aid = _practice_attempt(sid)
+    _unlock_posttest(sid)
     pt = client.post(
         f"/sessions/{sid}/posttest",
         json={"complexity": 6, "noise_pct": 20, "answer_text": "postest"},
@@ -755,6 +764,19 @@ def test_data_intervention_carries_n_rows():
         json={"attempt_id": aid}, headers=H_S1).json()
     assert iv["widget_type"] == "DataTableExplorer"
     assert iv["widget_parameters"]["parameters"]["n_rows"] == 30
+    # UX: filas contrastivas reales (≤6) y nunca el set de plantados completo.
+    rows = iv["widget_parameters"]["parameters"]["rows"]
+    assert 0 < len(rows) <= 6 and all({"ref", "temp", "unit", "pressure", "line"} <= set(r)
+                                      for r in rows)
+    assert "planted" not in _seed_json.dumps(iv)
+
+
+def test_data_strong_intervention_transfers_to_new_table():
+    from app.interventions import _data_contrast_rows
+
+    rows = _data_contrast_rows({"seed": 1}, transfer=True)
+    assert [r["ref"] for r in rows] == [f"N{i}" for i in range(1, len(rows) + 1)]
+    assert len(rows) == 6
 
 
 def test_monitor_intervention_carries_features():
@@ -854,12 +876,14 @@ def _full_ml_session(text="Hay overfit porque la validación sube con complejida
 
 def test_posttest_variant_new_and_idempotent_begin():
     sid = _ml_session()
+    _unlock_posttest(sid)
     b1 = client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1).json()
     assert b1["status"] == "begin" and b1["seed"] >= 100
     assert 6 <= b1["complexity"] <= 9  # el servidor fija la variante, no el cliente
     b2 = client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1).json()
     assert b2["seed"] == b1["seed"] and b2["complexity"] == b1["complexity"]
     sid2 = _ml_session()
+    _unlock_posttest(sid2)
     other = client.post(f"/sessions/{sid2}/posttest", json={"answer_text": ""},
                         headers=H_S1).json()
     assert isinstance(other["seed"], int)  # determinista por sesión
@@ -869,6 +893,7 @@ def test_posttest_submit_autoevaluates_and_locks():
     import json
 
     sid = _ml_session()
+    _unlock_posttest(sid)
     r = client.post(f"/sessions/{sid}/posttest",
         json={"complexity": 1, "answer_text": "diagnóstico con curvas"}, headers=H_S1).json()
     assert r["status"] == "submitted" and r["eval_status"] in ("evaluated", "pending")
@@ -888,6 +913,7 @@ def test_progress_baseline_vs_posttest():
     assert ml["attempts"] == 1 and ml["baseline"]["exactitud"] == 4
     assert ml["posttest"] is None and ml["status"] == "active"
     assert ml["mastery"] is None and ml["mastery_status"] == "not_demonstrated"
+    _unlock_posttest(sid)
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": "postest"}, headers=H_S1)
     ml2 = next(x for x in client.get("/me/progress", headers=H_S1).json()
                if x["lab_template_id"] == "lab-ml")
@@ -905,6 +931,7 @@ def test_matrix_instructor_only_and_shaped():
 
 def test_reflection_summary_honest():
     sid = _full_ml_session()  # baseline fuerte
+    _unlock_posttest(sid)
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": "no sé"}, headers=H_S1)
     r = client.post(f"/sessions/{sid}/reflection", json={"text": "aprendí"}, headers=H_S1).json()
     assert r["status"] == "done"
@@ -914,6 +941,7 @@ def test_reflection_summary_honest():
     sid2 = _ml_session()
     aid2 = _attempt(sid2, "no sé")
     _eval_on(sid2, aid2)
+    _unlock_posttest(sid2)
     client.post(f"/sessions/{sid2}/posttest",
         json={"answer_text": "Hay overfit porque validación sube; evidencia en curvas; "
                              "causa memorización; alternativo regularizar; reviso hipótesis"},
@@ -969,6 +997,14 @@ def test_resume_endpoints():
     assert det["last_eval"]["attempt_id"] == aid
     assert det["last_eval"]["criteria"]
     assert det["variant"] is None
+    # UX: evaluado pero sin reto GenUI respondido → postest aún cerrado.
+    assert det["can_enter_posttest"] is False
+    iv = _intervene_aid(sid, aid)
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is False
+    client.post(f"/sessions/{sid}/events", json={
+        "client_event_id": "gate-1", "widget_type": iv["widget_type"],
+        "event_type": "argumentSubmitted", "payload": {"argument": "x"}}, headers=H_S1)
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is True
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1)
     det2 = client.get(f"/sessions/{sid}", headers=H_S1).json()
     assert det2["phase"] == "postest" and det2["variant"]["seed"] >= 100
@@ -1020,7 +1056,8 @@ def test_e2e_lab_loop_no_credits(monkeypatch):
         json={"client_event_id": "e2e-1", "widget_type": "LearningCurveSimulator",
               "event_type": "parameterChanged", "payload": {"complexity": 7}},
         headers=H_S1).json()
-    assert ev == {"id": "e2e-1", "deduped": False}
+    assert ev["id"] == "e2e-1" and ev["deduped"] is False
+    _unlock_posttest(sid)
     sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post"}, headers=H_S1).json()
     assert sub["status"] == "submitted"
     done = client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1).json()
@@ -1236,6 +1273,7 @@ def test_e2e_full_ml_unit():
     assert log[-1]["socratic_question"]
 
     # postest variante nueva + reflexión honesta
+    _unlock_posttest(weak_sid)
     pt = client.post(f"/sessions/{weak_sid}/posttest",
                      json={"answer_text": ""}, headers=H_S1).json()
     assert pt["status"] == "begin" and pt["seed"] >= 100
@@ -1432,6 +1470,7 @@ def test_recall_schedule_due_and_done():
     import time as _time
 
     sid = _full_ml_session()
+    _unlock_posttest(sid)
     client.post(f"/sessions/{sid}/posttest", json={"answer_text": "postest"}, headers=H_S1)
     client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1)
     rows = TestingSession().query(models.RecallItem).filter_by(student_id="s1").all()
@@ -1553,8 +1592,401 @@ def test_docker_e2e_lab_loop():
         json={"client_event_id": "docker-e2e-1", "widget_type": "ContainerVsVmExplorer",
               "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 0]}},
         headers=H_S1).json()
-    assert ev == {"id": "docker-e2e-1", "deduped": False}
+    assert ev["id"] == "docker-e2e-1" and ev["deduped"] is False
+    _unlock_posttest(sid)
     sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post"}, headers=H_S1).json()
     assert sub["status"] == "submitted"
     done = client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1).json()
     assert done["status"] == "done" and "summary" in done
+
+
+def test_posttest_gate_uses_each_widget_submit_event():
+    # Reto HypothesisEditor (acierto) se responde con hypothesisSubmitted, no argumentSubmitted.
+    sid = _ml_session()
+    aid = _attempt(sid, "Hay overfit porque la validación sube con complejidad alta, "
+        "los datos muestran generalización pobre y propongo mitigar con regularización; "
+        "reviso mi hipótesis inicial")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] == "HypothesisEditor"
+    gate = lambda: client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
+    assert gate() is False
+    client.post(f"/sessions/{sid}/events", json={
+        "client_event_id": "gate-h1", "widget_type": "HypothesisEditor",
+        "event_type": "hypothesisSubmitted", "payload": {"hypothesis": "x"}}, headers=H_S1)
+    assert gate() is True
+
+
+def _unlock_posttest(sid: str, h=H_S1):
+    """Cumple el gate del servidor: intento evaluado + respuesta al último reto GenUI."""
+    from app.interventions import SUBMIT_EVENT
+
+    det = client.get(f"/sessions/{sid}", headers=h).json()
+    if det["can_enter_posttest"]:
+        return
+    atts = client.get(f"/sessions/{sid}/attempts", headers=h).json()
+    aid = atts[-1]["id"] if atts else client.post(
+        f"/sessions/{sid}/attempts", json={"seed": 1, "answer_text": "practica"},
+        headers=h).json()["id"]
+    if not det.get("last_eval"):
+        client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=h)
+    iv = client.post(f"/sessions/{sid}/next-intervention", json={"attempt_id": aid},
+                     headers=h).json()
+    et = SUBMIT_EVENT.get(iv["widget_type"])
+    if et:
+        client.post(f"/sessions/{sid}/events", json={
+            "client_event_id": f"unlock-{sid}", "widget_type": iv["widget_type"],
+            "event_type": et, "payload": {}}, headers=h)
+    assert client.get(f"/sessions/{sid}", headers=h).json()["can_enter_posttest"] is True
+
+
+def test_posttest_refused_until_server_gate_opens():
+    # El alumno no fuerza el postest por API: sin intento evaluado + reto respondido → 403.
+    sid = _ml_session()
+    assert client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""},
+                       headers=H_S1).status_code == 403
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    assert client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""},
+                       headers=H_S1).status_code == 403
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["status"] == "active"
+    _unlock_posttest(sid)
+    assert client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""},
+                       headers=H_S1).json()["status"] == "begin"
+
+
+
+# Fase 4: la entrega del reto contrastivo se corrige en el servidor, sin revelar tipos.
+def test_data_scenario_answer_checked_server_side():
+    from app.interventions import _data_contrast
+
+    sid = _data_session()
+    aid = client.post(f"/sessions/{sid}/attempts",
+        json={"seed": 1, "flags": [], "answer_text": "todo bien"}, headers=H_S1).json()["id"]
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    rows = iv["widget_parameters"]["parameters"]["rows"]
+    assert all("type" not in r for r in rows)  # la verdad no viaja al cliente
+    truth = {r["ref"]: t for r, t in _data_contrast({"seed": 1, "flags": []}, False)}
+    perfect = {ref: t for ref, t in truth.items() if t != "ok"}
+
+    def send(eid, cls):
+        return client.post(f"/sessions/{sid}/events", json={
+            "client_event_id": eid, "widget_type": "DataTableExplorer",
+            "event_type": "argumentSubmitted",
+            "payload": {"argument": "x", "classifications": cls}}, headers=H_S1).json()
+
+    good = send("chk-1", perfect)
+    assert {k: good["check"][k] for k in ("correctas", "revisar")} == {
+        "correctas": sorted(perfect, key=list(truth).index), "revisar": []}
+    assert good["check"]["item"] == "fila"
+    wrong_ref = next(iter(perfect))
+    bad = send("chk-2", {**perfect, wrong_ref: "duplicate" if perfect[wrong_ref] != "duplicate"
+                         else "unit"})
+    assert bad["check"]["revisar"] == [wrong_ref]
+    assert "unit" not in str(bad["check"]) and "duplicate" not in str(bad["check"])
+    # reintento idempotente devuelve la misma corrección
+    assert send("chk-2", {})["check"] == bad["check"]
+
+
+def test_data_variants_move_planted_rows():
+    from app.evaluation import _true_row_type
+    from app.labs_data import generate
+
+    assert generate(1)["planted"] == [2, 3, 7, 12, 17, 21, 25]  # práctica intacta
+    a, b = generate(412), generate(413)
+    assert a["planted"] != generate(1)["planted"] and a["planted"] != b["planted"]
+    assert generate(412) == a  # determinista
+    for ds in (a, b):
+        kinds = sorted(_true_row_type(ds["rows"], i) for i in ds["planted"])
+        assert kinds == ["duplicate", "leak", "missing", "missing", "outlier", "unit", "unit"]
+
+
+def test_gate_ignores_submits_made_before_the_challenge():
+    # Docker: la práctica y el reto pueden usar el mismo widget; solo cuenta lo posterior.
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers", "no sé")
+
+    def submit(eid):
+        client.post(f"/sessions/{sid}/events", json={
+            "client_event_id": eid, "widget_type": "ContainerVsVmExplorer",
+            "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 0]}}, headers=H_S1)
+
+    submit("pre-1")  # entrega de práctica, antes del reto
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] == "ContainerVsVmExplorer"
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is False
+    submit("post-1")
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is True
+
+
+def test_monitor_variants_move_the_drift():
+    from app.labs_monitor import generate
+
+    practice = generate(1)
+    assert practice["truth"]["changepoint"] == 120
+    assert practice["series_by_feature"]["temp"] == practice["series"]
+    truths = {tuple(generate(s)["truth"].values()) for s in range(100, 110)}
+    assert len(truths) > 1  # la variante no se resuelve memorizando la práctica
+    for s in (100, 101):
+        g = generate(s)
+        feat = g["truth"]["drifted_feature"]
+        assert g["series_by_feature"][feat] == g["series"]
+    api = client.get("/labs/lab-monitor/distributions?seed=104").json()
+    assert set(api["series_by_feature"]) == {"temp", "pressure", "vibration"}
+    assert "truth" not in api
+
+
+def test_submit_events_match_what_flutter_widgets_emit():
+    # El permiso del postest depende de que el widget emita de verdad su evento de entrega.
+    import pathlib
+    import re
+
+    from app.interventions import SUBMIT_EVENT
+
+    wdir = pathlib.Path(__file__).resolve().parents[2] / "frontend/lib/ui/tutor/widgets"
+    if not wdir.exists():
+        pytest.skip("sin frontend en el checkout")
+    src = " ".join(p.read_text(encoding="utf-8") for p in wdir.glob("*.dart"))
+    emitted = set(re.findall(r"TutorEvents\.send\(\s*'(\w+)',\s*'(\w+)'", src))
+    for widget, event in SUBMIT_EVENT.items():
+        assert (widget, event) in emitted, f"{widget} no emite {event}"
+
+
+def test_data_check_accepts_one_copy_of_a_duplicate_pair():
+    from app.interventions import _data_contrast, check_data_contrast
+
+    state = {"seed": 1, "flags": [3, 7, 25],
+             "extra": {"cell_types": {"3": "missing", "7": "unit", "25": "outlier"}}}
+    truth = {r["ref"]: t for r, t in _data_contrast(state, False)}
+    dups = [ref for ref, t in truth.items() if t == "duplicate"]
+    assert len(dups) == 2
+    others = {ref: t for ref, t in truth.items() if t not in ("ok", "duplicate")}
+    one_copy = check_data_contrast(state, False, {**others, dups[0]: "duplicate"})
+    assert one_copy["revisar"] == []
+    none = check_data_contrast(state, False, others)
+    assert sorted(none["revisar"]) == sorted(dups)
+
+
+# Planificador GenUI: Gemini elige una actividad del menú del lab + parámetros
+# acotados; el backend valida todo y genera los datos (Gemini simulado, sin red).
+def _mixed_ml_attempt():
+    # mock ML da [2,4,2,0,0] → promedio 1.6: zona ambigua, se consulta al planificador
+    sid = _ml_session()
+    aid = _attempt(sid, "La validación sube con complejidad alta porque el modelo memoriza")
+    _eval_on(sid, aid)
+    return sid, aid
+
+
+def _planner(monkeypatch, reply):
+    import app.socratic as soc
+
+    seen = []
+
+    async def fake(prompt):
+        if "planificador" in prompt:
+            seen.append(prompt)
+            return reply
+        return None
+
+    monkeypatch.setattr(soc, "_gemini_ask", fake)
+    return seen
+
+
+def test_planner_picks_from_lab_menu_with_bounded_params(monkeypatch):
+    import json
+
+    seen = _planner(monkeypatch, '```json\n{"activity": "predict_and_simulate", '
+                    '"params": {"complexity": 9, "noise_pct": 80}, '
+                    '"motivo": "Vas a predecir antes de mover los controles."}\n```')
+    sid, aid = _mixed_ml_attempt()
+    iv = _intervene_aid(sid, aid)
+    # el menú del lab llega al prompt (más de dos opciones del catálogo)
+    assert all(a in seen[0] for a in ("compare_curves", "predict_and_simulate", "raise_complexity"))
+    assert iv["decided_by"] == "gemini" and iv["widget_type"] == "LearningCurveSimulator"
+    params = iv["widget_parameters"]["parameters"]
+    assert params["complexity"]["initial"] == 9          # dentro de esquema: se respeta
+    assert params["noise_pct"]["initial"] == 20          # 80 fuera de 0–50: valor del servidor
+    assert iv["reason"] == "Vas a predecir antes de mover los controles."
+    log = TestingSession().query(models.InterventionLog).filter_by(session_id=sid).all()
+    spec = json.loads(log[-1].spec_json)
+    assert spec["decided_by"] == "gemini" and spec["activity"] == "predict_and_simulate"
+    assert spec["activity_params"] == {"complexity": 9}
+
+
+def test_planner_activity_outside_menu_falls_back_to_rules(monkeypatch):
+    _planner(monkeypatch, '{"activity": "DockerfileWorkbench", "motivo": "haz esto"}')
+    sid, aid = _mixed_ml_attempt()
+    iv = _intervene_aid(sid, aid)
+    assert iv["decided_by"] == "rules" and iv["widget_type"] == "EvidenceComparison"
+
+
+def test_planner_motivo_with_scores_is_dropped(monkeypatch):
+    _planner(monkeypatch, '{"activity": "compare_curves", "motivo": "Sacaste 2/4, repasa"}')
+    sid, aid = _mixed_ml_attempt()
+    iv = _intervene_aid(sid, aid)
+    assert iv["decided_by"] == "gemini" and iv["widget_type"] == "EvidenceComparison"
+    assert "2/4" not in iv["reason"]
+
+
+def test_planner_data_focus_types_stay_server_side(monkeypatch):
+    import json
+
+    from app.interventions import _data_contrast
+
+    _planner(monkeypatch, '{"activity": "contrast_rows", "params": {"types": ["leak", "hack"]}}')
+    sid = _data_session()
+    state = {"seed": 1, "flags": [3, 7, 25],
+             "extra": {"cell_types": {"3": "missing", "7": "unit", "25": "outlier"}}}
+    aid = client.post(f"/sessions/{sid}/attempts", json={
+        **state, "answer_text": "Observo la fila 25 con presion imposible porque el sensor fallo; "
+        "la 7 en F por conversion; la 3 faltante. Alternativa: imputar en vez de eliminar. "
+        "Reviso mi hipotesis."}, headers=H_S1).json()["id"]
+    _eval_on(sid, aid)
+    resp = client.post(f"/sessions/{sid}/next-intervention", json={"attempt_id": aid},
+                       headers=H_S1)
+    iv = resp.json()
+    assert iv["decided_by"] == "gemini" and iv["widget_type"] == "DataTableExplorer"
+    assert "leak" not in resp.text and "_private" not in resp.text  # el foco no viaja
+    truth = {r["ref"]: t for r, t in _data_contrast(state, False, ["leak"])}
+    assert [t for t in truth.values() if t != "ok"] == ["leak"]
+    assert [r["ref"] for r in iv["widget_parameters"]["parameters"]["rows"]] == list(truth)
+    restored = client.get(f"/sessions/{sid}/interventions", headers=H_S1).text
+    assert "leak" not in restored
+    # la corrección usa el mismo foco guardado en el log
+    leak_ref = next(r for r, t in truth.items() if t == "leak")
+    chk = client.post(f"/sessions/{sid}/events", json={
+        "client_event_id": "plan-chk", "widget_type": "DataTableExplorer",
+        "event_type": "argumentSubmitted",
+        "payload": {"argument": "x", "classifications": {leak_ref: "leak"}}}, headers=H_S1).json()
+    assert (chk["check"]["correctas"], chk["check"]["revisar"]) == ([leak_ref], [])
+    log = TestingSession().query(models.InterventionLog).filter_by(session_id=sid).all()
+    assert json.loads(log[-1].spec_json)["private"] == {"transfer": False, "types": ["leak"]}
+
+
+def test_planner_docker_unit_and_monitor_features_validated():
+    from app.interventions import ACTIVITY_MENU, _activity
+
+    dk = _activity("docker", "unit_practice", {"unit": "M08-D04-dockerfile"},
+                   {"extra": {"unit": "M08-D01-containers"}}, "¿q?", 2.5)
+    assert dk["widget_type"] == "DockerfileWorkbench"
+    assert dk["widget_parameters"]["title"].startswith("Transfiere")
+    _, _, schema = ACTIVITY_MENU["docker"]["unit_practice"]
+    assert schema["unit"][1]("M08-D99-hack") is None
+    mon = _activity("model_monitoring", "drift_explorer", {"features": ["pressure"]}, {}, "¿q?", 2)
+    assert mon["widget_parameters"]["parameters"]["features"] == ["pressure"]
+    _, _, ms = ACTIVITY_MENU["model_monitoring"]["drift_explorer"]
+    assert ms["features"][1](["x"]) is None and ms["features"][1]("temp") is None
+
+
+# Docker: escenarios del servidor (sin respuestas), variantes y corrección de retos.
+def test_docker_activity_public_and_varies_by_seed():
+    from app import labs_docker
+
+    for unit in labs_docker.UNITS:
+        a1 = client.get(f"/labs/lab-docker/docker-activity?unit={unit}&seed=1").json()
+        assert a1["unit"] == unit and "answers" not in a1 and "truth" not in a1
+    d01 = [tuple(labs_docker.activity("M08-D01-containers", s)["scenarios"]) for s in (1, 4, 412)]
+    assert len(set(d01)) > 1  # postest/reto no repiten la práctica
+    assert client.get("/labs/lab-docker/docker-activity?unit=M08-D99&seed=1").status_code == 404
+    for s in range(1, 30):  # el Dockerfile inicial nunca llega ya resuelto
+        assert labs_docker.dockerfile_ok(labs_docker.activity("M08-D04-dockerfile", s)["lines"]) is False
+
+
+def test_docker_check_and_eval_use_server_truth():
+    from app import labs_docker
+    from app.evaluation import mock_evaluate_docker
+
+    seed = 4
+    texts = labs_docker.activity("M08-D01-containers", seed)["scenarios"]
+    answers = labs_docker._d01_answers(seed)
+    right = [answers[t] for t in texts]
+    ok = labs_docker.check("M08-D01-containers", seed, {"choices": right})
+    assert ok["revisar"] == [] and ok["item"] == "escenario"
+    bad = labs_docker.check("M08-D01-containers", seed, {"choices": [1 - right[0]] + right[1:]})
+    assert bad["revisar"] == ["1"] and "contenedor" not in str(bad["revisar"])
+    ev = mock_evaluate_docker("x", {"unit": "M08-D01-containers", "choices": right}, seed)
+    assert {c["id"]: c["score"] for c in ev["criteria"]}["exactitud"] == 4
+    lines = labs_docker.activity("M08-D04-dockerfile", seed)["lines"]
+    good_order = next(ls for _, ls in labs_docker._D04 if set(ls) == set(lines))
+    assert labs_docker.check("M08-D04-dockerfile", seed, {"order": good_order})["revisar"] == []
+    assert labs_docker.check("M08-D07-persistence", seed,
+                             {"mount": "sin montaje", "predicted": True})["revisar"]
+
+
+def test_docker_challenge_answer_checked_after_intervention():
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers", "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] == "ContainerVsVmExplorer"
+    params = iv["widget_parameters"]["parameters"]
+    assert params["seed"] == 4 and len(params["scenarios"]) == 3  # caso nuevo, sin respuestas
+    r = client.post(f"/sessions/{sid}/events", json={
+        "client_event_id": "dk-chk", "widget_type": "ContainerVsVmExplorer",
+        "event_type": "evidenceSelected", "payload": {"choices": [0, 0, 0]}}, headers=H_S1).json()
+    assert set(r["check"]) >= {"correctas", "revisar", "item", "consejo"}
+    assert len(r["check"]["correctas"]) + len(r["check"]["revisar"]) == 3
+
+
+def test_ml_and_monitor_challenge_checks():
+    from app.checks import check_challenge
+
+    ec = check_challenge("ml_experiment", "EvidenceComparison",
+                         {"selection": "val", "argument": "no sé"}, {}, {"complexity": 7})
+    assert "qué curvas muestran el problema" in ec["revisar"]
+    assert not any(ch.isdigit() for ch in " ".join(ec["revisar"] + ec["correctas"]))
+    lcs_hi = check_challenge("ml_experiment", "LearningCurveSimulator",
+                             {"complexity": 10, "noise_pct": 20}, {}, {})
+    lcs_lo = check_challenge("ml_experiment", "LearningCurveSimulator",
+                             {"complexity": 2, "noise_pct": 20}, {}, {})
+    assert lcs_hi["correctas"] and lcs_lo["revisar"]
+    dd = check_challenge("model_monitoring", "DriftDistributionExplorer",
+                         {"feature": "pressure", "argument": "x"}, {}, {"seed": 1})
+    assert "qué feature cambió de verdad" in dd["revisar"]
+    he = check_challenge("ml_experiment", "HypothesisEditor", {"hypothesis": "no sé"}, {}, {})
+    assert he["revisar"] and he["item"] is None
+
+
+def test_my_docker_units_status_per_unit():
+    h_s3 = {"Authorization": f"Bearer {client.post('/auth/login', json={'user_id': 's3'}).json()['token']}"}
+    assert client.get("/me/docker-units", headers=h_s3).json() == {}
+    sid = client.post("/sessions", json={"lab_template_id": "lab-docker"}, headers=h_s3).json()["id"]
+    client.post(f"/sessions/{sid}/attempts", json={
+        "seed": 1, "answer_text": "x", "extra": {"unit": "M08-D02-lifecycle"}}, headers=h_s3)
+    assert client.get("/me/docker-units", headers=h_s3).json() == {"M08-D02-lifecycle": "active"}
+    assert client.get("/me/docker-units").status_code == 401
+
+
+def test_planner_consulted_always_but_weak_cannot_jump_to_transfer(monkeypatch):
+    seen = _planner(monkeypatch, '{"activity": "raise_complexity", "params": {"complexity": 9}}')
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")  # promedio bajo: fuera de la antigua zona ambigua
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert seen  # Gemini sí fue consultado
+    assert iv["decided_by"] == "rules" and iv["widget_type"] == "EvidenceComparison"
+    _planner(monkeypatch, '{"activity": "predict_and_simulate"}')
+    sid2 = _ml_session()
+    aid2 = _attempt(sid2, "no sé")
+    _eval_on(sid2, aid2)
+    assert _intervene_aid(sid2, aid2)["decided_by"] == "gemini"  # remediación sí se permite
+
+
+def test_planner_motivo_that_names_error_types_is_dropped(monkeypatch):
+    # Real con gemini-3.5-flash-lite: el motivo delataba «datos ausentes, escala…».
+    _planner(monkeypatch, '{"activity": "contrast_rows", "params": {"types": ["missing"]}, '
+             '"motivo": "Practicarás a comparar filas con datos ausentes."}')
+    sid = _data_session()
+    state = {"seed": 1, "flags": [3, 7, 25],
+             "extra": {"cell_types": {"3": "missing", "7": "unit", "25": "outlier"}}}
+    aid = client.post(f"/sessions/{sid}/attempts", json={
+        **state, "answer_text": "Observo la fila 25 con presion imposible porque el sensor fallo; "
+        "la 7 en F por conversion; la 3 faltante. Alternativa: imputar en vez de eliminar. "
+        "Reviso mi hipotesis."}, headers=H_S1).json()["id"]
+    _eval_on(sid, aid)
+    resp = client.post(f"/sessions/{sid}/next-intervention", json={"attempt_id": aid},
+                       headers=H_S1)
+    assert resp.json()["decided_by"] == "gemini"
+    assert "ausente" not in resp.text

@@ -178,8 +178,11 @@ def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int 
     extra = extra if isinstance(extra, dict) else {}
     unit = extra.get("unit", "")
     t = (answer_text or "").lower()
+    from app import labs_docker
+
     if unit == "M08-D04-dockerfile":
-        ok = _docker_order_ok(extra.get("order", []))
+        bank = labs_docker.dockerfile_ok(extra.get("order", []))
+        ok = _docker_order_ok(extra.get("order", [])) if bank is None else bank
         mentions_cache = any(k in t for k in ["cach", "capa", "layer", "orden"])
         mentions_extra = any(k in t for k in ["dockerignore", "expose", "latest", "version"])
         scores = {
@@ -190,8 +193,10 @@ def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int 
             "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
         }
     elif unit == "M08-D07-persistence":
-        pred, obs = extra.get("predicted"), extra.get("observed")
-        match = pred is not None and obs is not None and bool(pred) == bool(obs)
+        pred, mount = extra.get("predicted"), extra.get("mount")
+        # Verdad del servidor, no la observación que calculó el cliente.
+        match = pred is not None and mount in labs_docker.MOUNTS and (
+            bool(pred) == (mount != "sin montaje"))
         mentions_mount = any(k in t for k in ["volumen", "volume", "montaje", "mount", "bind"])
         scores = {
             "exactitud": 4 if match else (2 if pred is not None else 0),
@@ -205,8 +210,10 @@ def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int 
         mentions_cases = sum(
             1 for k in ["servidor", "reproduc", "driver", "maquina", "pc"] if k in t)
         mentions_limits = any(k in t for k in ["efímero", "efimero", "localhost", "persist"])
+        hits = labs_docker.d01_hits(seed, extra.get("choices"))
         scores = {
-            "exactitud": 4 if mentions_kernel and mentions_cases >= 2 else (2 if mentions_kernel else 0),
+            "exactitud": (4 if hits == 3 else 2 if hits == 2 else 0) if hits is not None else
+            (4 if mentions_kernel and mentions_cases >= 2 else (2 if mentions_kernel else 0)),
             "evidencia": 4 if mentions_cases >= 2 else (2 if mentions_cases >= 1 else 0),
             "causal": 2 if mentions_limits else 0,
             "alternativas": 2 if "vm" in t or "máquina" in t or "maquina" in t else 0,
@@ -215,8 +222,10 @@ def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int 
     elif unit == "M08-D02-lifecycle":
         stages = sum(1 for k in ["pull", "build", "run", "stop", "rm"] if k in t)
         mentions_survive = any(k in t for k in ["sobreviv", "imagen", "eliminar", "borrar"])
+        right = labs_docker.d02_right(seed, extra.get("prediction"))
         scores = {
-            "exactitud": 4 if stages >= 4 else (2 if stages >= 2 else 0),
+            "exactitud": (4 if right else 0) if right is not None else
+            (4 if stages >= 4 else (2 if stages >= 2 else 0)),
             "evidencia": 4 if stages >= 3 and mentions_survive else (2 if mentions_survive else 0),
             "causal": 2 if "porqu" in t and mentions_survive else 0,
             "alternativas": 2 if "volumen" in t or "volume" in t else 0,

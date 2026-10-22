@@ -4,6 +4,7 @@ import 'package:json_schema_builder/json_schema_builder.dart';
 
 import '_shared.dart';
 import 'events.dart';
+import '../../labs/data/data_missions.dart' show anomalyTypeLabels;
 
 final driftDistributionExplorer = CatalogItem(
   name: 'DriftDistributionExplorer',
@@ -138,6 +139,15 @@ final dataTableExplorer = CatalogItem(
       'title': S.string(description: 'Título del explorador'),
       'hint': S.string(description: 'Pista de qué buscar'),
       'n_rows': S.number(description: 'Filas de la tabla (ids 0..n-1)'),
+      'rows': S.list(
+          description: 'Filas contrastivas {ref, temp, unit, pressure, line}',
+          items: S.object(properties: {
+            'ref': S.string(),
+            'temp': S.number(),
+            'unit': S.string(),
+            'pressure': S.number(),
+            'line': S.string(),
+          })),
     },
     required: ['hint'],
   ),
@@ -193,6 +203,13 @@ class _DataTableExplorerState extends State<_DataTableExplorer> {
   @override
   Widget build(BuildContext context) {
     final data = widget.ctx.data as Map;
+    final rows = data['rows'];
+    if (rows is List && rows.isNotEmpty) {
+      return _ContrastTable(
+          title: '${data['title'] ?? 'Explora'}',
+          hint: '${data['hint'] ?? ''}',
+          rows: [for (final r in rows) if (r is Map) r]);
+    }
     final cs = Theme.of(context).colorScheme;
     final parsed = _parsed;
     return titledCard(context, '${data['title'] ?? 'Explora'}',
@@ -237,6 +254,141 @@ class _DataTableExplorerState extends State<_DataTableExplorer> {
                     TutorEvents.send('DataTableExplorer', 'argumentSubmitted',
                         {'argument': argument.text, 'flags': parsed});
                   },
+            child: const Text('Enviar hallazgo'),
+          ),
+        ]);
+  }
+}
+
+/// Reto contrastivo: elige una etiqueta y aplícala tocando filas reales que
+/// envió el servidor. Emite evidenceSelected por fila y argumentSubmitted al final.
+class _ContrastTable extends StatefulWidget {
+  final String title;
+  final String hint;
+  final List<Map> rows;
+  const _ContrastTable({required this.title, required this.hint, required this.rows});
+  @override
+  State<_ContrastTable> createState() => _ContrastTableState();
+}
+
+class _ContrastTableState extends State<_ContrastTable> {
+  String label = 'unit';
+  final marks = <String, String>{};
+  final argument = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    argument.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    argument.dispose();
+    super.dispose();
+  }
+
+  void _stamp(String ref) {
+    setState(() {
+      if (marks[ref] == label) {
+        marks.remove(ref);
+      } else {
+        marks[ref] = label;
+      }
+    });
+    TutorEvents.send('DataTableExplorer', 'evidenceSelected',
+        {'ref': ref, 'type': marks[ref] ?? 'sin_anomalia'});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    Widget step(String n, String t) => Padding(
+          padding: const EdgeInsets.only(top: 14, bottom: 6),
+          child: Text('$n · $t', style: tt.labelLarge),
+        );
+    return titledCard(context, widget.title, widget.hint,
+        icon: Icons.table_chart, accent: cs.secondary, children: [
+          step('1', 'Elige una etiqueta'),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final e in anomalyTypeLabels.entries)
+              if (e.key != 'sin_anomalia')
+                ChoiceChip(
+                  key: ValueKey('dte_label_${e.key}'),
+                  label: Text(e.value),
+                  selected: label == e.key,
+                  onSelected: (_) => setState(() => label = e.key),
+                ),
+          ]),
+          step('2', 'Toca las filas donde aplica (otra vez para quitarla)'),
+          for (final r in widget.rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Material(
+                color: marks.containsKey('${r['ref']}')
+                    ? cs.secondaryContainer
+                    : cs.surfaceContainerLow,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                      color: marks.containsKey('${r['ref']}') ? cs.secondary : cs.outlineVariant),
+                ),
+                child: InkWell(
+                  key: ValueKey('dte_row_${r['ref']}'),
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _stamp('${r['ref']}'),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(children: [
+                        SizedBox(
+                          width: 44,
+                          child: Text('${r['ref']}',
+                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                        Expanded(
+                          child: Text(
+                            'temp ${r['temp'] ?? '— ausente'}${r['temp'] == null ? '' : ' °${r['unit']}'}'
+                            ' · presión ${r['pressure'] == null ? '— ausente' : '${r['pressure']} kPa'}'
+                            ' · línea ${r['line']}',
+                            style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
+                          ),
+                        ),
+                        if (marks['${r['ref']}'] != null) ...[
+                          Icon(Icons.flag, size: 16, color: cs.secondary),
+                          const SizedBox(width: 4),
+                          Text(anomalyTypeLabels[marks['${r['ref']}']] ?? '',
+                              style: tt.labelMedium),
+                        ],
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          step('3', 'Explica qué distingue los casos'),
+          TextField(
+            key: const ValueKey('dte_argument'),
+            controller: argument,
+            maxLines: 4,
+            minLines: 2,
+            decoration: const InputDecoration(
+              hintText: '¿Qué evidencia separa un tipo de problema del otro?',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.tonal(
+            key: const ValueKey('dte_send'),
+            onPressed: marks.isEmpty || argument.text.trim().isEmpty
+                ? null
+                : () => TutorEvents.send('DataTableExplorer', 'argumentSubmitted', {
+                      'argument': argument.text,
+                      'classifications': Map<String, String>.of(marks),
+                      'flags': marks.keys.toList(),
+                    }),
             child: const Text('Enviar hallazgo'),
           ),
         ]);

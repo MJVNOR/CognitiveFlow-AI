@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../domain/models/models.dart';
 import '../../ui/academy/view_models/academy_viewmodel.dart';
-import '../../ui/core/widgets/chrome.dart';
+import '../../ui/core/widgets/bench_plate.dart';
+import '../../ui/core/widgets/dial_gauge.dart';
 import '../../ui/core/widgets/strings.dart';
+import '../../ui/labs/docker/docker_units.dart';
 import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/core/themes/cognitive_theme.dart';
 
@@ -57,47 +59,119 @@ class AcademyPage extends ConsumerWidget {
     };
   }
 
-  Widget _labCard(BuildContext context, Lab l, Map statusMap) {
-    final st = statusMap[l.id] as String?;
+  /// Docker Academy: cada unidad implementada es su propia entrada del temario
+  /// (con su secuencia y prerrequisito orientativo), no un modo dentro del lab.
+  Widget _dockerSyllabus(BuildContext context, Lab l, String? st, Map unitStatus) {
     final cs = Theme.of(context).colorScheme;
-    final (icon, iconColor, chipBg, chipFg) = _statusStyle(st, cs);
-    return Card(
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: chipBg,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, size: 20, color: st == null ? iconColor : chipFg),
-        ),
-        title: Text(l.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleSmall),
-        subtitle: l.description.isEmpty
-            ? null
-            : Text(l.description,
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Chip(
-              backgroundColor: chipBg,
-              label: Text(labStatusLabel(st),
-                  style: TextStyle(fontSize: 11, color: chipFg)),
-              visualDensity: VisualDensity.compact,
-              side: BorderSide.none,
+    final tt = Theme.of(context).textTheme;
+    String? statusOf(String code) =>
+        unitStatus[dockerUnits.firstWhere((u) => u.code == code).id] as String?;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _benchRow(context, l, st),
+      for (final u in dockerUnits)
+        Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            key: ValueKey('academy_unit_${u.code}'),
+            onTap: () => context.go('/labs/${l.id}?unit=${u.id}',
+                extra: {'lab_type': l.labType, 'title': l.title}),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(38, 8, 12, 8),
+              child: Row(children: [
+                SizedBox(
+                  width: 40,
+                  child: Text(u.code,
+                      style: tt.labelLarge?.copyWith(color: cs.primary, fontWeight: FontWeight.w700)),
+                ),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(u.title, style: tt.bodyMedium),
+                    if (u.requires != null)
+                      Text(
+                          statusOf(u.requires!) == 'done'
+                              ? 'Requisito cumplido: ${u.requires}'
+                              : 'Conviene dominar antes: ${u.requires}',
+                          style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                  ]),
+                ),
+                // Estado escrito, nunca solo color (DESIGN.md §4).
+                Text(labStatusLabel(statusOf(u.code)),
+                    key: ValueKey('academy_unit_status_${u.code}'),
+                    style: tt.labelSmall?.copyWith(
+                        color: statusOf(u.code) == null ? cs.onSurfaceVariant : cs.primary)),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 18, color: cs.onSurfaceVariant),
+              ]),
             ),
-            Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
-          ],
+          ),
         ),
-        onTap: () => _goLab(context, l),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(38, 2, 12, 10),
+        child: Text('D03, D05, D06 y D08–D12: en preparación.',
+            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
       ),
-    );
+    ]);
+  }
+
+  /// Un puesto del taller: lámpara, nombre y estado escrito (nunca solo color).
+  Widget _benchRow(BuildContext context, Lab l, String? st) {
+    final cs = Theme.of(context).colorScheme;
+    final (icon, iconColor, _, chipFg) = _statusStyle(st, cs);
+    final statusText = labStatusLabel(st);
+    return LayoutBuilder(builder: (context, c) {
+      final wide = c.maxWidth >= 420;
+      return Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: () => _goLab(context, l),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon,
+                    size: 16,
+                    color: st == null ? cs.onSurfaceVariant : iconColor),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        l.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      if (l.description.isNotEmpty)
+                        Text(
+                          l.description,
+                          maxLines: wide ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: cs.onSurfaceVariant, height: 1.3),
+                        ),
+                      if (!wide)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(statusText,
+                              style: TextStyle(fontSize: 11, color: chipFg)),
+                        ),
+                    ],
+                  ),
+                ),
+                if (wide) ...[
+                  const SizedBox(width: 8),
+                  PlateTag(text: statusText, color: chipFg),
+                ],
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right,
+                    size: 18, color: cs.onSurfaceVariant),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   @override
@@ -137,6 +211,7 @@ class AcademyPage extends ConsumerWidget {
           ),
         ),
       AsyncData(:final value) => Builder(builder: (context) {
+        final cs = Theme.of(context).colorScheme;
         final modules = value.modules;
         final labs = value.labs;
         final statusMap = value.statusMap;
@@ -162,6 +237,7 @@ class AcademyPage extends ConsumerWidget {
             ),
           );
         }
+        final done = labs.where((l) => statusMap[l.id] == 'done').length;
         // Objetivo actual: lo en curso primero, si no lo siguiente sin iniciar.
         Lab? current;
         for (final l in labs) {
@@ -170,105 +246,163 @@ class AcademyPage extends ConsumerWidget {
             break;
           }
         }
-        current ??= [for (final l in labs) if ((statusMap[l.id] as String?) == null) l]
-            .firstOrNull;
+        current ??= [
+          for (final l in labs)
+            if ((statusMap[l.id] as String?) == null) l
+        ].firstOrNull;
         final cur = current;
         int doneCount(Iterable<Lab> ls) =>
             ls.where((l) => statusMap[l.id] == 'done').length;
-        Widget moduleHeader(Module m, int total, int done) => Padding(
-              padding: const EdgeInsets.only(top: 16, bottom: 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Semantics(
-                        header: true,
-                        child: Text(m.title,
-                            style: Theme.of(context).textTheme.titleMedium)),
-                  ),
-                  if (total > 0)
-                    Text('$done/$total',
-                        style: Theme.of(context)
-                            .textTheme
-                            .labelMedium
-                            ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant)),
+
+        Widget bay(Module? m, List<Lab> mls) {
+          final d = doneCount(mls);
+          final code = m == null
+              ? 'SIN MÓDULO'
+              : 'M${m.id.replaceAll(RegExp(r'^m'), '').padLeft(2, '0')}';
+          return BenchPlate(
+            code: code,
+            title: m?.title ?? 'Otros puestos',
+            note: '$d/${mls.length}',
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (var i = 0; i < mls.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: cs.outlineVariant),
+                  if (mls[i].labType == 'docker')
+                    _dockerSyllabus(
+                        context, mls[i], statusMap[mls[i].id] as String?, value.dockerUnits)
+                  else
+                    _benchRow(context, mls[i], statusMap[mls[i].id] as String?),
                 ],
-              ),
-            );
+              ],
+            ),
+          );
+        }
+
         return Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
+            constraints: const BoxConstraints(maxWidth: 880),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
-                if (cur != null) ...[
-                  SectionCard(
-                    icon: Icons.track_changes,
-                    title: 'Tu objetivo actual',
-                    trailing: Chip(
-                      label: Text(
-                          labStatusLabel(statusMap[cur.id] as String?),
-                          style: const TextStyle(fontSize: 11)),
-                      visualDensity: VisualDensity.compact,
+                // Cabecera de planta: el avance se mide, no se estima.
+                Row(
+                  children: [
+                    DialGauge(
+                      value: labs.isEmpty ? 0 : done / labs.length,
+                      readout: '$done/${labs.length}',
+                      size: 88,
+                      semanticLabel:
+                          'Avance del taller: $done de ${labs.length} laboratorios terminados.',
                     ),
-                    children: [
-                      Text(cur.title,
-                          style: Theme.of(context).textTheme.titleSmall),
-                      if (cur.description.isNotEmpty)
-                        Text(cur.description,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          FilledButton(
-                            onPressed: () => _goLab(context, cur),
-                            child: const Text('Continuar'),
+                          Text(
+                            'PLANTA DEL TALLER',
+                            style: TextStyle(
+                              fontSize: 10,
+                              letterSpacing: 1.4,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
-                          TextButton(
-                            onPressed: () => context.go('/progress'),
-                            child: const Text('Ver progreso'),
+                          const SizedBox(height: 2),
+                          Text(
+                            done == 0
+                                ? 'Todos los puestos abiertos'
+                                : done == labs.length
+                                    ? 'Todos los puestos cerrados'
+                                    : '$done puestos cerrados',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            'Cada puesto pide una predicción, una manipulación y una justificación.',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant, height: 1.35),
                           ),
                         ],
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (cur != null) ...[
+                  BenchPlate(
+                    code: 'BANCO ACTIVO',
+                    title: labStatusLabel(statusMap[cur.id] as String?),
+                    tint: cs.primaryContainer.withValues(alpha: 0.5),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Tu objetivo actual',
+                            style: TextStyle(
+                              fontSize: 10,
+                              letterSpacing: 1.1,
+                              fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant,
+                            )),
+                        const SizedBox(height: 4),
+                        Text(cur.title,
+                            style: Theme.of(context).textTheme.titleMedium),
+                        if (cur.description.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(cur.description,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodyMedium),
+                          ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                  minimumSize: const Size(0, 44)),
+                              onPressed: () => _goLab(context, cur),
+                              child: const Text('Continuar'),
+                            ),
+                            TextButton(
+                              onPressed: () => context.go('/progress'),
+                              child: const Text('Ver progreso'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 12),
                 ],
-                for (final m in modules) ...[
-                  Builder(builder: (context) {
+                // Planta del taller: en escritorio los puestos van en dos
+                // columnas; en móvil, una sola (sin horizontal scroll).
+                Builder(builder: (context) {
+                  final bays = <Widget>[];
+                  for (final m in modules) {
                     final mls = [
                       for (final l in labs)
                         if (l.moduleId == m.id) l
                     ];
-                    if (mls.isEmpty) return const SizedBox.shrink();
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                    if (mls.isNotEmpty) bays.add(bay(m, mls));
+                  }
+                  if (orphans.isNotEmpty) bays.add(bay(null, orphans));
+                  return LayoutBuilder(builder: (context, c) {
+                    final two = c.maxWidth >= 760 && bays.length > 1;
+                    final w = two ? (c.maxWidth - 12) / 2 : c.maxWidth;
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
                       children: [
-                        moduleHeader(m, mls.length, doneCount(mls)),
-                        for (final l in mls) _labCard(context, l, statusMap),
+                        for (final b in bays) SizedBox(width: w, child: b),
                       ],
                     );
-                  }),
-                ],
-                if (orphans.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16, bottom: 4),
-                    child: Semantics(
-                        header: true,
-                        child: Text('Otros',
-                            style:
-                                Theme.of(context).textTheme.titleMedium)),
-                  ),
-                  for (final l in orphans) _labCard(context, l, statusMap),
-                ],
+                  });
+                }),
               ],
             ),
           ),
@@ -346,4 +480,3 @@ class LabsPage extends ConsumerWidget {
     };
   }
 }
-

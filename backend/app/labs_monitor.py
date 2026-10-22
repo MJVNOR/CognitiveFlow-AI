@@ -3,6 +3,8 @@ import random
 
 FEATURES = ["temp", "pressure", "vibration"]
 N_BINS = 12
+SERIES_N = 180
+_BASE = {"temp": 70, "pressure": 50, "vibration": 50}
 
 
 def _hist(values: list[float], lo: float, hi: float) -> list[int]:
@@ -14,13 +16,22 @@ def _hist(values: list[float], lo: float, hi: float) -> list[int]:
 
 
 def generate(seed: int = 1, n: int = 200) -> dict:
-    """Solo 'temp' deriva (+6 media desde índice 120 de la serie). Retorna verdad solo-backend."""
+    """Una feature deriva desde un punto de cambio. Semilla 1 (práctica): 'temp'
+    +6 desde t=120 (fijo: sesiones y tests dependen de ello). Otras semillas
+    (postest): otra feature, otro punto y otro sentido. Verdad solo-backend."""
     rnd = random.Random(seed)
-    ref = {f: [rnd.gauss(70 if f == "temp" else 50, 5) for _ in range(n)] for f in FEATURES}
+    if seed == 1:
+        feat, cp, shift = "temp", 120, 6
+    else:
+        feat, cp, shift = rnd.choice(FEATURES), rnd.randint(60, 150), rnd.choice([-7, -6, 6, 7])
+    ref = {f: [rnd.gauss(_BASE[f], 5) for _ in range(n)] for f in FEATURES}
     cur = {f: list(v) for f, v in ref.items()}
     drift_n = 60
-    cur["temp"] = cur["temp"][:-drift_n] + [rnd.gauss(76, 5) for _ in range(drift_n)]
-    series = [rnd.gauss(70, 3) for _ in range(120)] + [rnd.gauss(76, 3) for _ in range(60)]
+    cur[feat] = cur[feat][:-drift_n] + [rnd.gauss(_BASE[feat] + shift, 5) for _ in range(drift_n)]
+    series = ([rnd.gauss(_BASE[feat], 3) for _ in range(cp)]
+              + [rnd.gauss(_BASE[feat] + shift, 3) for _ in range(SERIES_N - cp)])
+    by_feature = {f: series if f == feat else [rnd.gauss(_BASE[f], 3) for _ in range(SERIES_N)]
+                  for f in FEATURES}
     lo, hi = 40.0, 100.0
     return {
         "features": {
@@ -28,6 +39,8 @@ def generate(seed: int = 1, n: int = 200) -> dict:
                   "ref": _hist(ref[f], lo, hi), "cur": _hist(cur[f], lo, hi)}
             for f in FEATURES
         },
+        # "series" = la serie de la feature que deriva (contrato previo); por feature, aditivo.
         "series": [round(v, 1) for v in series],
-        "truth": {"drifted_feature": "temp", "changepoint": 120, "kind": "data_drift"},
+        "series_by_feature": {f: [round(v, 1) for v in s] for f, s in by_feature.items()},
+        "truth": {"drifted_feature": feat, "changepoint": cp, "kind": "data_drift"},
     }

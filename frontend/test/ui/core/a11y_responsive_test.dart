@@ -6,7 +6,7 @@ import 'package:cognitiveflow/ui/tutor/tutor_surface.dart';
 import 'package:cognitiveflow/ui/labs/widgets/concept_primer.dart';
 import 'package:cognitiveflow/ui/labs/widgets/hist_chart.dart';
 import 'package:cognitiveflow/ui/core/widgets/chrome.dart';
-import 'package:cognitiveflow/ui/labs/widgets/lab_chrome.dart';
+import 'package:cognitiveflow/ui/labs/workspace/learning_studio.dart';
 
 // Sprint 5: accesibilidad, teclado, responsive y densidad (pantallas similares
 // a screenshots, sin red).
@@ -23,7 +23,13 @@ void main() {
         home: Scaffold(
           body: ListView(
             children: [
-              const LabHeader(objective: 'Objetivo largo de prueba para móvil', step: 1),
+              const StudioHeader(
+                crumbs: [('Academia', null), ('Módulo M03', null), ('Curvas', null)],
+                title: 'Objetivo largo de prueba para móvil',
+                missionLabel: 'Misión 1 de 5 · Predice antes de experimentar',
+                done: 1,
+                total: 5,
+              ),
               ConceptPrimer(objective: const {
                 'title': 'Título del concepto con texto suficiente',
                 'concept_summary': 'Resumen con varias palabras para forzar el ajuste.',

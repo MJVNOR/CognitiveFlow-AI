@@ -52,7 +52,14 @@ class LabSessionViewModel extends Notifier<LabSession> {
       String widgetType, String eventType, Map<String, Object?> payload) async {
     final sid = state.sessionId;
     if (sid == null) return;
-    await _sessions.emitEvent(sid, widgetType, eventType, payload);
+    final r = await _sessions.emitEvent(sid, widgetType, eventType, payload);
+    final check = r['check'];
+    if (check is Map) {
+      state.scenarioCheck = Map<String, dynamic>.from(check);
+      _emit();
+    }
+    // Responder el reto puede habilitar el postest: lo decide el servidor.
+    if (state.intervention != null && !state.canEnterPosttest) await refreshGate();
   }
 
   /// evaluate y socratic en try separados: si la pregunta falla, la
@@ -90,11 +97,31 @@ class LabSessionViewModel extends Notifier<LabSession> {
     final aid = s.attemptId;
     if (sid == null || aid == null) return;
     s.nextError = null;
+    s.scenarioCheck = null;
     try {
       s.intervention = await _sessions.nextIntervention(sid, aid);
     } catch (e) {
       s.nextError = 'No llegó la actividad: $e';
     }
+    // Un reto sin entrega (pregunta socrática) ya habilita el postest.
+    if (s.intervention != null) await refreshGate();
+    _emit();
+  }
+
+  /// Relee del servidor si el postest ya está habilitado (tras responder un reto).
+  Future<void> refreshGate() async {
+    final sid = state.sessionId;
+    if (sid == null) return;
+    try {
+      final det = await _sessions.sessionDetail(sid);
+      state.canEnterPosttest = det['can_enter_posttest'] == true;
+      final am = det['assistance'];
+      if (am is Map) {
+        state.assistance = {
+          for (final e in am.entries) '${e.key}': (e.value as num).toInt()
+        };
+      }
+    } catch (_) {}
     _emit();
   }
 
@@ -131,11 +158,13 @@ class LabSessionViewModel extends Notifier<LabSession> {
           s.posttestSent = true;
         } else if (am['id'] != null) {
           s.attemptId = am['id'] as String;
+          s.lastInput = {...input, 'answer_text': am['answer'] ?? ''};
         }
       }
       final le = det['last_eval'];
       s.evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
       s.level = det['level'] as String?;
+      s.canEnterPosttest = det['can_enter_posttest'] == true;
       final am = det['assistance'];
       s.assistance = am is Map
           ? {for (final e in am.entries) '${e.key}': (e.value as num).toInt()}
@@ -145,6 +174,10 @@ class LabSessionViewModel extends Notifier<LabSession> {
       s.intervention = null;
       try {
         s.tutorHistory = await _sessions.tutorHistory(sid);
+        // La última pregunta ya está en el servidor: se restaura sin re-preguntar.
+        if (!s.posttestMode && s.evalResult != null && s.tutorHistory.isNotEmpty) {
+          s.socraticQ = '${s.tutorHistory.last['question'] ?? ''}';
+        }
       } catch (_) {}
       // Sprint 1: restaurar la última actividad al reanudar (sin re-evaluar ni gastar).
       if (!s.posttestMode) {
@@ -233,6 +266,9 @@ class LabSessionViewModel extends Notifier<LabSession> {
 
   Future<Map<String, dynamic>> fetchDistributions(String labId, int seed) =>
       _labs.fetchDistributions(labId, seed);
+
+  Future<Map<String, dynamic>> fetchDockerActivity(String labId, String unit, int seed) =>
+      _labs.fetchDockerActivity(labId, unit, seed);
 
   // Borradores (sobreviven a salir del lab).
   Future<String?> loadDraft(String labId, String field) =>

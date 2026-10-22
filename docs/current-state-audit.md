@@ -133,3 +133,26 @@ migraciones sin pérdida. `flutter build web` compila (main.dart.js 3.7 MB);
 binarios nativos desktop/móvil no compilados (el target desplegable es web).
 Sprint 5: #2 y #3 marcados; #1 parcial (auditoría técnica, falta captura visual);
 #4 parcial (docs+respaldo hechos); #5 protocolo listo, ejecución pendiente.
+
+## 20. PR-UX01 — línea base pre-workspace (2026-10-17, rediseño)
+
+Rama `main` (ahead 1, commit `54bea7d`); sin rama nueva: un PR a la vez sobre
+main. Sin cambios funcionales en este paso (solo docs).
+
+- Flutter 3.47.7 / Dart 3.13.5 / `uv` 0.11.16 (Windows, `web-server` para run).
+- `cd backend; uv run pytest -q` → **78 passed, 1 skipped**
+  (`test_jev_live_opt_in`, requiere `JEV_LIVE_TEST=1`).
+- `cd frontend; flutter test` → **71 passed** (`All tests passed!`).
+- `cd frontend; flutter analyze --no-pub` → **No issues found!**
+- Backend real disponible; contratos en §3 de este audit (no se inventan
+  endpoints). `SCHEMA_VERSION=1`, CATALOG 16 (backend) / 16 (frontend).
+- GenUI funcional vs `_simpleCard` (`ml_widgets.dart:10`):
+  placeholder `_simpleCard`: `ChoiceReasoningWidget`, `SqlQueryWorkbench`,
+  `ConceptMapBuilder`, `PipelineDAGBuilder`, `RubricFeedbackCard`,
+  `ReflectionSummary`. Reales: `ContainerVsVmExplorer`,
+  `ImageContainerLifecycle`, `DockerfileWorkbench`, `PersistenceExperiment`,
+  `LearningCurveSimulator`, `DataTableExplorer`, `DriftDistributionExplorer`,
+  `EvidenceComparison`, `SocraticQuestionCard`, `HypothesisEditor`.
+- D01desktop/tablet/móvil: capturas pendientes — sin navegador en este entorno
+  (mismo límite que §17). Se sustituyen por tests de viewport/overflow en UX02.
+- Errores iniciales: ninguno (tests + analyze limpios).

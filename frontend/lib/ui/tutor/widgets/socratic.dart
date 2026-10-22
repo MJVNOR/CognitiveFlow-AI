@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:genui/genui.dart';
 import 'package:json_schema_builder/json_schema_builder.dart';
 
+import '../../labs/widgets/curve_chart.dart';
 import '_shared.dart';
 import 'events.dart';
 
@@ -128,6 +129,13 @@ final hypothesisEditor = CatalogItem(
     properties: {
       'title': S.string(description: 'Título del editor'),
       'hypothesis': S.string(description: 'Hipótesis inicial'),
+      'complexity': S.number(description: 'Complejidad del escenario nuevo (ML)'),
+      'curve': S.object(
+          description: 'Curvas simuladas del escenario {train, val}',
+          properties: {
+            'train': S.list(items: S.number()),
+            'val': S.list(items: S.number()),
+          }),
     },
     required: ['hypothesis'],
   ),
@@ -166,10 +174,25 @@ class _HypothesisEditorState extends State<_HypothesisEditor> {
   @override
   Widget build(BuildContext context) {
     final data = widget.ctx.data as Map;
+    final curve = data['curve'] is Map ? data['curve'] as Map : null;
+    List<num> nums(Object? v) => v is List ? [for (final x in v) if (x is num) x] : const [];
     return titledCard(context, '${data['title'] ?? 'Hipótesis'}',
         '${data['hypothesis'] ?? ''}',
         icon: Icons.edit_note,
         children: [
+          // Escenario nuevo del servidor: curvas con la complejidad del reto.
+          if (curve != null) ...[
+            const SizedBox(height: 8),
+            AccessibleCurveChart(
+              key: const ValueKey('he_curve'),
+              train: nums(curve['train']),
+              val: nums(curve['val']),
+              height: 160,
+              label: data['complexity'] is num
+                  ? 'Curvas con complejidad ${(data['complexity'] as num).round()}'
+                  : 'Curvas del escenario',
+            ),
+          ],
           const SizedBox(height: 8),
           TextField(
             key: const ValueKey('he_field'),

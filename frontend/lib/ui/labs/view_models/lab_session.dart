@@ -34,6 +34,13 @@ class LabSession {
               ? 1
               : 0;
 
+  // UX: el servidor decide si el postest está habilitado (detalle de sesión).
+  bool canEnterPosttest = false;
+  // Último intento de práctica (input + answer_text) para restaurar evidencia.
+  Map<String, dynamic>? lastInput;
+  // Corrección del servidor a la última entrega del reto ({correctas, revisar}).
+  Map<String, dynamic>? scenarioCheck;
+
   // P4.1: el servidor fija la variante del postest; el cliente la aplica.
   Map<String, dynamic>? posttestVariant;
   Map<String, dynamic>? reflectionSummary;
@@ -61,6 +68,9 @@ class LabSession {
     ..level = level
     ..assistance = assistance == null ? null : Map<String, int>.from(assistance!)
     ..objectives = [for (final o in objectives) Map<String, dynamic>.from(o)]
+    ..canEnterPosttest = canEnterPosttest
+    ..lastInput = lastInput == null ? null : Map<String, dynamic>.from(lastInput!)
+    ..scenarioCheck = scenarioCheck == null ? null : Map<String, dynamic>.from(scenarioCheck!)
     ..posttestVariant = posttestVariant == null
         ? null
         : Map<String, dynamic>.from(posttestVariant!)

@@ -1,4 +1,5 @@
 """Tutor socrático: Gemini Interactions API con fallback mock (etiquetado)."""
+import logging
 import os
 
 import httpx
@@ -72,9 +73,11 @@ async def _gemini_ask(prompt: str) -> str | None:
         return None
     model = os.getenv("LLM_MODEL", "gemini-3.8-flash")
     # ponytail: sin sleep entre reintentos; un solo reintento en 503.
+    # Modelos que razonan antes de responder tardan >10 s con prompts largos.
     for _ in (0, 1):
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
+            wait = float(os.getenv("LLM_TIMEOUT_S", "30"))
+            async with httpx.AsyncClient(timeout=httpx.Timeout(wait, connect=10)) as c:
                 r = await c.post(
                     "https://generativelanguage.googleapis.com/v1beta/interactions",
                     headers={"Content-Type": "application/json", "x-goog-api-key": key},
@@ -84,7 +87,8 @@ async def _gemini_ask(prompt: str) -> str | None:
                 continue
             r.raise_for_status()
             return _extract_text(r.json())
-        except Exception:
+        except Exception as e:  # el llamador cae a reglas/mock; queda el motivo en el log
+            logging.getLogger(__name__).warning("Gemini no respondió: %s", type(e).__name__)
             return None
     return None
 

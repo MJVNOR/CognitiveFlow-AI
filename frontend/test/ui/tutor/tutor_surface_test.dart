@@ -384,4 +384,64 @@ void main() {
     });
     expect(unknown['component'], 'SocraticQuestionCard');
   });
+
+  testWidgets('Docker: el escenario del servidor reemplaza al de ejemplo', (tester) async {
+    final got = <List>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: TutorSurface(
+            intervention: {
+              'widget_type': 'ContainerVsVmExplorer',
+              'widget_parameters': {
+                'title': 'Reto',
+                'parameters': {
+                  'unit': 'M08-D01-containers',
+                  'seed': 4,
+                  'scenarios': ['Uno', 'Dos', 'Tres'],
+                },
+              },
+              'socratic_question': 'Clasifica',
+            },
+            onEvent: (w, e, p) => got.add([w, e, p]),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('2. Dos'), findsOneWidget);
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.byKey(ValueKey('cve_c_$i')));
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const ValueKey('cve_send')));
+    await tester.pump();
+    expect((got.last[2] as Map)['choices'], [0, 0, 0]);
+  });
+
+  testWidgets('HypothesisEditor muestra las curvas del escenario nuevo', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: TutorSurface(intervention: {
+            'widget_type': 'HypothesisEditor',
+            'widget_parameters': {
+              'title': 'Pon a prueba tu idea',
+              'parameters': {
+                'complexity': {'min': 1, 'max': 10, 'initial': 9},
+                'curve': {
+                  'train': [0.6, 0.4, 0.3],
+                  'val': [0.6, 0.5, 0.7],
+                },
+              },
+            },
+            'socratic_question': '¿Qué cambia con complejidad 9?',
+          }),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('he_curve')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('Curvas con complejidad 9')), findsOneWidget);
+  });
 }
