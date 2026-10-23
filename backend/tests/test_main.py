@@ -2452,7 +2452,7 @@ def test_worked_examples_do_not_copy_experiment_cases():
     def norm(t):
         return " ".join(t.lower().replace("¿", "").split())
 
-    banks = {"M08-D01-containers": [t for t, _ in L._D01]}
+    banks = {"M08-D01-containers": [c[0] for c in L._D01]}
     for u, items in L.DECISION_UNITS.items():
         banks[u] = [it[0] if isinstance(it, (list, tuple)) else it["prompt"] for it in items]
     for o in OBJECTIVES:
@@ -2607,3 +2607,137 @@ def test_practice_keeps_being_corrected_with_an_open_challenge():
     # Un `unit` no textual no revienta el endpoint (el cliente no es la verdad).
     assert "check" not in _ev(sid, "ContainerVsVmExplorer", "evidenceSelected",
                               {"unit": ["x"], "choices": [0, 0, 0]}, "op-2")
+
+
+def test_criterion_labels_and_meanings_mirror_the_frontend():
+    """«alternativas» a secas no dice qué escribir: etiqueta y significado, iguales en Flutter."""
+    import pathlib
+    import re
+
+    from app.socratic import CRITERION_LABELS, CRITERION_MEANINGS, criterion_explained
+
+    assert set(CRITERION_MEANINGS) == set(CRITERION_LABELS)
+    assert criterion_explained("alternativas").startswith("alternativas (decir qué harías")
+    dart = (pathlib.Path(__file__).resolve().parents[2]
+            / "frontend/lib/utils/criteria.dart")
+    if not dart.exists():
+        pytest.skip("sin frontend en el checkout")
+    src = dart.read_text(encoding="utf-8")
+    block = src[src.index("criterionMeanings"):]
+    for cid, meaning in CRITERION_MEANINGS.items():
+        pair = re.search(rf"'{cid}': '([^']+)'", block)
+        assert pair and pair.group(1) == meaning, cid
+
+
+def test_focus_makes_the_variant_contrastive_not_random():
+    """Variante dirigida: los casos cambian solo en ese eje, y siempre contrastan."""
+    from app import labs_docker as L
+
+    axes = {c[0]: c[2] for c in L._D01}
+    for seed in range(1, 8):
+        a = L.activity("M08-D01-containers", seed, "kernel")
+        tags = [axes[t] for t in a["scenarios"]]
+        assert a["focus"] == "kernel"
+        assert tags.count("kernel") >= 2  # el eje pedido manda
+        answers = L._d01_answers(seed, "kernel")
+        assert len({answers[t] for t in a["scenarios"]}) == 2  # nunca todas iguales
+    # D02 enfoca la secuencia; un eje de otra unidad se ignora sin romper.
+    for seed in range(1, 6):
+        assert any("--rm" in paso
+                   for paso in L.activity("M08-D02-lifecycle", seed, "efimero")["stages"])
+    assert "focus" not in L.activity("M08-D01-containers", 3, "borrado")
+
+
+def test_planner_receives_verified_decisions(monkeypatch):
+    """Gemini elige con lo que el servidor verificó, no solo con la rúbrica y el texto."""
+    seen = _planner(monkeypatch, '{"activity": "unit_practice", "params": '
+                    '{"unit": "M08-D01-containers", "focus": "kernel"}, '
+                    '"motivo": "Vamos a contrastar qué cambia cuando hace falta otro kernel."}')
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers", "uso contenedor porque sí",
+                          choices=[1, 1, 1])
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1)
+    iv = _intervene_aid(sid, aid)
+    assert "decisiones incorrectas" in seen[0]  # la evidencia viaja en el prompt
+    assert iv["widget_parameters"]["parameters"]["focus"] == "kernel"
+    assert "kernel" in iv["reason"]
+
+
+def test_challenge_closes_its_cycle_with_its_own_justification():
+    """El reto recoge justificación propia y devuelve feedback de ese texto."""
+    import json as _sj
+
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers", "contenedor comparte kernel",
+                          choices=[0, 1, 0])
+    db = TestingSession()
+    db.add(models.InterventionLog(
+        id="ivjust", session_id=sid, attempt_id=aid, strategy="contrast_example",
+        widget_type="ContainerVsVmExplorer",
+        spec_json=_sj.dumps({"widget_parameters": {"parameters": {
+            "unit": "M08-D01-containers", "seed": 4, "focus": "kernel"}}})))
+    db.commit()
+    db.close()
+    r = _ev(sid, "ContainerVsVmExplorer", "argumentSubmitted",
+            {"argument": "Elegí VM porque ese caso necesita su propio kernel; "
+                         "el otro solo aísla procesos sobre el kernel del host."}, "cj-1")
+    # Feedback descriptivo de ESE texto, con su consejo; sin números ni respuesta.
+    assert "mecanismo" in r["check"]["consejo"]
+    assert isinstance(r["check"]["revisar"], list) and "4" not in str(r["check"])
+
+
+def test_instructor_sees_if_the_targeted_variant_stopped_the_error():
+    import json as _sj
+
+    sid = _docker_session()
+    db = TestingSession()
+    db.add(models.InterventionLog(
+        id="ivfocus", session_id=sid, attempt_id="a-f", strategy="contrast_example",
+        widget_type="ContainerVsVmExplorer",
+        spec_json=_sj.dumps({"decided_by": "gemini", "planner": {"outcome": "ok"},
+                              "widget_parameters": {"parameters": {"focus": "kernel"}}})))
+    db.add(models.UiEvent(id="ev-focus", session_id=sid, widget_type="ContainerVsVmExplorer",
+                          event_type="evidenceSelected",
+                          payload_json=_sj.dumps({"server_check": {"revisar": ["1"]}})))
+    db.commit()
+    db.close()
+    stats = client.get("/instructor/planner-stats", headers=H_I1).json()
+    v = stats["docker"]["variantes_dirigidas"]
+    assert v["total"] >= 1 and v["error_repetido"] >= 1
+    assert "no mide eficacia" in v["nota"]
+
+
+def test_evidence_names_the_axis_so_the_variant_can_target_it():
+    """«falló el caso 3» no orienta; «falló el eje kernel» sí."""
+    from app.evaluation import verified_facts
+
+    facts = verified_facts("docker", {"seed": 1, "extra": {
+        "unit": "M08-D01-containers", "choices": [0, 0, 0]}})
+    assert "ejes fallados: kernel" in facts
+    # Sin fallos no inventa ejes.
+    from app.labs_docker import _d01_answers, activity
+
+    ok = [_d01_answers(1)[t] for t in activity("M08-D01-containers", 1)["scenarios"]]
+    assert "ejes fallados: ninguno" in verified_facts(
+        "docker", {"seed": 1, "extra": {"unit": "M08-D01-containers", "choices": ok}})
+
+
+def test_justification_feedback_is_not_counted_as_repeating_the_error():
+    """Faltar criterios al explicar no es «volvió a fallar la decisión»."""
+    import json as _sj
+
+    sid = _docker_session()
+    db = TestingSession()
+    db.add(models.InterventionLog(
+        id="ivfocus2", session_id=sid, attempt_id="a-f2", strategy="contrast_example",
+        widget_type="ContainerVsVmExplorer",
+        spec_json=_sj.dumps({"decided_by": "gemini", "planner": {"outcome": "ok"},
+                             "widget_parameters": {"parameters": {"focus": "kernel"}}})))
+    db.add(models.UiEvent(
+        id="ev-arg", session_id=sid, widget_type="ContainerVsVmExplorer",
+        event_type="argumentSubmitted",
+        payload_json=_sj.dumps({"server_check": {"revisar": ["alternativas"], "item": None}})))
+    db.commit()
+    db.close()
+    v = client.get("/instructor/planner-stats", headers=H_I1).json()["docker"]
+    assert v["variantes_dirigidas"]["sin_entrega"] >= 1

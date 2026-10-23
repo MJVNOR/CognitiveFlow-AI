@@ -199,11 +199,16 @@ class ScenarioStage extends StatelessWidget {
   final bool scenarioDone;
   final void Function(String widgetType, String eventType, Map<String, Object?> payload)
       onEvent;
+
+  /// Justificación propia del reto: manipular, decidir y explicar aquí mismo.
+  /// null = este reto no la pide (su widget es toda la fase).
+  final Widget? justification;
   const ScenarioStage({
     super.key,
     required this.lab,
     required this.scenarioDone,
     required this.onEvent,
+    this.justification,
   });
 
   @override
@@ -242,6 +247,7 @@ class ScenarioStage extends StatelessWidget {
             ]),
           ),
         if (lab.scenarioCheck != null) CheckView(check: lab.scenarioCheck!),
+        if (justification case final j?) ...[const SizedBox(height: 16), j],
       ],
     );
   }

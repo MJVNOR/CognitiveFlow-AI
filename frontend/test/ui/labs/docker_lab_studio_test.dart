@@ -238,6 +238,19 @@ void main() {
     await tester.ensureVisible(_key('dw_up_1'));
     await tester.tap(_key('dw_up_1')); // el reto se entrega al reordenar
     await tester.pumpAndSettle();
+    // El reto cierra su ciclo: decidir, explicar y recibir feedback de esa explicación.
+    expect(_key('docker_goto_mastery'), findsNothing);
+    expect(tester.widget<ButtonStyleButton>(_key('docker_challenge_send')).onPressed, isNull);
+    await tester.enterText(_key('docker_challenge_justification'),
+        'Puse COPY del código al final porque esa capa cambia en cada build');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(_key('docker_challenge_send'));
+    await tester.tap(_key('docker_challenge_send'));
+    await tester.pumpAndSettle();
+    final arg = api.events.last;
+    expect(arg['event_type'], 'argumentSubmitted');
+    expect((arg['payload'] as Map)['argument'], contains('capa cambia'));
+    expect(find.textContaining('Nombra el mecanismo'), findsOneWidget);
     expect(tester.widget<ButtonStyleButton>(_key('docker_goto_mastery')).onPressed, isNotNull);
   });
 

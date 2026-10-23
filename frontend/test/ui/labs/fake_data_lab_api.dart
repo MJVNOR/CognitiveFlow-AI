@@ -250,6 +250,20 @@ class FakeDataLabApi extends ApiClient {
           },
         };
       }
+      // Reto Docker: su justificación propia también recibe feedback del servidor.
+      if (body['event_type'] == 'argumentSubmitted' &&
+          (body['payload'] as Map)['unit'] == null) {
+        return {
+          'id': body['client_event_id'],
+          'deduped': false,
+          'check': {
+            'correctas': ['causalidad'],
+            'revisar': ['alternativas'],
+            'item': null,
+            'consejo': 'Nombra el mecanismo y cita qué observaste en este reto.',
+          },
+        };
+      }
       // Práctica Docker: el servidor corrige la entrega al momento (D03: 2.º caso mal).
       if (body['widget_type'] == 'ImageContainerLifecycle' &&
           stage != FakeStage.posttest && stage != FakeStage.done &&

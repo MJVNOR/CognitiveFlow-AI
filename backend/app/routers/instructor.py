@@ -112,6 +112,22 @@ def instructor_planner_stats(user=Depends(require_instructor), db: Session = Dep
     labs = {t.id: t.lab_type for t in db.query(models.LabTemplate).all()}
     sess = {s.id: labs.get(s.lab_template_id, "?")
             for s in db.query(models.LearningSession).all()}
+    # Resultado de los retos: el evento de entrega del reto no lleva `unit`
+    # (ese campo marca la práctica) y guarda la corrección del servidor.
+    outcomes: dict = {}
+    for e in db.query(models.UiEvent).all():
+        try:
+            payload = json.loads(e.payload_json)
+        except ValueError:
+            continue
+        chk = payload.get("server_check") if isinstance(payload, dict) else None
+        if not isinstance(chk, dict) or payload.get("unit"):
+            continue
+        # Solo las decisiones del reto: el feedback de la justificación lista
+        # criterios a reforzar y contarlo como «mismo error» sería engañoso.
+        if e.event_type == "argumentSubmitted" and not chk.get("item"):
+            continue
+        outcomes.setdefault(e.session_id, []).append((e.widget_type, bool(chk.get("revisar"))))
     out: dict = {}
     for log in db.query(models.InterventionLog).all():
         try:
@@ -122,14 +138,30 @@ def instructor_planner_stats(user=Depends(require_instructor), db: Session = Dep
             continue
         p = spec.get("planner") if isinstance(spec.get("planner"), dict) else {}
         row = out.setdefault(sess.get(log.session_id, "?"),
-                             {"total": 0, "gemini": 0, "reglas": 0, "motivos": {}, "ms": []})
+                             {"total": 0, "gemini": 0, "reglas": 0, "motivos": {}, "ms": [],
+                              "variantes_dirigidas": {"total": 0, "error_repetido": 0,
+                                                      "resuelto": 0, "sin_entrega": 0}})
         row["total"] += 1
+        # ¿La variante dirigida evitó que repitiera el error? Señal exploratoria.
+        params = ((spec.get("widget_parameters") or {}).get("parameters") or {})
+        if params.get("focus"):
+            v = row["variantes_dirigidas"]
+            v["total"] += 1
+            pend = [o for o in outcomes.get(log.session_id, []) if o[0] == log.widget_type]
+            if not pend:
+                v["sin_entrega"] += 1
+            else:
+                v["error_repetido" if pend.pop(0)[1] else "resuelto"] += 1
         row["gemini" if spec.get("decided_by") == "gemini" else "reglas"] += 1
         reason = p.get("outcome", "sin_registro")
         row["motivos"][reason] = row["motivos"].get(reason, 0) + 1
         if isinstance(p.get("ms"), int):
             row["ms"].append(p["ms"])
     for row in out.values():
+        if row["variantes_dirigidas"]["total"]:
+            row["variantes_dirigidas"]["nota"] = (
+                "Exploratorio: cuenta si tras la variante dirigida quedó algo por revisar. "
+                "Con pocos estudiantes no mide eficacia.")
         ms = sorted(row.pop("ms"))
         row["latencia_ms"] = ({"mediana": ms[len(ms) // 2], "max": ms[-1], "n": len(ms)}
                               if ms else None)

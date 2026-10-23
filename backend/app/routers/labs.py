@@ -277,8 +277,10 @@ def record_event(session_id: str, body: EventIn, user=Depends(current_user),
 
 
 def _checked_event(body: EventIn) -> bool:
-    """Se corrige la entrega del widget y también cada selección intermedia."""
-    return body.event_type in (SUBMIT_EVENT.get(body.widget_type), "selectionChanged")
+    """Se corrige la entrega del widget, cada selección intermedia y la
+    justificación con la que el reto cierra su ciclo."""
+    return body.event_type in (SUBMIT_EVENT.get(body.widget_type), "selectionChanged",
+                               "argumentSubmitted")
 
 
 def _scenario_check(db: Session, session_id: str, body: EventIn) -> dict | None:

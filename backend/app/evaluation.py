@@ -410,8 +410,12 @@ def verified_facts(lab_type: str, state: dict) -> str | None:
 
         unit = extra.get("unit", "")
         c = labs_docker.check(unit, seed, extra) or {}
+        # El eje dice de qué trata el caso fallado; el número suelto no orienta nada.
+        ax = labs_docker.failed_axes(unit, seed, extra)
+        ejes = (f"; ejes fallados: {', '.join(ax['fallados']) or 'ninguno'}"
+                f"; ejes acertados: {', '.join(ax['acertados']) or 'ninguno'}")
         return (f"unidad {unit}; decisiones correctas: {c.get('correctas', [])}; "
-                f"decisiones incorrectas: {c.get('revisar', [])}")
+                f"decisiones incorrectas: {c.get('revisar', [])}{ejes}")
     if lab_type == "data_detective":
         from app.labs_data import generate
 

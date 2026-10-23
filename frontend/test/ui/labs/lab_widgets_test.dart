@@ -19,6 +19,13 @@ void main() {
     expect(criterionLabel('otro'), 'otro');
   });
 
+  test('criterionExplained dice qué pide el criterio, no solo su nombre', () {
+    expect(criterionExplained('alternativas'),
+        'Alternativas (decir qué harías en otro caso, o qué opción descartaste y por qué)');
+    expect(criterionExplained('metacognicion'), contains('tu predicción inicial'));
+    expect(criterionExplained('otro'), 'otro'); // id desconocido: sin inventar significado
+  });
+
   testWidgets('ConceptPrimer muestra concepto, ejemplo resuelto y errores comunes', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

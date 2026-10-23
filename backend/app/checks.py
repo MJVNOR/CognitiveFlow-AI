@@ -5,9 +5,14 @@ los textos libres los juzga Jev (EVALUATOR_MODE=jev); el mock determinista solo 
 import os
 
 from app import labs_docker
-from app.evaluation import mock_evaluate, mock_evaluate_data, mock_evaluate_monitor
+from app.evaluation import (
+    mock_evaluate,
+    mock_evaluate_data,
+    mock_evaluate_docker,
+    mock_evaluate_monitor,
+)
 from app.interventions import DOCKER_WIDGETS, check_data_contrast
-from app.socratic import CRITERION_LABELS
+from app.socratic import CRITERION_LABELS, criterion_explained
 
 _DATA_TIP = ("Compara su evidencia con las demás y cambia la etiqueta "
              "(o quítala si no hay anomalía); luego reenvía.")
@@ -21,7 +26,7 @@ def _text(result: dict, tip: str) -> dict:
     crits = result.get("criteria", [])
     ok = [CRITERION_LABELS.get(c["id"], c["id"]) for c in crits if c.get("score", 0) >= 3]
     weak = sorted((c for c in crits if c.get("score", 0) <= 1), key=lambda c: c.get("score", 0))
-    return {"correctas": ok, "revisar": [CRITERION_LABELS.get(c["id"], c["id"]) for c in weak[:2]],
+    return {"correctas": ok, "revisar": [criterion_explained(c["id"]) for c in weak[:2]],
             "item": None, "consejo": tip}
 
 
@@ -64,7 +69,17 @@ def check_challenge(lab_type: str, widget: str, payload: dict, spec: dict,
 
     if widget in DOCKER_WIDGETS.values():
         unit = params.get("unit") or next(u for u, w in DOCKER_WIDGETS.items() if w == widget)
-        return labs_docker.check(unit, int(params.get("seed") or _seed(state)), p)
+        seed = int(params.get("seed") or _seed(state))
+        # El reto cierra su ciclo con una justificación propia: se juzga ese texto.
+        argument = p.get("argument")
+        if isinstance(argument, str) and argument.strip():
+            # Solo el texto: las decisiones del reto ya las corrigió el servidor y
+            # las de la práctica son de otro escenario (mezclarlas puntuaría en falso).
+            res = _judged(lab_type, argument, state,
+                          lambda: mock_evaluate_docker(argument, {"unit": unit}, seed))
+            return _text(res, "Nombra el mecanismo (kernel, capa, red o volumen) y cita qué "
+                              "observaste en este reto, no en la práctica.")
+        return labs_docker.check(unit, seed, p)
 
     if widget == "EvidenceComparison":
         sel = p.get("selection")

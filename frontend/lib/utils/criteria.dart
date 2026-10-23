@@ -13,6 +13,22 @@ const criterionLabels = {
 
 String criterionLabel(String id) => criterionLabels[id] ?? id;
 
+/// Qué pide cada criterio, en palabras del alumno: la etiqueta sola («Alternativas»)
+/// no dice qué escribir. Infinitivo para que sirva igual como logro y como falta.
+const criterionMeanings = {
+  'exactitud': 'nombrar el concepto correcto y decidir bien',
+  'evidencia': 'citar lo que hiciste y observaste en el experimento',
+  'causal': 'explicar por qué ocurre, no solo qué ocurre',
+  'alternativas': 'decir qué harías en otro caso, o qué opción descartaste y por qué',
+  'metacognicion': 'revisar tu predicción inicial: qué cambiaste y por qué',
+};
+
+/// «Alternativas (decir qué harías en otro caso…)»; sin explicación, la etiqueta sola.
+String criterionExplained(String id) {
+  final m = criterionMeanings[id];
+  return m == null ? criterionLabel(id) : '${criterionLabel(id)} ($m)';
+}
+
 // P4.2: línea inicial→postest desde mapas {criterio: score 0-4}; null si no comparable.
 String? progressLine(Map? base, Map? post) {
   double? avg(Map? m) {

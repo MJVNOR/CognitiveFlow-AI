@@ -3,7 +3,8 @@
 // Jev/mock existen, pero solo dentro de «Detalle de la rúbrica».
 import 'package:flutter/material.dart';
 
-import '../../../utils/criteria.dart' show criterionLabel;
+import '../../../utils/criteria.dart'
+    show criterionExplained, criterionLabel, criterionMeanings;
 import '../../core/motion.dart';
 
 class LearningFeedbackView extends StatelessWidget {
@@ -62,7 +63,7 @@ class LearningFeedbackView extends StatelessWidget {
         color: cs.primary,
         title: 'Qué hiciste bien',
         body: [
-          if (best != null) criterionLabel('$best'),
+          if (best != null) criterionExplained('$best'),
           ?strengthEvidence,
           if (gemini.isNotEmpty) gemini,
         ].join('. '),
@@ -72,7 +73,7 @@ class LearningFeedbackView extends StatelessWidget {
         color: cs.secondary,
         title: 'Qué evidencia falta',
         body: [
-          if (worst != null) 'A reforzar: ${criterionLabel('$worst')}',
+          if (worst != null) 'Falta ${criterionExplained('$worst')}',
           ?gapEvidence,
         ].join('. '),
       ),
@@ -115,11 +116,19 @@ class LearningFeedbackView extends StatelessWidget {
               for (final c in crits)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(children: [
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Icon((c['score'] as num) >= 2 ? Icons.check : Icons.remove,
                         size: 16, color: cs.onSurfaceVariant),
                     const SizedBox(width: 8),
-                    Expanded(child: Text(criterionLabel('${c['id']}'))),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(criterionLabel('${c['id']}')),
+                        // La etiqueta sola no dice qué escribir: va su significado.
+                        if (criterionMeanings['${c['id']}'] != null)
+                          Text('${criterionMeanings['${c['id']}']}',
+                              style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                      ]),
+                    ),
                     Text('${c['score']} / 4',
                         style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
                   ]),
@@ -127,8 +136,10 @@ class LearningFeedbackView extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 6, bottom: 8),
                 child: Text(
-                    'Evidencia orientativa, no una nota de dominio. '
-                    'El dominio se demuestra en la prueba sin ayuda.',
+                    '${isJev ? 'Jev es un evaluador automático: lee tu explicación junto con lo '
+                        'que el servidor comprobó de tus decisiones y puntúa cada criterio.' : 'Evaluación simulada: reglas fijas del servidor, sin evaluador real.'} '
+                    'Evidencia orientativa, no una nota de dominio: el dominio se '
+                    'demuestra en la prueba sin ayuda.',
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               ),
             ],

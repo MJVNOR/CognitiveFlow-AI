@@ -139,6 +139,9 @@ void main() {
     await tester.tap(_key('rubric_detail'));
     await tester.pumpAndSettle();
     expect(find.text('2 / 4'), findsWidgets);
+    // Cada criterio dice qué pide, y la rúbrica explica quién evaluó.
+    expect(find.textContaining('qué harías en otro caso'), findsWidgets);
+    expect(find.textContaining('Evaluación simulada'), findsWidgets);
 
     await tester.tap(_key('next_activity'));
     await tester.pumpAndSettle();

@@ -32,6 +32,10 @@ class DockerLabPage extends ConsumerStatefulWidget {
 class _DockerState extends ConsumerState<DockerLabPage> {
   late DockerUnit unit = dockerUnitById(widget.unit);
   final justification = TextEditingController();
+
+  /// Justificación del reto: su propio ciclo (decidir → explicar → feedback).
+  final challengeJustification = TextEditingController();
+  bool challengeArgumentSent = false;
   final hintsShown = <String, int>{};
   final titleFocus = FocusNode(debugLabel: 'mission-title');
   final scrollCtrl = ScrollController();
@@ -64,6 +68,7 @@ class _DockerState extends ConsumerState<DockerLabPage> {
   static const _draftFields = [
     'unit', 'justification', 'mission_max', 'hints', 'interacted', 'post_justification',
     'evidence', 'post_evidence', 'post_interacted',
+    'challenge_justification', 'challenge_sent',
   ];
 
   @override
@@ -73,12 +78,17 @@ class _DockerState extends ConsumerState<DockerLabPage> {
       _vm.saveDraft(_draftScope, _k('justification'), justification.text);
       setState(() {});
     });
+    challengeJustification.addListener(() {
+      _vm.saveDraft(_draftScope, 'challenge_justification', challengeJustification.text);
+      setState(() {});
+    });
     _init();
   }
 
   @override
   void dispose() {
     justification.dispose();
+    challengeJustification.dispose();
     titleFocus.dispose();
     scrollCtrl.dispose();
     super.dispose();
@@ -121,7 +131,11 @@ class _DockerState extends ConsumerState<DockerLabPage> {
     final hs = await _vm.loadDraft(_draftScope, 'hints');
     final it = await _vm.loadDraft(_draftScope, _k('interacted'));
     final evidence = await _vm.loadDraft(_draftScope, _k('evidence'));
+    final cj = await _vm.loadDraft(_draftScope, 'challenge_justification');
+    final cs = await _vm.loadDraft(_draftScope, 'challenge_sent');
     if (!mounted) return;
+    if (cj != null) challengeJustification.text = cj;
+    challengeArgumentSent = cs == '1';
     // La justificación vive en el experimento: sin envío, la frontera es experimentar.
     localMax = (int.tryParse(mm ?? '') ?? 0).clamp(0, dkExperiment);
     if (_snap.lastInput == null && !inPosttestPhase(_snap)) {
@@ -537,6 +551,15 @@ class _DockerState extends ConsumerState<DockerLabPage> {
       case dkScenario:
         if (_postPhase) return backToCurrent;
         if (!scenarioDone) return null; // la CTA es la del propio widget GenUI
+        if (!challengeArgumentSent) {
+          // El reto cierra su ciclo: decidir, explicar y recibir feedback de eso.
+          final ok = challengeJustification.text.trim().isNotEmpty;
+          return bar('Evaluar mi explicación', Icons.fact_check_outlined,
+              ok ? _sendChallengeArgument : null,
+              key: 'docker_challenge_send',
+              // Breve: al 200 % de texto en 390 px la barra no puede crecer más.
+              helper: ok ? 'Se evalúa tu explicación.' : 'Explica el reto para cerrar.');
+        }
         return bar('Demostrar dominio', Icons.verified_outlined, () => _goto(dkMastery),
             key: 'docker_goto_mastery', helper: 'Ya puedes hacer la prueba sin ayuda.');
       default:
@@ -573,8 +596,12 @@ class _DockerState extends ConsumerState<DockerLabPage> {
             _justificationCard(),
           ]),
         dkJustify => _justifyStage(l),
-        dkScenario =>
-          ScenarioStage(lab: l, scenarioDone: scenarioDone, onEvent: _onScenarioEvent),
+        dkScenario => ScenarioStage(
+            lab: l,
+            scenarioDone: scenarioDone,
+            onEvent: _onScenarioEvent,
+            justification: scenarioDone ? _challengeJustificationCard() : null,
+          ),
         _ => _masteryStage(l),
       };
 
@@ -678,6 +705,40 @@ class _DockerState extends ConsumerState<DockerLabPage> {
           ),
         ),
       );
+
+  /// Justificación del reto (no la de la práctica): se evalúa por separado.
+  Widget _challengeJustificationCard() => StudioCard(
+        title: 'Explica este reto',
+        icon: Icons.edit_note,
+        accent: Theme.of(context).colorScheme.tertiary,
+        child: TextField(
+          key: const ValueKey('docker_challenge_justification'),
+          controller: challengeJustification,
+          enabled: !challengeArgumentSent,
+          minLines: 2,
+          maxLines: 6,
+          decoration: InputDecoration(
+            labelText: challengeArgumentSent ? 'Tu explicación (enviada)' : null,
+            hintText: 'Qué decidiste aquí y por qué (${_mechanism()}).',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+      );
+
+  Future<void> _sendChallengeArgument() async {
+    final wt = '${lab.intervention?['widget_type'] ?? ''}';
+    if (wt.isEmpty) return;
+    try {
+      await _vm.emitEvent(wt, 'argumentSubmitted',
+          {'argument': challengeJustification.text.trim()});
+    } catch (e) {
+      _vm.setStatus('No se envió tu explicación: $e. Sigue aquí; vuelve a intentarlo.');
+      return;
+    }
+    if (!mounted) return;
+    setState(() => challengeArgumentSent = true);
+    _vm.saveDraft(_draftScope, 'challenge_sent', '1');
+  }
 
   String _mechanism() => switch (unit.code) {
         'D01' => 'kernel, aislamiento',

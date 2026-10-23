@@ -48,6 +48,22 @@ CRITERION_LABELS = {
     "metacognicion": "revisión",
 }
 
+# Qué pide cada criterio (espejo de frontend criterionMeanings): «alternativas»
+# a secas no dice qué escribir, así que la corrección lo explica.
+CRITERION_MEANINGS = {
+    "exactitud": "nombrar el concepto correcto y decidir bien",
+    "evidencia": "citar lo que hiciste y observaste en el experimento",
+    "causal": "explicar por qué ocurre, no solo qué ocurre",
+    "alternativas": "decir qué harías en otro caso, o qué opción descartaste y por qué",
+    "metacognicion": "revisar tu predicción inicial: qué cambiaste y por qué",
+}
+
+
+def criterion_explained(cid: str) -> str:
+    label = CRITERION_LABELS.get(cid, cid)
+    meaning = CRITERION_MEANINGS.get(cid)
+    return f"{label} ({meaning})" if meaning else label
+
 
 def _clean(text: str | None, limit: int) -> str | None:
     # ponytail: el proveedor no fija el tamaño del render; tope duro + colapso

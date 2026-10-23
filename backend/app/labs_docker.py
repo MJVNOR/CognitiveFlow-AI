@@ -6,30 +6,31 @@ import random
 
 UNITS = ["M08-D01-containers", "M08-D02-lifecycle", "M08-D04-dockerfile", "M08-D07-persistence"]
 
-# D01: (escenario, 0 = contenedor, 1 = máquina virtual)
+# D01: (escenario, 0 = contenedor, 1 = máquina virtual, eje que decide el caso).
+# El eje permite pedir una variante contrastiva: casos que cambian solo en eso.
 _D01 = [
-    ("Una API FastAPI que debe correr igual en tu PC y en el servidor", 0),
-    ("Probar un driver que necesita un kernel distinto al del host", 1),
-    ("Levantar 20 copias ligeras de un servicio que arrancan en segundos", 0),
-    ("Ejecutar un Windows completo sobre un host Linux", 1),
-    ("Empaquetar un script de Python con sus dependencias para CI", 0),
-    ("Aislar un software que exige su propio kernel parcheado", 1),
-    ("Desplegar el mismo worker en varias máquinas con la misma imagen", 0),
-    ("Probar un módulo del kernel sin arriesgar el host", 1),
-    ("Una base de datos de desarrollo desechable para pruebas", 0),
+    ("Una API FastAPI que debe correr igual en tu PC y en el servidor", 0, "reproducibilidad"),
+    ("Probar un driver que necesita un kernel distinto al del host", 1, "kernel"),
+    ("Levantar 20 copias ligeras de un servicio que arrancan en segundos", 0, "peso"),
+    ("Ejecutar un Windows completo sobre un host Linux", 1, "kernel"),
+    ("Empaquetar un script de Python con sus dependencias para CI", 0, "reproducibilidad"),
+    ("Aislar un software que exige su propio kernel parcheado", 1, "kernel"),
+    ("Desplegar el mismo worker en varias máquinas con la misma imagen", 0, "reproducibilidad"),
+    ("Probar un módulo del kernel sin arriesgar el host", 1, "kernel"),
+    ("Una base de datos de desarrollo desechable para pruebas", 0, "peso"),
 ]
 
 # D02: qué existe tras cada paso del ciclo
 D02_OPTIONS = ["imagen", "contenedor", "ambos", "ninguno"]
 # Secuencias de comandos válidas; la respuesta sale de simular el estado.
 _D02_SEQUENCES = [
-    ["docker pull", "docker run", "docker stop", "docker rm"],
-    ["docker build", "docker run", "docker stop", "docker start"],
-    ["docker pull", "docker run --rm", "docker stop"],
-    ["docker pull", "docker run", "docker stop", "docker rm", "docker rmi"],
-    ["docker build", "docker run", "docker stop"],
-    ["docker pull", "docker run --rm", "docker stop", "docker run"],
-    ["docker build", "docker run", "docker stop", "docker rm", "docker run"],
+    (["docker pull", "docker run", "docker stop", "docker rm"], "borrado"),
+    (["docker build", "docker run", "docker stop", "docker start"], "estado"),
+    (["docker pull", "docker run --rm", "docker stop"], "efimero"),
+    (["docker pull", "docker run", "docker stop", "docker rm", "docker rmi"], "borrado"),
+    (["docker build", "docker run", "docker stop"], "estado"),
+    (["docker pull", "docker run --rm", "docker stop", "docker run"], "efimero"),
+    (["docker build", "docker run", "docker stop", "docker rm", "docker run"], "borrado"),
 ]
 
 
@@ -70,24 +71,73 @@ _D07 = [("la base SQLite de la API", "/data/app.db"),
 MOUNTS = ["sin montaje", "named volume", "bind mount"]
 
 
-def activity(unit: str, seed: int = 1) -> dict:
-    """Contenido público del experimento (nunca incluye respuestas)."""
+# Ejes de contraste por unidad: permiten pedir una variante dirigida al error
+# («solo cambia el requisito de kernel») en vez de otro escenario al azar.
+FOCUS_AXES = {
+    "M08-D01-containers": ["kernel", "peso", "reproducibilidad"],
+    "M08-D02-lifecycle": ["borrado", "estado", "efimero"],
+}
+
+
+def failed_axes(unit: str, seed: int, payload: dict, focus=None) -> dict:
+    """Ejes de los casos acertados y fallados: «falló el caso de kernel» dice al
+    planificador qué contrastar; «falló el caso 3» no dice nada."""
+    c = check(unit, seed, payload, focus) or {}
+    if unit == "M08-D01-containers":
+        texts = activity(unit, seed, focus)["scenarios"]
+        axis = {t: next(x[2] for x in _D01 if x[0] == t) for t in texts}
+        pick = lambda ids: sorted({axis[texts[int(i) - 1]] for i in ids  # noqa: E731
+                                   if str(i).isdigit() and int(i) <= len(texts)})
+        return {"fallados": pick(c.get("revisar", [])), "acertados": pick(c.get("correctas", []))}
+    if unit == "M08-D02-lifecycle":
+        steps = activity(unit, seed, focus)["stages"]
+        tag = next((t for q, t in _D02_SEQUENCES if q == steps), None)
+        key = "fallados" if c.get("revisar") else "acertados"
+        return {key: [tag] if tag else [], "fallados" if key == "acertados" else "acertados": []}
+    return {"fallados": [], "acertados": []}
+
+
+def focus_for(unit: str, focus) -> str | None:
+    """Eje válido para esa unidad, o None (el servidor elige como siempre)."""
+    return focus if isinstance(focus, str) and focus in FOCUS_AXES.get(unit, []) else None
+
+
+def _d01_picks(rnd, focus: str | None) -> list[int]:
+    """Tres casos; con eje, dos de ese eje y uno que contrasta (otra respuesta)."""
+    if focus is None:
+        picks = rnd.sample(range(len(_D01)), 3)
+    else:
+        axis = [i for i, c in enumerate(_D01) if c[2] == focus]
+        picks = rnd.sample(axis, min(2, len(axis)))
+        rest = [i for i in range(len(_D01)) if i not in picks]
+        picks.append(rnd.choice(rest))
+    if len({_D01[i][1] for i in picks}) == 1:  # que no salgan todas iguales
+        picks[2] = next(i for i in range(len(_D01))
+                        if _D01[i][1] != _D01[picks[0]][1] and i not in picks[:2])
+    return picks
+
+
+def activity(unit: str, seed: int = 1, focus=None) -> dict:
+    """Contenido público del experimento (nunca incluye respuestas).
+    [focus] = eje a contrastar dentro de la unidad; inválido se ignora."""
     if unit in DECISION_UNITS:
         return decision_activity(unit, seed)
-    rnd = random.Random(f"{unit}:{seed}")
+    rnd = random.Random(f"{unit}:{seed}:{focus_for(unit, focus) or ''}")
+    axis = focus_for(unit, focus)
     if unit == "M08-D01-containers":
-        picks = rnd.sample(range(len(_D01)), 3)
-        if len({_D01[i][1] for i in picks}) == 1:  # que no salgan todas iguales
-            picks[2] = next(i for i in range(len(_D01)) if _D01[i][1] != _D01[picks[0]][1])
+        picks = _d01_picks(rnd, axis)
         return {"unit": unit, "seed": seed,
                 "instruction": "Elige la opción más ligera que satisface todos los requisitos: contenedor o máquina virtual. Supón un host Linux, sin una VM auxiliar.",
+                **({"focus": axis} if axis else {}),
                 "scenarios": [_D01[i][0] for i in picks]}
     if unit == "M08-D02-lifecycle":
-        steps = _D02_SEQUENCES[rnd.randrange(len(_D02_SEQUENCES))]
+        pool = [q for q, tag in _D02_SEQUENCES if axis is None or tag == axis]
+        steps = pool[rnd.randrange(len(pool))]
         ask = rnd.randrange(1, len(steps))  # nunca el primer paso (sería trivial)
         return {"unit": unit, "seed": seed,
                 "instruction": "Predice qué recursos existirán después del paso señalado. Después ejecuta la secuencia simulada y compara tu predicción con lo observado.",
                 "context": "Partimos sin imágenes ni contenedores. Seguimos una sola imagen y un solo contenedor; los comandos están abreviados y siempre se refieren a ellos. El proceso permanece activo hasta stop.",
+                **({"focus": axis} if axis else {}),
                 "stages": steps, "ask_index": ask,
                 "ask_stage": steps[ask], "options": D02_OPTIONS}
     if unit == "M08-D04-dockerfile":
@@ -104,9 +154,9 @@ def activity(unit: str, seed: int = 1) -> dict:
     return {"unit": unit, "seed": seed}
 
 
-def _d01_answers(seed: int) -> dict:
-    texts = activity("M08-D01-containers", seed)["scenarios"]
-    return {t: a for t, a in _D01 if t in texts}
+def _d01_answers(seed: int, focus=None) -> dict:
+    texts = activity("M08-D01-containers", seed, focus)["scenarios"]
+    return {c[0]: c[1] for c in _D01 if c[0] in texts}
 
 
 def _dockerfile_for(order: list) -> list | None:
@@ -137,14 +187,15 @@ def dockerfile_ok(order: list) -> bool | None:
     return None if lines is None else not _order_constraints(order, lines)[1]
 
 
-def check(unit: str, seed: int, payload: dict) -> dict | None:
-    """Corrección descriptiva de una entrega del experimento (sin revelar respuestas)."""
+def check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+    """Corrección descriptiva de una entrega del experimento (sin revelar respuestas).
+    [focus] debe ser el mismo con el que se generó: si no, calificaría otro escenario."""
     p = payload if isinstance(payload, dict) else {}
     if unit in DECISION_UNITS:
         return decision_check(unit, seed, p)
     if unit == "M08-D01-containers":
-        texts = activity(unit, seed)["scenarios"]
-        answers = _d01_answers(seed)
+        texts = activity(unit, seed, focus)["scenarios"]
+        answers = _d01_answers(seed, focus)
         choices = p.get("choices") if isinstance(p.get("choices"), list) else []
         given = _answered(choices, len(texts))
         ok = [str(i + 1) for i, t in enumerate(texts) if i in given and choices[i] == answers[t]]
@@ -155,7 +206,7 @@ def check(unit: str, seed: int, payload: dict) -> dict | None:
     if unit == "M08-D02-lifecycle":
         if p.get("prediction") not in D02_OPTIONS:
             return None
-        a = activity(unit, seed)
+        a = activity(unit, seed, focus)
         right = p.get("prediction") == _d02_exists(a["stages"][:a["ask_index"] + 1])
         label = f"qué existe tras el paso {a['ask_index'] + 1} («{a['ask_stage']}»)"
         return {"correctas": [label] if right else [], "revisar": [] if right else [label],
