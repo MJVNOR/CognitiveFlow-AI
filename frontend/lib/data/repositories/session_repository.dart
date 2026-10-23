@@ -2,10 +2,13 @@
 // intervenir→postest). Toda la red del ciclo vive aquí; [LabSession] es
 // estado puro y [LabSessionViewModel] orquesta.
 // Extraído de ui/labs/view_models/lab_session.dart sin cambios de lógica.
+import 'dart:convert';
+
 import '../services/api_client.dart';
 
 class SessionRepository {
   final ApiClient api;
+  final _pendingEventIds = <String, String>{};
   SessionRepository({ApiClient? api}) : api = api ?? defaultApiClient;
 
   /// Crea la sesión; retorna el id (student_id lo deriva el servidor).
@@ -31,14 +34,20 @@ class SessionRepository {
     String sessionId,
     String widgetType,
     String eventType,
-    Map<String, Object?> payload,
-  ) {
-    return api.post('/sessions/$sessionId/events', {
-      'client_event_id': newEventId(),
+    Map<String, Object?> payload, {
+    String? activityId,
+  }) async {
+    final retryKey = jsonEncode([sessionId, activityId, widgetType, eventType, payload]);
+    final eventId = _pendingEventIds.putIfAbsent(retryKey, newEventId);
+    final response = await api.post('/sessions/$sessionId/events', {
+      'client_event_id': eventId,
+      'activity_id': ?activityId,
       'widget_type': widgetType,
       'event_type': eventType,
       'payload': payload,
     });
+    _pendingEventIds.remove(retryKey);
+    return response;
   }
 
   Future<Map<String, dynamic>> evaluate(String sessionId, String attemptId) =>
@@ -83,4 +92,8 @@ class SessionRepository {
   /// Inicia el postest; el servidor fija la variante.
   Future<Map<String, dynamic>> beginPosttest(String sessionId) =>
       api.post('/sessions/$sessionId/posttest', {'answer_text': ''});
+
+  /// Reinicia el lab: el servidor archiva las sesiones (historial intacto).
+  Future<Map<String, dynamic>> resetLab(String labId) =>
+      api.post('/me/labs/$labId/reset', {});
 }

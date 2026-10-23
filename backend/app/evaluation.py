@@ -43,6 +43,29 @@ JEV_QUESTIONS = {
     "metacognicion": "¿La respuesta revisa o corrige su hipótesis inicial?",
 }
 
+# Jev evalúa los 4 labs con la misma rúbrica de 5 criterios; cambia el tema.
+_JEV_TOPIC = {
+    "data_detective": "calidad de datos: faltantes, duplicados, unidades, outliers y fuga",
+    "model_monitoring": "drift de datos o de concepto y degradación de métricas",
+    "docker": "contenedores Docker (imágenes, capas, volúmenes, redes y despliegue)",
+}
+
+
+def jev_questions(lab_type: str = "ml_experiment") -> dict:
+    topic = _JEV_TOPIC.get(lab_type)
+    if topic is None:
+        return JEV_QUESTIONS
+    return {
+        **JEV_QUESTIONS,
+        "exactitud": f"¿La respuesta identifica correctamente el fenómeno ({topic})?",
+        "evidencia": "¿La respuesta cita evidencia concreta de lo que hizo u observó en el laboratorio?",
+    }
+
+
+def lab_rubric(lab_type: str) -> str:
+    return {"data_detective": DATA_RUBRIC_VERSION, "model_monitoring": MONITOR_RUBRIC_VERSION,
+            "docker": DOCKER_RUBRIC_VERSION}.get(lab_type, RUBRIC_VERSION)
+
 
 def mock_evaluate(answer_text: str, complexity: int = 5) -> dict:
     t = (answer_text or "").lower()
@@ -99,19 +122,32 @@ def _pending(reason: str) -> dict:    # Nunca puntuar ante fallo: pending/error 
     }
 
 
-def jev_evaluate(answer_text: str, input_state: dict) -> dict:
+def jev_evaluate(answer_text: str, input_state: dict, lab_type: str = "ml_experiment",
+                 facts: str | None = None) -> dict:
+    """[facts] = lo que el verificador determinista del servidor comprobó (aciertos
+    reales); Jev juzga el razonamiento sabiendo qué decisiones fueron correctas."""
+    if facts:
+        state = (f"Laboratorio: {lab_type}. Verificado por el servidor: {facts}. "
+                 f"answer: {(answer_text or '')[:6000]}")
+    else:
+        state = (
+            f"complexity={input_state.get('complexity')} "
+            f"noise={input_state.get('noise_pct')} answer: {(answer_text or '')[:6000]}"
+        )
+    out = _jev_request(state, jev_questions(lab_type))
+    out["rubric_version"] = lab_rubric(lab_type)
+    return out
+
+
+def _jev_request(state: str, questions: dict) -> dict:
     key = _jev_key()
     if not key:
         return _pending("sin JEV_API_KEY")
-    state = (
-        f"complexity={input_state.get('complexity')} "
-        f"noise={input_state.get('noise_pct')} answer: {(answer_text or '')[:6000]}"
-    )
     body = {
         "model": _jev_model(),
         "state": state,
         "questions": {
-            cid: {"type": "noul", "instructions": q} for cid, q in JEV_QUESTIONS.items()
+            cid: {"type": "noul", "instructions": q} for cid, q in questions.items()
         },
     }
     url = f"{_jev_base()}/v1/systemone"
@@ -229,6 +265,18 @@ def mock_evaluate_docker(answer_text: str, extra: dict | None = None, seed: int 
             "evidencia": 4 if stages >= 3 and mentions_survive else (2 if mentions_survive else 0),
             "causal": 2 if "porqu" in t and mentions_survive else 0,
             "alternativas": 2 if "volumen" in t or "volume" in t else 0,
+            "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
+        }
+    elif unit in labs_docker.DECISION_UNITS:
+        # Exactitud = decisiones correctas contra la verdad del servidor (no keywords).
+        hits = labs_docker.decision_hits(unit, seed, extra.get("choices"))
+        ratio = hits[0] / hits[1] if hits else 0
+        why = "porqu" in t or "por qu" in t or "debido" in t
+        scores = {
+            "exactitud": 4 if ratio >= 0.99 else (2 if ratio >= 0.5 else 0),
+            "evidencia": 4 if hits and why and len(t) > 80 else (2 if why or hits else 0),
+            "causal": 2 if why else 0,
+            "alternativas": 2 if any(k in t for k in ["en vez", "alternativ", "en lugar"]) else 0,
             "metacognicion": 2 if "revis" in t or "hipótesis" in t or "hipotesis" in t else 0,
         }
     else:
@@ -351,3 +399,42 @@ def _data_type_detail(rows: list, flags: list, extra: dict | None) -> dict:
     actions = extra.get("actions", {}) if isinstance(extra, dict) else {}
     return {"types": types, "types_ok": sum(1 for t in types.values() if t["ok"]),
             "actions": actions if isinstance(actions, dict) else {}}
+
+
+def verified_facts(lab_type: str, state: dict) -> str | None:
+    """Hechos que el servidor comprueba solo (verdad de sus generadores) para Jev."""
+    extra = state.get("extra") if isinstance(state.get("extra"), dict) else {}
+    seed = state.get("seed", 1)
+    if lab_type == "docker":
+        from app import labs_docker
+
+        unit = extra.get("unit", "")
+        c = labs_docker.check(unit, seed, extra) or {}
+        return (f"unidad {unit}; decisiones correctas: {c.get('correctas', [])}; "
+                f"decisiones incorrectas: {c.get('revisar', [])}")
+    if lab_type == "data_detective":
+        from app.labs_data import generate
+
+        planted, flags = set(generate(seed)["planted"]), set(state.get("flags") or [])
+        return (f"marcó {len(flags)} filas; {len(planted & flags)} de {len(planted)} "
+                f"anomalías reales encontradas; {len(flags - planted)} filas sanas marcadas")
+    if lab_type == "model_monitoring":
+        from app.labs_monitor import generate
+
+        truth = generate(seed)["truth"]
+        try:
+            cp_err = abs(int(extra.get("changepoint", -1)) - truth["changepoint"])
+        except (TypeError, ValueError):
+            cp_err = None
+        ok = extra.get("feature") == truth["drifted_feature"]
+        return (f"feature con drift {'correcta' if ok else 'incorrecta'}; "
+                f"error del changepoint: {cp_err if cp_err is not None else 'sin marcar'} pasos")
+    return None
+
+
+def data_type_detail(state: dict) -> dict:
+    """Acierto por tipo (inspector por celda) también cuando evalúa Jev."""
+    from app.labs_data import generate
+
+    return _data_type_detail(generate(state.get("seed", 1))["rows"], state.get("flags") or [],
+                             state.get("extra"))

@@ -7,9 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
+from app.activities import activity_identity
 from app.auth import current_user, session_for, session_for_write
 from app.db import get_db
 from app.helpers import (
+    ARCHIVED,
     docker_prereq_missing,
     docker_unit_status,
     _evaluate_attempt,
@@ -34,8 +36,14 @@ from app.schemas import (
     SessionDetailOut,
     TutorHistoryItemOut,
 )
-from app.checks import check_challenge
-from app.interventions import ALLOWED_BY_WIDGET, ALLOWED_EVENTS, CATALOG, SUBMIT_EVENT
+from app.checks import check_challenge, check_practice
+from app.interventions import (
+    ALLOWED_BY_WIDGET,
+    ALLOWED_EVENTS,
+    CATALOG,
+    DOCKER_WIDGETS,
+    SUBMIT_EVENT,
+)
 from app.labs_data import generate as generate_dataset
 from app.labs_ml import ml_curve
 from app.labs_monitor import generate as generate_monitor
@@ -62,7 +70,8 @@ def my_lab_status(user=Depends(current_user), db: Session = Depends(get_db)):
     # Última sesión por lab (orden de inserción); sin sesiones → {}.
     status = {}
     for s in db.query(models.LearningSession).filter_by(student_id=user.id).all():
-        status[s.lab_template_id] = s.status
+        if s.status != ARCHIVED:
+            status[s.lab_template_id] = s.status
     return status
 
 
@@ -70,11 +79,30 @@ def my_lab_status(user=Depends(current_user), db: Session = Depends(get_db)):
 def my_sessions(lab_template_id: str = "", user=Depends(current_user),
                 db: Session = Depends(get_db)):
     # P1.6: reanudar — última sesión propia por lab, con fase (sin gastar re-evaluar).
-    q = db.query(models.LearningSession).filter_by(student_id=user.id)
+    q = db.query(models.LearningSession).filter(
+        models.LearningSession.student_id == user.id,
+        models.LearningSession.status != ARCHIVED)
     if lab_template_id:
         q = q.filter_by(lab_template_id=lab_template_id)
     return [{"id": s.id, "lab_template_id": s.lab_template_id, "status": s.status,
              "phase": _phase(db, s)} for s in q.all()]
+
+
+@router.post("/me/labs/{lab_id}/reset")
+def reset_lab(lab_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
+    """El estudiante reinicia un laboratorio para empezar desde cero. No borra nada:
+    sus sesiones pasan a `archived` (el instructor conserva el historial y las
+    evaluaciones siguen intactas, append-only); la próxima apertura crea una nueva."""
+    if user.role == "instructor":
+        raise HTTPException(403, "el instructor solo consulta")
+    n = 0
+    for s in db.query(models.LearningSession).filter_by(student_id=user.id,
+                                                        lab_template_id=lab_id).all():
+        if s.status != ARCHIVED:
+            s.status = ARCHIVED
+            n += 1
+    db.commit()
+    return {"archived": n}
 
 
 @router.get("/sessions/{session_id}/interventions", response_model=list[InterventionLogOut])
@@ -94,7 +122,7 @@ def session_interventions(session_id: str, user=Depends(current_user),
         params = (spec.get("widget_parameters")
                   if isinstance(spec, dict) and isinstance(spec.get("widget_parameters"), dict)
                   else (spec if isinstance(spec, dict) else {}))
-        out.append({"attempt_id": r.attempt_id, "strategy": r.strategy,
+        out.append({**activity_identity(r), "attempt_id": r.attempt_id, "strategy": r.strategy,
                     "widget_type": r.widget_type, "widget_parameters": params,
                     "socratic_question": spec.get("socratic_question")
                     if isinstance(spec, dict) else None})
@@ -188,6 +216,7 @@ class AttemptIn(BaseModel):
 
 class EventIn(BaseModel):
     client_event_id: str
+    activity_id: str | None = Field(default=None, min_length=1, max_length=120)
     widget_type: str
     event_type: str
     payload: dict = {}
@@ -197,20 +226,42 @@ class EventIn(BaseModel):
 def record_event(session_id: str, body: EventIn, user=Depends(current_user),
                  db: Session = Depends(get_db)):
     # P1.5: canal bidireccional — ownership primero, nunca score/cliente como verdad.
-    session_for_write(user, db, session_id)
+    session = session_for_write(user, db, session_id)
+    if {"activity_id", "server_check"} & body.payload.keys():
+        raise HTTPException(422, "Metadatos de actividad o corrección no permitidos en payload")
     if body.widget_type not in CATALOG:
         raise HTTPException(422, f"widget_type desconocido: {body.widget_type}")
     if body.event_type not in ALLOWED_EVENTS:
         raise HTTPException(422, f"event_type desconocido: {body.event_type}")
     if body.event_type not in ALLOWED_BY_WIDGET.get(body.widget_type, []):
         raise HTTPException(422, f"{body.event_type} no permitido en {body.widget_type}")
-    # ponytail: dedup por PK (client_event_id) — reintento seguro, un solo registro
+    # Un ID de reintento no permite reutilizar evidencia de otra sesión o reto.
     existing = db.query(models.UiEvent).filter_by(id=body.client_event_id).first()
     if existing:
-        prev = json.loads(existing.payload_json).get("server_check")
+        stored = json.loads(existing.payload_json)
+        original = {k: v for k, v in stored.items() if k not in ("server_check", "activity_id")}
+        if (existing.session_id != session_id or existing.widget_type != body.widget_type
+                or existing.event_type != body.event_type or original != body.payload
+                or (body.activity_id is not None and stored.get("activity_id") != body.activity_id)):
+            raise HTTPException(409, "client_event_id ya utilizado para otro evento")
+        prev = stored.get("server_check")
         return {"id": existing.id, "deduped": True, **({"check": prev} if prev else {})}
+    if session.status != "active":
+        raise HTTPException(409, "La sesión no admite eventos de práctica")
+    logs = db.query(models.InterventionLog).filter_by(session_id=session_id).all()
+    latest = logs[-1] if logs else None
+    expected = activity_identity(latest)["activity_id"] if latest else f"practice-{session_id}"
+    # Clientes antiguos pueden continuar históricos; los retos nuevos exigen ID.
+    if latest and json.loads(latest.spec_json).get("activity_id") and body.activity_id is None:
+        raise HTTPException(422, "activity_id es obligatorio para este reto")
+    if body.activity_id is not None and body.activity_id != expected:
+        raise HTTPException(409, "La actividad ya no es la actual de esta sesión")
+    if latest and latest.widget_type != body.widget_type and body.event_type != "hintRequested":
+        raise HTTPException(422, "El widget no pertenece a la actividad actual")
     check = _scenario_check(db, session_id, body)
-    payload = {**body.payload, "server_check": check} if check else body.payload
+    payload = {**body.payload, "activity_id": expected}
+    if check:
+        payload["server_check"] = check
     db.add(
         models.UiEvent(
             id=body.client_event_id,
@@ -225,15 +276,27 @@ def record_event(session_id: str, body: EventIn, user=Depends(current_user),
     return {"id": body.client_event_id, "deduped": False, **({"check": check} if check else {})}
 
 
+def _checked_event(body: EventIn) -> bool:
+    """Se corrige la entrega del widget y también cada selección intermedia."""
+    return body.event_type in (SUBMIT_EVENT.get(body.widget_type), "selectionChanged")
+
+
 def _scenario_check(db: Session, session_id: str, body: EventIn) -> dict | None:
     """La entrega del último reto GenUI se corrige en el servidor (determinista) contra
-    lo que él mismo generó; el cliente no aporta la verdad. Solo cuenta el evento de
-    entrega del widget del reto vigente (la práctica la evalúa el intento)."""
+    lo que él mismo generó; el cliente no aporta la verdad. Sin reto todavía, se
+    corrige la práctica al momento (nunca en la prueba: ahí no hay feedback)."""
+    s = db.query(models.LearningSession).filter_by(id=session_id).first()
+    if s is None or s.status in ("posttest", "done"):
+        return None
+    lab_type = _lab_type(db, session_id)
     logs = db.query(models.InterventionLog).filter_by(session_id=session_id).all()
     log = logs[-1] if logs else None  # orden de inserción, como _can_enter_posttest
-    if (not log or body.widget_type != log.widget_type
-            or body.event_type != SUBMIT_EVENT.get(body.widget_type)):
-        return None
+    # El evento de la práctica lleva su `unit` (el del reto no): con reto abierto,
+    # volver al experimento sigue dando corrección inmediata.
+    unit = body.payload.get("unit")
+    practice = isinstance(unit, str) and DOCKER_WIDGETS.get(unit) == body.widget_type
+    if practice or not log or body.widget_type != log.widget_type or not _checked_event(body):
+        return check_practice(lab_type, body.widget_type, body.payload)
     attempt = db.query(models.LabAttempt).filter_by(id=log.attempt_id).first()
     if not attempt:
         return None
@@ -242,7 +305,7 @@ def _scenario_check(db: Session, session_id: str, body: EventIn) -> dict | None:
         state = json.loads(attempt.input_state_json)
     except ValueError:
         return None
-    return check_challenge(_lab_type(db, session_id), body.widget_type, body.payload,
+    return check_challenge(lab_type, body.widget_type, body.payload,
                            spec if isinstance(spec, dict) else {}, state)
 
 
@@ -384,6 +447,7 @@ class PosttestIn(BaseModel):
     complexity: int = 5  # ignorados: la variante la fija el servidor (P4.1)
     noise_pct: int = 20
     answer_text: str = Field(default="", max_length=6000)
+    extra: dict = Field(default_factory=dict, max_length=16)
 
 
 @router.post("/sessions/{session_id}/posttest")
@@ -403,12 +467,27 @@ def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
         return {"status": "begin", **variant}
     if _posttest_attempt(db, session_id):
         raise HTTPException(403, "postest ya entregado")
+    evidence = {}
+    if _lab_type(db, session_id) == "docker":
+        from app.labs_docker import response_evidence, UNITS
+
+        practice = _practice_attempts(db, session_id)
+        previous = json.loads(practice[-1].input_state_json) if practice else {}
+        unit = (previous.get("extra") or {}).get("unit")
+        if unit in UNITS:
+            if body.extra.get("unit", unit) != unit:
+                raise HTTPException(403, "la prueba pertenece a la unidad de la sesión")
+            try:
+                evidence = response_evidence(unit, variant["seed"], body.extra)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
     aid = uuid.uuid4().hex[:8]
     attempt = models.LabAttempt(
         id=aid, session_id=session_id,
         input_state_json=json.dumps({"complexity": variant["complexity"],
                                      "noise_pct": variant["noise_pct"],
-                                     "seed": variant["seed"], "kind": "posttest"}),
+                                     "seed": variant["seed"], "kind": "posttest",
+                                     "extra": evidence}),
         answer_text=body.answer_text)
     db.add(attempt)
     db.commit()

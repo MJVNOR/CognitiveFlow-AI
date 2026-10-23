@@ -19,7 +19,7 @@ void main() {
     expect(criterionLabel('otro'), 'otro');
   });
 
-  testWidgets('ConceptPrimer muestra concepto y ejemplo colapsable', (tester) async {
+  testWidgets('ConceptPrimer muestra concepto, ejemplo resuelto y errores comunes', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -27,6 +27,7 @@ void main() {
             'title': 'T',
             'concept_summary': 'resumen',
             'worked_example_steps': ['paso 1', 'paso 2'],
+            'misconceptions': ['mito'],
           }),
         ),
       ),
@@ -34,10 +35,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('El concepto en 1 minuto'), findsOneWidget);
     expect(find.text('resumen'), findsOneWidget);
-    expect(find.text('paso 1'), findsNothing);
-    await tester.tap(find.text('Ver ejemplo resuelto'));
-    await tester.pump(const Duration(milliseconds: 300));
+    // A la vista: el tutor y el experimento remiten a ellos.
     expect(find.text('paso 1'), findsOneWidget);
+    expect(find.text('Falso: «mito»'), findsOneWidget);
   });
 
   test('cleanedPreview simula convertir, imputar y eliminar', () {

@@ -1,0 +1,321 @@
+{
+  "M08-D01-containers": {
+    "unit": "M08-D01-containers",
+    "seed": 1,
+    "instruction": "Elige la opción más ligera que satisface todos los requisitos: contenedor o máquina virtual. Supón un host Linux, sin una VM auxiliar.",
+    "scenarios": [
+      "Una base de datos de desarrollo desechable para pruebas",
+      "Una API FastAPI que debe correr igual en tu PC y en el servidor",
+      "Probar un driver que necesita un kernel distinto al del host"
+    ]
+  },
+  "M08-D02-lifecycle": {
+    "unit": "M08-D02-lifecycle",
+    "seed": 1,
+    "instruction": "Predice qué recursos existirán después del paso señalado. Después ejecuta la secuencia simulada y compara tu predicción con lo observado.",
+    "context": "Partimos sin imágenes ni contenedores. Seguimos una sola imagen y un solo contenedor; los comandos están abreviados y siempre se refieren a ellos. El proceso permanece activo hasta stop.",
+    "stages": [
+      "docker pull",
+      "docker run --rm",
+      "docker stop"
+    ],
+    "ask_index": 2,
+    "ask_stage": "docker stop",
+    "options": [
+      "imagen",
+      "contenedor",
+      "ambos",
+      "ninguno"
+    ]
+  },
+  "M08-D04-dockerfile": {
+    "unit": "M08-D04-dockerfile",
+    "seed": 1,
+    "app": "servicio Node",
+    "lines": [
+      "COPY package*.json ./",
+      "CMD [\"node\", \"src/index.js\"]",
+      "FROM node:20-slim",
+      "COPY ./src ./src",
+      "RUN npm ci --omit=dev",
+      "WORKDIR /srv"
+    ],
+    "instruction": "Ordena este Dockerfile para construir la app y reutilizar la caché de dependencias al cambiar solo el código. Coloca CMD al final como convención de lectura."
+  },
+  "M08-D07-persistence": {
+    "unit": "M08-D07-persistence",
+    "seed": 1,
+    "story": "los logs de auditoría",
+    "path": "/var/log/app",
+    "mounts": [
+      "sin montaje",
+      "named volume",
+      "bind mount"
+    ],
+    "instruction": "Elige el montaje, predice si el archivo sobrevivirá y compruébalo al eliminar y recrear el contenedor. Se reutiliza el mismo montaje; no se elimina el volumen ni la carpeta del host."
+  },
+  "M08-D03-cli": {
+    "unit": "M08-D03-cli",
+    "seed": 1,
+    "mono": true,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "Necesitas la IP, los montajes y las variables de un contenedor.",
+        "options": [
+          "docker top api",
+          "docker inspect api",
+          "docker logs api"
+        ]
+      },
+      {
+        "prompt": "Quieres ver también los contenedores detenidos.",
+        "options": [
+          "docker ps",
+          "docker images -a",
+          "docker ps -a"
+        ]
+      },
+      {
+        "prompt": "Quieres seguir los logs en vivo mientras reproduces el fallo.",
+        "options": [
+          "docker logs -f api",
+          "docker inspect api",
+          "docker logs --tail 20 api"
+        ]
+      }
+    ]
+  },
+  "M08-D05-context": {
+    "unit": "M08-D05-context",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "El archivo .env con contraseñas terminó dentro de la imagen.",
+        "options": [
+          "Moverlo a otra carpeta del mismo contexto",
+          "Renombrarlo a .env.bak",
+          "Retirar la imagen afectada y rotar los secretos expuestos; excluir .env en builds futuros e inyectar secretos al ejecutar"
+        ]
+      },
+      {
+        "prompt": "Un archivo está en .dockerignore y una instrucción COPY lo pide.",
+        "options": [
+          "COPY falla: el archivo no está en el contexto",
+          "Se copia vacío",
+          "Se copia igual"
+        ]
+      },
+      {
+        "prompt": "docker build -t api ./backend — ¿cuál es el contexto de build?",
+        "options": [
+          "La carpeta ./backend",
+          "Solo el Dockerfile",
+          "La carpeta actual completa"
+        ]
+      }
+    ]
+  },
+  "M08-D06-network": {
+    "unit": "M08-D06-network",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "Dos servicios piden -p 8000:8000 en el mismo host.",
+        "options": [
+          "Es imposible correr ambos",
+          "Cambiar el EXPOSE",
+          "Cambiar el puerto del host de uno (8001:8000)"
+        ]
+      },
+      {
+        "prompt": "Dos contenedores en redes distintas no se ven entre sí.",
+        "options": [
+          "Reiniciar Docker",
+          "Darles el mismo nombre",
+          "Conectarlos a una red compartida"
+        ]
+      },
+      {
+        "prompt": "¿Qué significa -p 8080:80?",
+        "options": [
+          "Abre ambos puertos dentro del contenedor",
+          "El 80 del host lleva al 8080 del contenedor",
+          "El 8080 del host lleva al 80 del contenedor"
+        ]
+      }
+    ]
+  },
+  "M08-D08-compose": {
+    "unit": "M08-D08-compose",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "La app lee DATABASE_HOST del entorno. La base está en el servicio db de la misma red Compose. ¿Cómo le pasas ese nombre?",
+        "options": [
+          "volumes: [DATABASE_URL]",
+          "environment: {DATABASE_HOST: db}",
+          "ports: [\"5432\"]"
+        ]
+      },
+      {
+        "prompt": "La API arranca antes de que la base acepte conexiones y falla.",
+        "options": [
+          "healthcheck en db + depends_on con condition: service_healthy",
+          "Publicar más puertos",
+          "depends_on: [db] basta"
+        ]
+      },
+      {
+        "prompt": "La app puede leer contraseñas desde archivos. ¿Cómo suministrarlas sin grabarlas en la imagen ni en compose.yaml?",
+        "options": [
+          "Montarlas como secrets y configurar la app para leer esos archivos",
+          "Escritas en compose.yaml",
+          "Dentro de la imagen"
+        ]
+      }
+    ]
+  },
+  "M08-D09-debug": {
+    "unit": "M08-D09-debug",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "En tu PC funciona; en el contenedor, que sigue corriendo y tiene shell, no encuentra un archivo. ¿Cómo compruebas qué rutas existen dentro?",
+        "options": [
+          "Subir la versión de Python",
+          "Reinstalar Docker",
+          "Revisar con docker exec qué hay en su filesystem"
+        ]
+      },
+      {
+        "prompt": "El build falla en COPY requirements.txt.",
+        "options": [
+          "Agregar EXPOSE",
+          "Cambiar la imagen base",
+          "Revisar que el archivo esté en el contexto y la ruta sea correcta"
+        ]
+      },
+      {
+        "prompt": "Al levantar aparece «port is already allocated».",
+        "options": [
+          "La imagen está corrupta",
+          "Otro proceso usa ese puerto del host: revisar y cambiar el mapeo",
+          "Falta un healthcheck"
+        ]
+      }
+    ]
+  },
+  "M08-D10-security": {
+    "unit": "M08-D10-security",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "El Dockerfile tiene ENV API_KEY=abc123.",
+        "options": [
+          "Es seguro porque es una variable",
+          "Es seguro si el repo es privado",
+          "Riesgo: queda grabada en la imagen; pasarla al ejecutar"
+        ]
+      },
+      {
+        "prompt": "Dos imágenes satisfacen los requisitos y se mantienen actualizadas. Una incluye compiladores y paquetes que tu app no usa. ¿Cuál reduce componentes expuestos?",
+        "options": [
+          "Completa: más paquetes, más seguro",
+          "La mínima compatible con la app, sin herramientas innecesarias",
+          "Siempre ubuntu completo"
+        ]
+      },
+      {
+        "prompt": "La aplicación web no requiere privilegios especiales, pero su proceso corre como root. ¿Cómo reduces sus privilegios?",
+        "options": [
+          "Da igual dentro de Docker",
+          "Es lo recomendado",
+          "Crear un usuario sin privilegios y usar USER"
+        ]
+      }
+    ]
+  },
+  "M08-D11-deploy": {
+    "unit": "M08-D11-deploy",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla.",
+    "items": [
+      {
+        "prompt": "El diseño del despliegue usa un reverse proxy para gestionar certificados y enviar HTTP a la app en una red privada. ¿Dónde se termina TLS?",
+        "options": [
+          "En el reverse proxy (Nginx, Traefik) delante de la app",
+          "En la base de datos",
+          "Dentro de cada contenedor sin proxy"
+        ]
+      },
+      {
+        "prompt": "Llevar la imagen de tu laptop al servidor.",
+        "options": [
+          "Reconstruir a mano en el servidor",
+          "Copiar el contenedor con scp",
+          "docker push a un registry y docker pull en el servidor"
+        ]
+      },
+      {
+        "prompt": "El equipo necesita builds repetibles, revisados y trazables por commit, sin pasos manuales por desarrollador. ¿Qué proceso conviene?",
+        "options": [
+          "Cada desarrollador desde su laptop",
+          "El servidor de producción",
+          "CI/CD con builds trazables"
+        ]
+      }
+    ]
+  },
+  "M08-D12-capstone": {
+    "unit": "M08-D12-capstone",
+    "seed": 1,
+    "mono": false,
+    "instruction": "Resuelve cuatro decisiones de unidades distintas y justifica cada una. Es un ejercicio de decisiones, no una ejecución real de Docker.",
+    "items": [
+      {
+        "prompt": "El build tarda minutos «enviando el contexto» (node_modules, .git).",
+        "options": [
+          "Agregar node_modules y .git a .dockerignore",
+          "Quitar el WORKDIR",
+          "Usar una imagen base más grande"
+        ]
+      },
+      {
+        "prompt": "En tu PC funciona; en el contenedor, que sigue corriendo y tiene shell, no encuentra un archivo. ¿Cómo compruebas qué rutas existen dentro?",
+        "options": [
+          "Reinstalar Docker",
+          "Subir la versión de Python",
+          "Revisar con docker exec qué hay en su filesystem"
+        ]
+      },
+      {
+        "prompt": "Antes de publicar una imagen…",
+        "options": [
+          "Subirla directo",
+          "Escanearla en busca de vulnerabilidades",
+          "Quitarle la etiqueta"
+        ]
+      },
+      {
+        "prompt": "Quieres construir la API desde ./backend en vez de bajar una imagen.",
+        "options": [
+          "context: latest",
+          "image: ./backend",
+          "build: ./backend"
+        ]
+      }
+    ]
+  }
+}

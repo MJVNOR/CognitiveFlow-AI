@@ -312,7 +312,8 @@ class _MonitorState extends ConsumerState<MonitorLabPage> {
       stageScroll: scrollCtrl,
       stageKey: ValueKey('scroll-$mission-${l.posttestMode}'),
       header: StudioHeader(
-        backRoute: '/labs',
+        backRoute: '/academy',
+        onReset: () => confirmResetLab(context, _vm),
         crumbs: [('Academia', '/academy'), (module, null), (widget.title, null)],
         title: '¿Cambió el mundo o falló el modelo?',
         missionLabel: 'Misión ${mission + 1} de ${monitorMissions.length} · ${m.title}',
@@ -463,7 +464,10 @@ class _MonitorState extends ConsumerState<MonitorLabPage> {
 
   Widget _stage(LabSession l) => switch (mission) {
         monObserve => _observeStage(l),
-        monCompare => _compareStage(l, locked: !_editable),
+        monCompare => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _compareStage(l, locked: !_editable),
+            practiceCheck(l, 'Bien localizado: decide qué hacer en la misión siguiente.'),
+          ]),
         monDecide => _decideStage(l),
         monScenario =>
           ScenarioStage(lab: l, scenarioDone: scenarioDone, onEvent: _onScenarioEvent),

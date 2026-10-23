@@ -1,5 +1,15 @@
 # CognitiveFlow AI — Plan de rediseño de tareas, laboratorios y motion UX (Flutter)
 
+**Catálogo e identidad (22/10/2026):** ver [CATALOGO_GENUI_Y_ACTIVIDADES.md](CATALOGO_GENUI_Y_ACTIVIDADES.md).
+Catálogo activo de 11 tipos, seis tarjetas incompletas en backlog y lectura de históricos;
+retos con identidad persistente, eventos ligados al reto y aislamiento de entregas para postest.
+Este avance técnico no marca completados UX05/UX06 ni sus experimentos visuales pendientes.
+
+**Revisión de ejercicios Docker (22/10/2026):** ver [REVISION_EJERCICIOS_DOCKER.md](REVISION_EJERCICIOS_DOCKER.md).
+Incluye las 12 unidades, contexto del tutor, predicción D02, evidencia de postest,
+48 pistas graduadas vinculadas al reto actual y pruebas por unidad.
+Esta revisión técnica no marca como completado el piloto UX08 ni acredita eficacia con estudiantes.
+
 **Fecha:** 17 de octubre de 2026  
 **Destino:** agente de programación OpenCode  
 **Estado:** propuesta de implementación; **no implica que los cambios estén hechos**.  

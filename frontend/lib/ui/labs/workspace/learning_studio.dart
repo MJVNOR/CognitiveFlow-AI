@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/motion.dart';
+import '../../progress/widgets/route_progress_bar.dart';
 
 /// Ancho (del área del lab, no del viewport) desde el que el tutor va al lado.
 const studioWideBreakpoint = 1080.0;
@@ -155,6 +156,9 @@ class StudioHeader extends StatelessWidget {
   final String? meta;
   final Widget? trailing;
   final String? backRoute;
+
+  /// Reiniciar el laboratorio desde cero (null = sin botón).
+  final VoidCallback? onReset;
   const StudioHeader({
     super.key,
     required this.crumbs,
@@ -165,6 +169,7 @@ class StudioHeader extends StatelessWidget {
     this.meta,
     this.trailing,
     this.backRoute,
+    this.onReset,
   });
 
   @override
@@ -172,7 +177,8 @@ class StudioHeader extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final progress = Semantics(
-      label: '$done de $total misiones completadas',
+      label: '$done de $total misiones completadas'
+          '${total > done ? '. Faltan ${total - done} misiones' : ''}',
       excludeSemantics: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -183,21 +189,23 @@ class StudioHeader extends StatelessWidget {
           const SizedBox(height: 4),
           SizedBox(
             width: 132,
-            child: Row(children: [
-              for (var i = 0; i < total; i++)
-                Expanded(
-                  child: AnimatedContainer(
-                    duration: Motion.at(context, Motion.base),
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                    decoration: BoxDecoration(
-                      color: i < done ? cs.primary : cs.outlineVariant,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                ),
-            ]),
+            child: RouteProgressBar(
+              steps: total,
+              value: total > 0 ? done / total : 0,
+              label: '$done de $total misiones completadas',
+            ),
           ),
+          if (total > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              done >= total
+                  ? 'Misiones completadas'
+                  : total - done == 1
+                      ? 'Falta 1 misión'
+                      : 'Faltan ${total - done} misiones',
+              style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+            ),
+          ],
         ],
       ),
     );
@@ -241,6 +249,20 @@ class StudioHeader extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
             ),
+            if (narrow) ...[
+              const SizedBox(height: 8),
+              Text(
+                '$done/$total misiones'
+                '${total > done ? total - done == 1 ? ' · Falta 1' : ' · Faltan ${total - done}' : ''}',
+                style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 4),
+              RouteProgressBar(
+                steps: total,
+                value: total > 0 ? done / total : 0,
+                label: '$done de $total misiones completadas',
+              ),
+            ],
           ],
         );
         return Row(
@@ -255,6 +277,13 @@ class StudioHeader extends StatelessWidget {
             const SizedBox(width: 4),
             Expanded(child: titleCol),
             if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+            if (onReset != null)
+              IconButton(
+                key: const ValueKey('lab_reset'),
+                tooltip: 'Reiniciar laboratorio desde cero',
+                icon: const Icon(Icons.restart_alt),
+                onPressed: onReset,
+              ),
             if (!narrow) ...[const SizedBox(width: 16), progress],
           ],
         );

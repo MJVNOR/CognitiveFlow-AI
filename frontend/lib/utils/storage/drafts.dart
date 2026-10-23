@@ -25,4 +25,12 @@ class DraftsRepository {
       await prefs.remove(_draftKey(labId, f));
     }
   }
+
+  /// Todos los borradores del lab (reiniciar desde cero).
+  Future<void> clearAll(String labId) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (final k in prefs.getKeys().where((k) => k.startsWith('draft:$labId:')).toList()) {
+      await prefs.remove(k);
+    }
+  }
 }

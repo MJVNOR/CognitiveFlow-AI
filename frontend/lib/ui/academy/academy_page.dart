@@ -11,6 +11,8 @@ import '../../ui/core/widgets/strings.dart';
 import '../../ui/labs/docker/docker_units.dart';
 import '../../ui/labs/widgets/posttest.dart';
 import '../../ui/core/themes/cognitive_theme.dart';
+import '../../ui/progress/widgets/route_progress_bar.dart';
+import '../../utils/criteria.dart' show criterionLabel, progressLine;
 
 // P6.1: nada de ids crudos visibles (jerga de dominio, no de producto).
 String labTypeLabel(String? t) => switch (t) {
@@ -59,15 +61,21 @@ class AcademyPage extends ConsumerWidget {
     };
   }
 
-  /// Docker Academy: cada unidad implementada es su propia entrada del temario
-  /// (con su secuencia y prerrequisito orientativo), no un modo dentro del lab.
-  Widget _dockerSyllabus(BuildContext context, Lab l, String? st, Map unitStatus) {
+  /// Docker Academy: cada unidad es su propia entrada del temario (con su
+  /// secuencia y prerrequisito), no un modo dentro del lab.
+  Widget _dockerSyllabus(BuildContext context, Lab l, String? st, Map unitStatus, Map? p) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     String? statusOf(String code) =>
         unitStatus[dockerUnits.firstWhere((u) => u.code == code).id] as String?;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _benchRow(context, l, st),
+      _benchRow(context, l, st, p),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(38, 0, 12, 4),
+        child: Text('Unidades completadas: ${dockerUnitsDone(unitStatus)} de ${dockerUnits.length}',
+            key: const ValueKey('academy_docker_units_done'),
+            style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant)),
+      ),
       for (final u in dockerUnits)
         Material(
           type: MaterialType.transparency,
@@ -111,20 +119,19 @@ class AcademyPage extends ConsumerWidget {
             ),
           ),
         ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(38, 2, 12, 10),
-        child: Text('D03, D05, D06 y D08–D12: en preparación.',
-            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-      ),
+      const SizedBox(height: 6),
     ]);
   }
 
   /// Un puesto del taller: lámpara, nombre y estado escrito (nunca solo color).
-  Widget _benchRow(BuildContext context, Lab l, String? st) {
+  Widget _benchRow(BuildContext context, Lab l, String? st, Map? p) {
     final cs = Theme.of(context).colorScheme;
     final (icon, iconColor, _, chipFg) = _statusStyle(st, cs);
     final statusText = labStatusLabel(st);
-    return LayoutBuilder(builder: (context, c) {
+    final base = p?['baseline'] as Map?, post = p?['posttest'] as Map?;
+    final evidence = progressLine(base, post);
+    final mastery = p?['mastery_status'] == 'demonstrated';
+    final row = LayoutBuilder(builder: (context, c) {
       final wide = c.maxWidth >= 420;
       return Material(
         type: MaterialType.transparency,
@@ -162,12 +169,28 @@ class AcademyPage extends ConsumerWidget {
                           child: Text(statusText,
                               style: TextStyle(fontSize: 11, color: chipFg)),
                         ),
+                      // Progreso del lab aquí mismo (antes en una pantalla aparte).
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          [
+                            evidence ?? 'Sin evidencias todavía',
+                            mastery
+                                ? 'Dominio demostrado ✓'
+                                : (base != null ? 'Dominio aún sin demostrar' : null),
+                          ].whereType<String>().join(' · '),
+                          key: ValueKey('academy_progress_${l.id}'),
+                          style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 if (wide) ...[
                   const SizedBox(width: 8),
-                  PlateTag(text: statusText, color: chipFg),
+                  mastery
+                      ? MasteryStamp(text: 'DOMINIO', color: chipFg)
+                      : PlateTag(text: statusText, color: chipFg),
                 ],
                 const SizedBox(width: 4),
                 Icon(Icons.chevron_right,
@@ -178,6 +201,39 @@ class AcademyPage extends ConsumerWidget {
         ),
       );
     });
+    if (base == null && post == null) return row;
+    // Detalle por criterio bajo demanda (inicio → prueba), nunca en primer plano.
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      row,
+      Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: ValueKey('academy_evidence_${l.id}'),
+          dense: true,
+          tilePadding: const EdgeInsets.only(left: 38, right: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(38, 0, 12, 10),
+          title: Text('Evidencias por criterio (inicio → prueba)',
+              style: Theme.of(context).textTheme.bodySmall),
+          children: [
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final cid in {...?base?.keys, ...?post?.keys})
+                Chip(
+                  label: Text(
+                      '${criterionLabel('$cid')}: ${base?[cid] ?? '—'} → ${post?[cid] ?? '—'}',
+                      style: const TextStyle(fontSize: 12)),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+                mastery
+                    ? 'Dominio demostrado con la prueba final.'
+                    : 'La práctica no cuenta como dominio: lo demuestra la prueba final.',
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+          ],
+        ),
+      ),
+    ]);
   }
 
   @override
@@ -220,7 +276,13 @@ class AcademyPage extends ConsumerWidget {
         final cs = Theme.of(context).colorScheme;
         final modules = value.modules;
         final labs = value.labs;
-        final statusMap = value.statusMap;
+        // Docker es un temario de 12 unidades: el lab está «completado» solo con
+        // todas; con alguna hecha o en curso, «en curso» (no el estado de la
+        // última sesión, que es de una sola unidad).
+        final statusMap = {...value.statusMap};
+        for (final l in labs.where((l) => l.labType == 'docker')) {
+          statusMap[l.id] = dockerLabStatus(value.dockerUnits, statusMap[l.id] as String?);
+        }
         final orphans = [for (final l in labs) if (l.moduleId == '') l];
         if (labs.isEmpty) {
           return Center(
@@ -275,10 +337,11 @@ class AcademyPage extends ConsumerWidget {
                 for (var i = 0; i < mls.length; i++) ...[
                   if (i > 0) Divider(height: 1, color: cs.outlineVariant),
                   if (mls[i].labType == 'docker')
-                    _dockerSyllabus(
-                        context, mls[i], statusMap[mls[i].id] as String?, value.dockerUnits)
+                    _dockerSyllabus(context, mls[i], statusMap[mls[i].id] as String?,
+                        value.dockerUnits, value.prog[mls[i].id])
                   else
-                    _benchRow(context, mls[i], statusMap[mls[i].id] as String?),
+                    _benchRow(context, mls[i], statusMap[mls[i].id] as String?,
+                        value.prog[mls[i].id]),
                 ],
               ],
             ),
@@ -326,10 +389,27 @@ class AcademyPage extends ConsumerWidget {
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           Text(
-                            'Cada puesto pide una predicción, una manipulación y una justificación.',
+                            'Cada puesto pide una predicción, una manipulación y una justificación. '
+                            'El dominio solo lo demuestra la prueba final.',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: cs.onSurfaceVariant, height: 1.35),
                           ),
+                          const SizedBox(height: 8),
+                          RouteProgressBar(
+                            value: labs.isEmpty ? 0 : done / labs.length,
+                            label: 'Recorrido: $done de ${labs.length} laboratorios terminados',
+                          ),
+                          if (labs.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              done == labs.length
+                                  ? 'Recorrido completado'
+                                  : labs.length - done == 1
+                                      ? 'Te falta 1 laboratorio para completar el recorrido'
+                                      : 'Te faltan ${labs.length - done} laboratorios para completar el recorrido',
+                              style: Theme.of(context).textTheme.labelMedium,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -338,8 +418,11 @@ class AcademyPage extends ConsumerWidget {
                 const SizedBox(height: 16),
                 if (cur != null) ...[
                   BenchPlate(
-                    code: 'BANCO ACTIVO',
-                    title: labStatusLabel(statusMap[cur.id] as String?),
+                    // Sin empezar no es «activo»: es el siguiente puesto sugerido.
+                    code: statusMap[cur.id] == null ? 'SIGUIENTE PUESTO' : 'BANCO ACTIVO',
+                    title: statusMap[cur.id] == null
+                        ? 'Por empezar'
+                        : labStatusLabel(statusMap[cur.id] as String?),
                     tint: cs.primaryContainer.withValues(alpha: 0.5),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -372,16 +455,43 @@ class AcademyPage extends ConsumerWidget {
                               style: FilledButton.styleFrom(
                                   minimumSize: const Size(0, 44)),
                               onPressed: () => _goLab(context, cur),
-                              child: const Text('Continuar'),
-                            ),
-                            TextButton(
-                              onPressed: () => context.go('/progress'),
-                              child: const Text('Ver progreso'),
+                              child: Text(statusMap[cur.id] == null ? 'Empezar' : 'Continuar'),
                             ),
                           ],
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                // Repaso espaciado: preguntas nuevas sin pistas para sostener el dominio.
+                if (value.recalls.isNotEmpty) ...[
+                  BenchPlate(
+                    key: const ValueKey('academy_recalls'),
+                    code: 'REPASO',
+                    title: 'Repasos pendientes',
+                    note: '${value.recalls.length}',
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Preguntas nuevas, sin pistas: el dominio se mantiene demostrándolo otra vez.',
+                          style: Theme.of(context).textTheme.bodySmall),
+                      for (final r in value.recalls.cast<Map>())
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                              labs.where((l) => l.id == r['lab_template_id']).map((l) => l.title)
+                                      .firstOrNull ??
+                                  '${r['lab_template_id']}',
+                              style: const TextStyle(fontSize: 13)),
+                          trailing: TextButton(
+                            key: ValueKey('recall_done_${r['id']}'),
+                            onPressed: () => ref
+                                .read(academyViewModelProvider.notifier)
+                                .markRecallDone('${r['id']}'),
+                            child: const Text('Marcar hecho'),
+                          ),
+                        ),
+                    ]),
                   ),
                   const SizedBox(height: 12),
                 ],

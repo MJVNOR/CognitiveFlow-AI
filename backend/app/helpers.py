@@ -9,15 +9,21 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.evaluation import (
+    data_type_detail,
     jev_evaluate,
     mock_evaluate,
     mock_evaluate_data,
     mock_evaluate_docker,
     mock_evaluate_monitor,
+    verified_facts,
 )
 
 
 MAX_REVISIONS = 6  # P3.5: tope de ciclos evaluar→intervenir por sesión; luego postest
+
+# Sesión reiniciada por el estudiante: se conserva (historial append-only para el
+# instructor) pero deja de contar como progreso y no se reanuda.
+ARCHIVED = "archived"
 
 
 def _kind(attempt) -> str:
@@ -71,6 +77,13 @@ def _can_enter_posttest(db: Session, session) -> bool:
         return False
     if ivs[-1].widget_type not in SUBMIT_EVENT:
         return True
+    spec = json.loads(ivs[-1].spec_json)
+    if spec.get("activity_id"):
+        # Dos retos del mismo widget jamás comparten la entrega.
+        return any(json.loads(event.payload_json).get("activity_id") == spec["activity_id"]
+                   for event in db.query(models.UiEvent).filter_by(
+                       session_id=session.id, widget_type=ivs[-1].widget_type,
+                       event_type=SUBMIT_EVENT[ivs[-1].widget_type]).all())
     try:
         before = int(json.loads(ivs[-1].spec_json).get("submits_before", 0))
     except (ValueError, TypeError, AttributeError):
@@ -110,19 +123,23 @@ def _evaluate_attempt(db: Session, session, attempt) -> dict:
     if session:
         tpl = db.query(models.LabTemplate).filter_by(id=session.lab_template_id).first()
         lab_type = tpl.lab_type if tpl else ""
-    if lab_type == "data_detective":
-        # ponytail: Jev solo en ML por ahora; datos y monitoreo con mock determinista
+    if os.getenv("EVALUATOR_MODE", "mock") == "jev":
+        # Jev en los 4 labs; el verificador del servidor le dice qué fue correcto.
+        # Ante fallo: pending sin scores (nunca se cae al mock).
+        result = jev_evaluate(attempt.answer_text, state, lab_type or "ml_experiment",
+                              verified_facts(lab_type, state))
+        if lab_type == "data_detective":
+            result["detail"] = data_type_detail(state)
+    elif lab_type == "data_detective":
+        # Solo tests/CI (EVALUATOR_MODE=mock): rúbrica determinista etiquetada mock.
         result = mock_evaluate_data(attempt.answer_text, state.get("flags", []),
                                     state.get("seed", 1), state.get("extra", {}))
     elif lab_type == "model_monitoring":
         result = mock_evaluate_monitor(attempt.answer_text, state.get("extra", {}),
                                        state.get("seed", 1))
     elif lab_type == "docker":
-        # ponytail: Jev solo en ML; Docker MVP con mock determinista por unidad
         result = mock_evaluate_docker(attempt.answer_text, state.get("extra", {}),
                                       state.get("seed", 1))
-    elif os.getenv("EVALUATOR_MODE", "mock") == "jev":
-        result = jev_evaluate(attempt.answer_text, state)
     else:
         result = mock_evaluate(attempt.answer_text, state.get("complexity", 5))
     eid = uuid.uuid4().hex[:8]
@@ -188,8 +205,9 @@ def _eval_map(db: Session, attempt_id: str) -> dict | None:
 
 def _lab_progress(db: Session, student_id: str, lab_template_id: str) -> dict:
     """P4.2: baseline (primer intento práctica) vs postest, por criterio."""
-    sessions = db.query(models.LearningSession).filter_by(
+    sessions = [s for s in db.query(models.LearningSession).filter_by(
         student_id=student_id, lab_template_id=lab_template_id).all()
+        if s.status != ARCHIVED]  # reiniciadas: historial, no progreso actual
     if not sessions:
         return {"status": None, "attempts": 0, "baseline": None, "posttest": None,
                 "reviewed": False}

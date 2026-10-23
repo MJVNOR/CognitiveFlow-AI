@@ -5,21 +5,20 @@ from app.socratic import MOCK_QUESTION, socratic_question
 CATALOG = {
     "SocraticQuestionCard",
     "HypothesisEditor",
-    "ChoiceReasoningWidget",
     "DataTableExplorer",
-    "SqlQueryWorkbench",
     "LearningCurveSimulator",
     "DriftDistributionExplorer",
     "EvidenceComparison",
-    "ConceptMapBuilder",
-    "PipelineDAGBuilder",
-    "RubricFeedbackCard",
-    "ReflectionSummary",
     "ContainerVsVmExplorer",
     "ImageContainerLifecycle",
     "DockerfileWorkbench",
     "PersistenceExperiment",
+    "DecisionScenarios",
 }
+
+# Históricos legibles, pero no seleccionables ni aceptados como nuevas actividades.
+BACKLOG_WIDGETS = {"ChoiceReasoningWidget", "SqlQueryWorkbench", "ConceptMapBuilder",
+                   "PipelineDAGBuilder", "RubricFeedbackCard", "ReflectionSummary"}
 
 FALLBACK_WIDGET = "SocraticQuestionCard"
 
@@ -31,14 +30,19 @@ DOCKER_WIDGETS = {
     "M08-D02-lifecycle": "ImageContainerLifecycle",
     "M08-D04-dockerfile": "DockerfileWorkbench",
     "M08-D07-persistence": "PersistenceExperiment",
+    # Unidades de decisión: casos realistas por unidad (labs_docker.DECISION_UNITS).
+    **{u: "DecisionScenarios" for u in (
+        "M08-D03-cli", "M08-D05-context", "M08-D06-network", "M08-D08-compose",
+        "M08-D09-debug", "M08-D10-security", "M08-D11-deploy", "M08-D12-capstone")},
 }
-DOCKER_ORDER = ["M08-D01-containers", "M08-D02-lifecycle",
-                "M08-D04-dockerfile", "M08-D07-persistence"]
+# Orden del temario (D01 → D12); la transferencia va a la siguiente unidad.
+DOCKER_ORDER = sorted(DOCKER_WIDGETS, key=lambda u: int(u[5:7]))
 _DOCKER_TITLES = {
     "ContainerVsVmExplorer": "Clasifica cada escenario",
     "ImageContainerLifecycle": "Avanza el ciclo",
     "DockerfileWorkbench": "Ordena y reconstruye",
     "PersistenceExperiment": "Predice y recrea",
+    "DecisionScenarios": "Decide en cada caso",
 }
 
 # P1.1: contrato mínimo versionado — qué eventos acepta cada widget.
@@ -49,25 +53,24 @@ ALLOWED_EVENTS = {
     "evidenceSelected",
     "argumentSubmitted",
     "hintRequested",
+    "selectionChanged",  # elección intermedia: se corrige, pero no es entrega
 }
 
 ALLOWED_BY_WIDGET = {
-    "LearningCurveSimulator": ["parameterChanged", "predictionSubmitted", "hintRequested"],
+    "LearningCurveSimulator": ["parameterChanged", "predictionSubmitted", "evidenceSelected",
+                               "hintRequested"],
     "EvidenceComparison": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
     "HypothesisEditor": ["hypothesisSubmitted", "hintRequested"],
     "SocraticQuestionCard": ["hintRequested"],
-    "ChoiceReasoningWidget": ["argumentSubmitted", "hintRequested"],
     "DataTableExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
     "DriftDistributionExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
-    "SqlQueryWorkbench": ["argumentSubmitted", "hintRequested"],
-    "ConceptMapBuilder": ["argumentSubmitted", "hintRequested"],
-    "PipelineDAGBuilder": ["argumentSubmitted", "hintRequested"],
-    "ContainerVsVmExplorer": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
-    "ImageContainerLifecycle": ["evidenceSelected", "hintRequested"],
+    "ContainerVsVmExplorer": ["selectionChanged", "evidenceSelected", "argumentSubmitted",
+                              "hintRequested"],
+    "ImageContainerLifecycle": ["selectionChanged", "evidenceSelected", "hintRequested"],
     "DockerfileWorkbench": ["evidenceSelected", "argumentSubmitted", "hintRequested"],
-    "PersistenceExperiment": ["predictionSubmitted", "evidenceSelected", "hintRequested"],
-    "RubricFeedbackCard": ["hintRequested"],
-    "ReflectionSummary": ["argumentSubmitted"],
+    "PersistenceExperiment": ["selectionChanged", "predictionSubmitted", "evidenceSelected", "hintRequested"],
+    "DecisionScenarios": ["selectionChanged", "evidenceSelected", "argumentSubmitted",
+                          "hintRequested"],
 }
 
 # Evento con el que cada widget ENTREGA su respuesta (lo que el widget Flutter
@@ -82,7 +85,8 @@ SUBMIT_EVENT = {
     "ContainerVsVmExplorer": "evidenceSelected",
     "ImageContainerLifecycle": "evidenceSelected",
     "DockerfileWorkbench": "evidenceSelected",
-    "PersistenceExperiment": "predictionSubmitted",
+    "PersistenceExperiment": "evidenceSelected",
+    "DecisionScenarios": "evidenceSelected",
 }
 assert all(e in ALLOWED_BY_WIDGET[w] for w, e in SUBMIT_EVENT.items())
 
@@ -279,9 +283,15 @@ PLANNER_PROMPT_V2 = (
 )
 
 
+_WEAK_BASE_RULE = ("\nLa base del estudiante es débil: NO elijas actividades que suban la "
+                   "dificultad o cambien de contexto (tabla nueva, más complejidad, decidir "
+                   "acción, otra unidad); refuerza lo que falló en esta misma situación.")
+
+
 async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
-                       info: dict | None = None):
-    """(actividad, parámetros válidos, motivo) o (None, {}, None) → deciden las reglas.
+                       info: dict | None = None, weak_base: bool = False):
+    """(actividad, parámetros válidos, motivo). Sin respuesta válida: LLMUnavailable
+    (en tests con LLM_ALLOW_MOCK=1: (None, {}, None) y deciden las reglas).
     Parámetros fuera de esquema se descartan uno a uno (valor por defecto del servidor).
     [info] recibe `outcome` (ok | sin_clave | sin_respuesta | invalida) y `ms`."""
     import json
@@ -289,7 +299,7 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
     import re
     import time
 
-    from app.socratic import _clean, _gemini_ask
+    from app.socratic import _clean, _gemini_ask, require_llm
 
     info = info if info is not None else {}
     start = time.monotonic()
@@ -301,11 +311,13 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
         for aid, (desc, _, ps) in menu.items())
     rubric = ", ".join(f"{c.get('id')}={c.get('score', 0)}" for c in criteria)
     raw = await _gemini_ask(PLANNER_PROMPT_V2.format(
-        menu=lines, rubric=rubric, answer=(answer_text or "")[:1200]))
+        menu=lines, rubric=rubric, answer=(answer_text or "")[:1200])
+        + (_WEAK_BASE_RULE if weak_base else ""))
     info["ms"] = int((time.monotonic() - start) * 1000)
     if raw is None:
         info["outcome"] = ("sin_clave" if not (os.getenv("GEMINI_API_KEY") or
                                                os.getenv("GOOGLE_API_KEY")) else "sin_respuesta")
+        require_llm("planificador")
         return None, {}, None
     m = re.search(r"\{.*\}", raw or "", re.S)
     try:
@@ -316,6 +328,7 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
     act = out.get("activity")
     if act not in menu:
         info["outcome"] = "invalida"
+        require_llm("planificador: actividad fuera del menú")
         return None, {}, None
     info["outcome"] = "ok"
     given = out.get("params") if isinstance(out.get("params"), dict) else {}
@@ -408,14 +421,24 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
         criteria = eval_result.get("criteria", [])
         avg = _avg(criteria)
         info: dict = {}
-        act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info)
-        if act and avg <= 1.5 and _is_transfer(act, params, input_state):
-            act = None  # salvaguarda: con base débil no se salta a transferencia
-            info["outcome"] = "salvaguarda"
+        weak = avg <= 1.5
+        act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info, weak)
+        if act and weak and _is_transfer(act, params, input_state):
+            # Salvaguarda: con base débil no se salta a transferencia; decide Gemini otra vez.
+            act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info, True)
+            if act and _is_transfer(act, params, input_state):
+                act = None
+                info["outcome"] = "salvaguarda"
+                from app.socratic import require_llm
+
+                require_llm("planificador: propuso transferencia con base débil")
         if act:
             weak = [c["id"] for c in criteria if c.get("score", 0) <= 2]
-            q = (await socratic_question(answer_text, weak, lab_type))["question"]
-            iv = _activity(lab_type, act, params, input_state, q, avg)
+            iv = _activity(lab_type, act, params, input_state, "", avg)
+            context = iv["widget_parameters"]["parameters"] if lab_type == "docker" else None
+            q = (await socratic_question(answer_text, weak, lab_type, context))["question"]
+            iv["socratic_question"] = q
+            iv["widget_parameters"]["reasoning_prompt"] = q
             iv["decided_by"] = "gemini"
             iv["planner"] = info
             if motivo:
@@ -445,7 +468,7 @@ async def _rule_intervention(answer_text: str, input_state: dict, eval_result: d
                 ("data_detective" if data_lab else "ml_experiment"))
 
     if eval_result is None:
-        q = (await socratic_question(answer_text, ["sin evaluación"]))["question"]
+        q = (await socratic_question(answer_text, ["sin evaluación"], lab_hint))["question"]
         spec = {
             "type": FALLBACK_WIDGET,
             "version": 1,
@@ -466,7 +489,7 @@ async def _rule_intervention(answer_text: str, input_state: dict, eval_result: d
         }
 
     if eval_result.get("status") != "evaluated":
-        q = (await socratic_question(answer_text, ["evaluación pendiente"]))["question"]
+        q = (await socratic_question(answer_text, ["evaluación pendiente"], lab_hint))["question"]
         spec = {
             "type": FALLBACK_WIDGET,
             "version": 1,
@@ -499,7 +522,9 @@ async def _rule_intervention(answer_text: str, input_state: dict, eval_result: d
         strategy = "contrast_example" if mixed else "request_evidence"
 
     if avg <= 2:
-        q = (await socratic_question(answer_text, weak, lab_hint))["question"]
+        extra = input_state.get("extra") or {}
+        context = _docker_params(extra.get("unit", DOCKER_ORDER[0]), input_state) if docker_lab else None
+        q = (await socratic_question(answer_text, weak, lab_hint, context))["question"]
         if docker_lab:
             extra = input_state.get("extra")
             unit = extra.get("unit", "") if isinstance(extra, dict) else ""
@@ -596,7 +621,12 @@ async def _rule_intervention(answer_text: str, input_state: dict, eval_result: d
             "give_direct_answer": False,
         }
 
-    q = (await socratic_question(answer_text, [], lab_hint))["question"]
+    context = None
+    if docker_lab:
+        unit = (input_state.get("extra") or {}).get("unit", "")
+        nxt = DOCKER_ORDER[(DOCKER_ORDER.index(unit) + 1) % len(DOCKER_ORDER)] if unit in DOCKER_ORDER else DOCKER_ORDER[0]
+        context = _docker_params(nxt, input_state)
+    q = (await socratic_question(answer_text, [], lab_hint, context))["question"]
     # ponytail: sólida→más dificultad, media→alternativa; mismo widget, distinta estrategia
     strong_strategy = "increase_difficulty" if avg >= 3.5 else "explore_alternative"
     if docker_lab:

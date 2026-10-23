@@ -9,6 +9,7 @@ from app.main import app
 from app.db import Base, get_db
 from app.labs_ml import ml_curve
 from app.evaluation import JEV_QUESTIONS
+from app.labs_docker import UNITS as DOCKER_UNITS
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +22,7 @@ def _no_live_llm(monkeypatch):
         monkeypatch.delenv("JEV_API_KEY", raising=False)
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setenv("EVALUATOR_MODE", "mock")
+    monkeypatch.setenv("LLM_ALLOW_MOCK", "1")  # en producción Gemini no tiene fallback
 
 engine = create_engine(
     "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -1001,7 +1003,7 @@ def test_resume_endpoints():
     assert det["can_enter_posttest"] is False
     iv = _intervene_aid(sid, aid)
     assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is False
-    client.post(f"/sessions/{sid}/events", json={
+    _post_ui_event(sid, json={
         "client_event_id": "gate-1", "widget_type": iv["widget_type"],
         "event_type": "argumentSubmitted", "payload": {"argument": "x"}}, headers=H_S1)
     assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"] is True
@@ -1052,9 +1054,9 @@ def test_e2e_lab_loop_no_credits(monkeypatch):
     iv = _intervene_aid(sid, aid)
     assert iv["schema_version"] == 1 and iv["widget_type"] in (
         "EvidenceComparison", "HypothesisEditor", "SocraticQuestionCard")
-    ev = client.post(f"/sessions/{sid}/events",
-        json={"client_event_id": "e2e-1", "widget_type": "LearningCurveSimulator",
-              "event_type": "parameterChanged", "payload": {"complexity": 7}},
+    ev = _post_ui_event(sid,
+        json={"client_event_id": "e2e-1", "widget_type": iv["widget_type"],
+              "event_type": "hintRequested", "payload": {}},
         headers=H_S1).json()
     assert ev["id"] == "e2e-1" and ev["deduped"] is False
     _unlock_posttest(sid)
@@ -1166,15 +1168,24 @@ def test_prompt_ignores_injection():
 
 
 # PR-02 P1.5: eventos UI idempotentes por client_event_id, validados y con ownership
+def _post_ui_event(sid, *, json, headers):
+    """Cliente actualizado: acompaña cada evento con la identidad recibida del servidor."""
+    rows = client.get(f"/sessions/{sid}/interventions", headers=headers).json()
+    body = dict(json)
+    if isinstance(rows, list) and rows:
+        body.setdefault("activity_id", rows[-1]["activity_id"])
+    return client.post(f"/sessions/{sid}/events", json=body, headers=headers)
+
+
 def test_events_idempotent_single_record():
     sid = client.post(
         "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
     ).json()["id"]
     body = {"client_event_id": "evt-pr02-1", "widget_type": "LearningCurveSimulator",
             "event_type": "parameterChanged", "payload": {"complexity": 7}}
-    r1 = client.post(f"/sessions/{sid}/events", json=body, headers=H_S1).json()
+    r1 = _post_ui_event(sid, json=body, headers=H_S1).json()
     assert r1 == {"id": "evt-pr02-1", "deduped": False}
-    r2 = client.post(f"/sessions/{sid}/events", json=body, headers=H_S1).json()
+    r2 = _post_ui_event(sid, json=body, headers=H_S1).json()
     assert r2 == {"id": "evt-pr02-1", "deduped": True}
     rows = TestingSession().query(models.UiEvent).filter_by(id="evt-pr02-1").all()
     assert len(rows) == 1 and rows[0].session_id == sid
@@ -1185,13 +1196,13 @@ def test_events_reject_unknown_or_mismatched():
         "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
     ).json()["id"]
     base = {"client_event_id": "evt-x", "payload": {}}
-    assert client.post(f"/sessions/{sid}/events",
+    assert _post_ui_event(sid,
         json={**base, "widget_type": "Nope", "event_type": "hintRequested"},
         headers=H_S1).status_code == 422
-    assert client.post(f"/sessions/{sid}/events",
+    assert _post_ui_event(sid,
         json={**base, "widget_type": "SocraticQuestionCard", "event_type": "hack"},
         headers=H_S1).status_code == 422
-    assert client.post(f"/sessions/{sid}/events",
+    assert _post_ui_event(sid,
         json={**base, "widget_type": "SocraticQuestionCard", "event_type": "parameterChanged"},
         headers=H_S1).status_code == 422
 
@@ -1200,7 +1211,7 @@ def test_events_cross_student_forbidden():
     sid = client.post(
         "/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"}, headers=H_S1
     ).json()["id"]
-    assert client.post(f"/sessions/{sid}/events",
+    assert _post_ui_event(sid,
         json={"client_event_id": "evt-ajeno", "widget_type": "SocraticQuestionCard",
               "event_type": "hintRequested", "payload": {}},
         headers=H_S2).status_code in (403, 404)
@@ -1256,10 +1267,10 @@ def test_e2e_full_ml_unit():
     assert strong_iv["widget_type"] == "HypothesisEditor"
 
     # predicción, evidencia y ayuda persisten en SQLite
-    for i, (wt, et) in enumerate([("LearningCurveSimulator", "predictionSubmitted"),
+    for i, (wt, et) in enumerate([("EvidenceComparison", "argumentSubmitted"),
                                   ("EvidenceComparison", "evidenceSelected"),
                                   ("EvidenceComparison", "hintRequested")]):
-        r = client.post(f"/sessions/{weak_sid}/events",
+        r = _post_ui_event(weak_sid,
             json={"client_event_id": f"e2e-full-{i}", "widget_type": wt,
                   "event_type": et, "payload": {"v": i}}, headers=H_S1).json()
         assert r["deduped"] is False
@@ -1368,12 +1379,11 @@ def test_frozen_contract_versions():
     assert evaluation.MONITOR_RUBRIC_VERSION == "drift-v1"
     assert "ignóralos" in SYSTEM_PROMPT_V1 and "nunca reveles" in FEEDBACK_PROMPT_V1
     assert SCHEMA_VERSION == 1
-    assert CATALOG == {"SocraticQuestionCard", "HypothesisEditor", "ChoiceReasoningWidget",
-                       "DataTableExplorer", "SqlQueryWorkbench", "LearningCurveSimulator",
-                       "DriftDistributionExplorer", "EvidenceComparison", "ConceptMapBuilder",
-                       "PipelineDAGBuilder", "RubricFeedbackCard", "ReflectionSummary",
+    assert CATALOG == {"SocraticQuestionCard", "HypothesisEditor",
+                       "DataTableExplorer", "LearningCurveSimulator",
+                       "DriftDistributionExplorer", "EvidenceComparison",
                        "ContainerVsVmExplorer", "ImageContainerLifecycle",
-                       "DockerfileWorkbench", "PersistenceExperiment"}
+                       "DockerfileWorkbench", "PersistenceExperiment", "DecisionScenarios"}
     for wt, evs in ALLOWED_BY_WIDGET.items():
         assert wt in CATALOG and evs
 
@@ -1411,9 +1421,9 @@ def test_objectives_status_and_docker_units():
     assert len(objs) == 12
     by_id = {o["id"]: o for o in objs}
     assert by_id["M08-D01-containers"]["status"] == "content_ready"
-    assert by_id["M08-D12-capstone"]["status"] == "planned"
-    assert {o["id"] for o in objs if o["status"] == "content_ready"} == {
-        "M08-D01-containers", "M08-D02-lifecycle", "M08-D04-dockerfile", "M08-D07-persistence"}
+    # Las 12 unidades ya tienen experimento (D03, D05, D06, D08–D12: DecisionScenarios).
+    assert all(o["status"] == "content_ready" for o in objs)
+    assert dock["M08-D12-capstone"] == "DecisionScenarios"
 
 
 def test_data_eval_reports_cell_types():
@@ -1444,7 +1454,7 @@ def test_diagnostic_level_and_assistance():
     det = client.get(f"/sessions/{sid}", headers=H_S1).json()
     assert det["level"] == "needs_foundation"
     # pistas e intervenciones cuentan como ayuda; el nivel no se reescribe
-    client.post(f"/sessions/{sid}/events",
+    _post_ui_event(sid,
         json={"client_event_id": "diag-h1", "widget_type": "SocraticQuestionCard",
               "event_type": "hintRequested", "payload": {}}, headers=H_S1)
     _intervene_aid(sid, aid)
@@ -1598,8 +1608,10 @@ def test_docker_intervention_widgets():
                "RUN pip install --no-cache-dir -r requirements.txt", "COPY ./app ./app"])
     _eval_on(sid2, aid2)
     iv2 = _intervene_aid(sid2, aid2)
-    assert iv2["widget_type"] == "PersistenceExperiment"
+    # Transferencia a la siguiente unidad del temario: D04 → D05 (decisiones de contexto).
+    assert iv2["widget_type"] == "DecisionScenarios"
     assert iv2["widget_parameters"]["title"].startswith("Transfiere")
+    assert iv2["widget_parameters"]["parameters"]["unit"] == "M08-D05-context"
 
 
 def test_docker_e2e_lab_loop():
@@ -1614,13 +1626,14 @@ def test_docker_e2e_lab_loop():
     iv = _intervene_aid(sid, aid)
     assert iv["widget_type"] in ("ContainerVsVmExplorer", "DockerfileWorkbench",
                                  "PersistenceExperiment", "ImageContainerLifecycle")
-    ev = client.post(f"/sessions/{sid}/events",
+    ev = _post_ui_event(sid,
         json={"client_event_id": "docker-e2e-1", "widget_type": "ContainerVsVmExplorer",
               "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 0]}},
         headers=H_S1).json()
     assert ev["id"] == "docker-e2e-1" and ev["deduped"] is False
     _unlock_posttest(sid)
-    sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post"}, headers=H_S1).json()
+    sub = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "post",
+        "extra": {"choices": [0, 1, 0]}}, headers=H_S1).json()
     assert sub["status"] == "submitted"
     done = client.post(f"/sessions/{sid}/reflection", json={"text": "x"}, headers=H_S1).json()
     assert done["status"] == "done" and "summary" in done
@@ -1637,7 +1650,7 @@ def test_posttest_gate_uses_each_widget_submit_event():
     assert iv["widget_type"] == "HypothesisEditor"
     gate = lambda: client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
     assert gate() is False
-    client.post(f"/sessions/{sid}/events", json={
+    _post_ui_event(sid, json={
         "client_event_id": "gate-h1", "widget_type": "HypothesisEditor",
         "event_type": "hypothesisSubmitted", "payload": {"hypothesis": "x"}}, headers=H_S1)
     assert gate() is True
@@ -1660,7 +1673,7 @@ def _unlock_posttest(sid: str, h=H_S1):
                      headers=h).json()
     et = SUBMIT_EVENT.get(iv["widget_type"])
     if et:
-        client.post(f"/sessions/{sid}/events", json={
+        _post_ui_event(sid, json={
             "client_event_id": f"unlock-{sid}", "widget_type": iv["widget_type"],
             "event_type": et, "payload": {}}, headers=h)
     assert client.get(f"/sessions/{sid}", headers=h).json()["can_enter_posttest"] is True
@@ -1697,7 +1710,7 @@ def test_data_scenario_answer_checked_server_side():
     perfect = {ref: t for ref, t in truth.items() if t != "ok"}
 
     def send(eid, cls):
-        return client.post(f"/sessions/{sid}/events", json={
+        return _post_ui_event(sid, json={
             "client_event_id": eid, "widget_type": "DataTableExplorer",
             "event_type": "argumentSubmitted",
             "payload": {"argument": "x", "classifications": cls}}, headers=H_S1).json()
@@ -1707,12 +1720,12 @@ def test_data_scenario_answer_checked_server_side():
         "correctas": sorted(perfect, key=list(truth).index), "revisar": []}
     assert good["check"]["item"] == "fila"
     wrong_ref = next(iter(perfect))
-    bad = send("chk-2", {**perfect, wrong_ref: "duplicate" if perfect[wrong_ref] != "duplicate"
-                         else "unit"})
+    wrong = {**perfect, wrong_ref: "duplicate" if perfect[wrong_ref] != "duplicate" else "unit"}
+    bad = send("chk-2", wrong)
     assert bad["check"]["revisar"] == [wrong_ref]
     assert "unit" not in str(bad["check"]) and "duplicate" not in str(bad["check"])
     # reintento idempotente devuelve la misma corrección
-    assert send("chk-2", {})["check"] == bad["check"]
+    assert send("chk-2", wrong)["check"] == bad["check"]
 
 
 def test_data_variants_move_planted_rows():
@@ -1734,7 +1747,7 @@ def test_gate_ignores_submits_made_before_the_challenge():
     aid = _docker_attempt(sid, "M08-D01-containers", "no sé")
 
     def submit(eid):
-        client.post(f"/sessions/{sid}/events", json={
+        _post_ui_event(sid, json={
             "client_event_id": eid, "widget_type": "ContainerVsVmExplorer",
             "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 0]}}, headers=H_S1)
 
@@ -1775,7 +1788,8 @@ def test_submit_events_match_what_flutter_widgets_emit():
     if not wdir.exists():
         pytest.skip("sin frontend en el checkout")
     src = " ".join(p.read_text(encoding="utf-8") for p in wdir.glob("*.dart"))
-    emitted = set(re.findall(r"TutorEvents\.send\(\s*'(\w+)',\s*'(\w+)'", src))
+    # También `completa ? 'evidenceSelected' : 'selectionChanged'` (entrega al completar).
+    emitted = set(re.findall(r"TutorEvents\.send\(\s*context,\s*'(\w+)',\s*(?:[^,'?]*\?\s*)?'(\w+)'", src))
     for widget, event in SUBMIT_EVENT.items():
         assert (widget, event) in emitted, f"{widget} no emite {event}"
 
@@ -1882,7 +1896,7 @@ def test_planner_data_focus_types_stay_server_side(monkeypatch):
     assert "leak" not in restored
     # la corrección usa el mismo foco guardado en el log
     leak_ref = next(r for r, t in truth.items() if t == "leak")
-    chk = client.post(f"/sessions/{sid}/events", json={
+    chk = _post_ui_event(sid, json={
         "client_event_id": "plan-chk", "widget_type": "DataTableExplorer",
         "event_type": "argumentSubmitted",
         "payload": {"argument": "x", "classifications": {leak_ref: "leak"}}}, headers=H_S1).json()
@@ -1949,7 +1963,7 @@ def test_docker_challenge_answer_checked_after_intervention():
     assert iv["widget_type"] == "ContainerVsVmExplorer"
     params = iv["widget_parameters"]["parameters"]
     assert params["seed"] == 4 and len(params["scenarios"]) == 3  # caso nuevo, sin respuestas
-    r = client.post(f"/sessions/{sid}/events", json={
+    r = _post_ui_event(sid, json={
         "client_event_id": "dk-chk", "widget_type": "ContainerVsVmExplorer",
         "event_type": "evidenceSelected", "payload": {"choices": [0, 0, 0]}}, headers=H_S1).json()
     assert set(r["check"]) >= {"correctas", "revisar", "item", "consejo"}
@@ -2096,6 +2110,108 @@ def test_docker_d02_sequences_vary_and_are_simulated():
     assert "answer" not in a and truth not in str(a.get("ask_stage"))
 
 
+def _docker_response(unit, seed):
+    from app import labs_docker as d
+
+    a = d.activity(unit, seed)
+    if unit in d.DECISION_UNITS:
+        return {"choices": [right for _, _, right in d._decision_items(unit, seed)]}
+    if unit == "M08-D01-containers":
+        return {"choices": [d._d01_answers(seed)[text] for text in a["scenarios"]]}
+    if unit == "M08-D02-lifecycle":
+        return {"prediction": d._d02_exists(a["stages"][:a["ask_index"] + 1])}
+    if unit == "M08-D04-dockerfile":
+        return {"order": d._dockerfile_for(a["lines"])}
+    return {"mount": "named volume", "predicted": True}
+
+
+@pytest.mark.parametrize("unit", DOCKER_UNITS)
+def test_docker_all_units_posttest_preserves_and_verifies_decisions(unit):
+    import json
+    from app.evaluation import verified_facts
+
+    sid = _docker_session()
+    aid = _docker_attempt(sid, unit, "Explico mi decisión con evidencia", **_docker_response(unit, 1))
+    _eval_on(sid, aid)
+    _unlock_posttest(sid)
+    variant = client.post(f"/sessions/{sid}/posttest", json={}, headers=H_S1).json()
+    assert "seed" in variant
+    evidence = _docker_response(unit, variant["seed"])
+    bad = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "x",
+        "extra": {**evidence, "unit": "otra-unidad"}}, headers=H_S1)
+    assert bad.status_code == 403
+    missing = client.post(f"/sessions/{sid}/posttest", json={"answer_text": "x"}, headers=H_S1)
+    assert missing.status_code == 422
+    result = client.post(f"/sessions/{sid}/posttest", json={
+        "answer_text": "Cito la decisión, el mecanismo y cómo comprobarlo.", "seed": 1,
+        "extra": {**evidence, "unit": unit, "score": 4, "observed": "inventado"}}, headers=H_S1)
+    assert result.status_code == 200, result.text
+    db = TestingSession()
+    attempt = db.query(models.LabAttempt).filter_by(id=result.json()["id"]).one()
+    state = json.loads(attempt.input_state_json)
+    assert state["seed"] == variant["seed"]
+    assert state["extra"] == {"unit": unit, **evidence}
+    assert verified_facts("docker", state)
+    db.close()
+
+
+def test_docker_tutor_rejects_ml_question_and_uses_actual_activity(monkeypatch):
+    import asyncio
+    import app.socratic as soc
+    from app.labs_docker import activity
+
+    seen = []
+    replies = iter(["¿Cómo demuestra docker stop que el modelo ajustó sus pesos durante el entrenamiento?",
+                    "¿Qué recurso deja de existir después del comando señalado y cómo lo comprobarías?"])
+    async def fake(prompt):
+        seen.append(prompt)
+        return next(replies)
+    monkeypatch.setattr(soc, "_gemini_ask", fake)
+    context = activity("M08-D02-lifecycle", 4)
+    result = asyncio.run(soc.socratic_question("Lo detuve", ["causal"], "docker", context))
+    assert "pesos" not in result["question"]
+    assert len(seen) == 2 and "M08-D02-lifecycle" in seen[0]
+    assert all(cmd in seen[0] for cmd in context["stages"])
+    async def wrong(_):
+        return "¿Qué pesos cambian durante el entrenamiento?"
+    monkeypatch.setattr(soc, "_gemini_ask", wrong)
+    monkeypatch.delenv("LLM_ALLOW_MOCK")
+    with pytest.raises(soc.LLMUnavailable):
+        asyncio.run(soc.socratic_question("x", [], "docker", context))
+
+
+def test_docker_planner_question_describes_selected_unit_not_previous(monkeypatch):
+    import asyncio
+    import app.socratic as soc
+    from app.interventions import select_intervention
+
+    seen = []
+    async def fake(prompt):
+        if "planificador" in prompt:
+            return '{"activity":"unit_practice","params":{"unit":"M08-D02-lifecycle"}}'
+        seen.append(prompt)
+        return "¿Cómo distinguirías la existencia de una imagen de la de un contenedor?"
+    monkeypatch.setattr(soc, "_gemini_ask", fake)
+    iv = asyncio.run(select_intervention("Comparten kernel", {"seed": 1,
+        "extra": {"unit": "M08-D01-containers"}}, {"status": "evaluated",
+        "criteria": [{"id": "exactitud", "score": 3}]}, "docker"))
+    assert iv["widget_type"] == "ImageContainerLifecycle"
+    assert "M08-D02-lifecycle" in seen[0]
+
+
+def test_docker_curricular_instructions_and_decisions_are_complete():
+    from app import labs_docker as d
+
+    for unit in d.UNITS:
+        for seed in (1, 4, 99, 412):
+            a = d.activity(unit, seed)
+            assert a["instruction"] and "answer" not in a
+            response = _docker_response(unit, seed)
+            assert d.check(unit, seed, response)["revisar"] == []
+    assert d._d02_exists(["docker build", "docker run", "docker stop", "docker start"]) == "ambos"
+    assert d.check("M08-D02-lifecycle", 1, {}) is None
+
+
 def test_planner_telemetry_recorded_and_aggregated(monkeypatch):
     import json
 
@@ -2122,3 +2238,372 @@ def test_llm_text_is_plain_and_bounded():
     assert _clean("¡Bien! El **sobreajuste** se ve en *validación* y `loss`", 500) == (
         "¡Bien! El sobreajuste se ve en validación y loss")
     assert len(_clean("x " * 400, 120)) <= 120
+
+
+def test_student_resets_lab_without_losing_history():
+    h_s4 = {"Authorization": f"Bearer {client.post('/auth/login', json={'user_id': 's4'}).json()['token']}"}
+    sid = client.post("/sessions", json={"lab_template_id": "lab-monitor"}, headers=h_s4).json()["id"]
+    aid = client.post(f"/sessions/{sid}/attempts", json={
+        "seed": 1, "answer_text": "deriva en temp", "extra": {"feature": "temp", "changepoint": 120}},
+        headers=h_s4).json()["id"]
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=h_s4)
+    assert client.get("/me/lab-status", headers=h_s4).json().get("lab-monitor") == "active"
+    assert client.post("/me/labs/lab-monitor/reset", headers=h_s4).json() == {"archived": 1}
+    # para el estudiante: desde cero
+    assert "lab-monitor" not in client.get("/me/lab-status", headers=h_s4).json()
+    assert client.get("/me/sessions?lab_template_id=lab-monitor", headers=h_s4).json() == []
+    prog = next(p for p in client.get("/me/progress", headers=h_s4).json()
+                if p["lab_template_id"] == "lab-monitor")
+    assert prog["attempts"] == 0 and prog["baseline"] is None
+    # historial intacto para el instructor (append-only)
+    hist = client.get("/instructor/students/s4/sessions", headers=H_I1).json()
+    assert any(s["id"] == sid for s in hist)
+    assert TestingSession().query(models.EvaluationResult).filter_by(attempt_id=aid).count() == 1
+    # el instructor no reinicia
+    assert client.post("/me/labs/lab-monitor/reset", headers=H_I1).status_code == 403
+
+
+def test_docker_decision_units_vary_check_and_evaluate():
+    from app import labs_docker
+    from app.evaluation import mock_evaluate_docker
+
+    units = [u for u in labs_docker.DECISION_UNITS]
+    assert len(units) == 8 and set(units) <= set(labs_docker.UNITS)
+    for unit, bank in labs_docker.DECISION_UNITS.items():
+        for prompt, right, wrong in bank:  # respuesta única y distractores distintos
+            assert right not in wrong and len(set(wrong)) == len(wrong), prompt
+    for unit in units:
+        a1 = labs_docker.activity(unit, 1)
+        assert "answer" not in str(a1) and all(len(i["options"]) == 3 for i in a1["items"])
+        variants = {tuple(i["prompt"] for i in labs_docker.activity(unit, s)["items"])
+                    for s in (1, 4, 412)}
+        assert len(variants) > 1, unit  # práctica, reto y prueba distintos
+    assert labs_docker.activity("M08-D03-cli", 1)["mono"] is True
+    cap = labs_docker._decision_items("M08-D12-capstone", 7)
+    assert len(cap) == 4  # el capstone mezcla casos de 4 unidades
+    # corrección y evaluación contra la verdad del servidor
+    items = labs_docker._decision_items("M08-D06-network", 4)
+    right = [ans for _, _, ans in items]
+    assert labs_docker.check("M08-D06-network", 4, {"choices": right})["revisar"] == []
+    wrong = [(right[0] + 1) % 3] + right[1:]
+    assert labs_docker.check("M08-D06-network", 4, {"choices": wrong})["revisar"] == ["1"]
+    ev = mock_evaluate_docker("Elegí el nombre del servicio porque cada contenedor tiene su "
+                              "propio localhost; en vez de publicar puertos de más.",
+                              {"unit": "M08-D06-network", "choices": right}, 4)
+    assert {c["id"]: c["score"] for c in ev["criteria"]}["exactitud"] == 4
+
+
+def test_docker_decision_unit_full_flow_with_prereqs():
+    _complete_docker_units("s1", "M08-D01-containers", "M08-D02-lifecycle")
+    act = client.get("/labs/lab-docker/docker-activity?unit=M08-D03-cli&seed=1").json()
+    assert act["mono"] and len(act["items"]) == 3
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D03-cli", "no sé", choices=[0, 0, 0])
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["widget_type"] == "DecisionScenarios"
+    assert iv["widget_parameters"]["parameters"]["unit"] == "M08-D03-cli"
+    assert iv["widget_parameters"]["parameters"]["seed"] == 4  # caso nuevo para el reto
+    r = _post_ui_event(sid, json={
+        "client_event_id": "dec-1", "widget_type": "DecisionScenarios",
+        "event_type": "evidenceSelected", "payload": {"choices": [0, 1, 2]}}, headers=H_S1).json()
+    assert r["check"]["item"] == "caso"
+    assert len(r["check"]["correctas"]) + len(r["check"]["revisar"]) == 3
+
+
+def test_docker_practice_event_is_corrected_at_once():
+    """El experimento de práctica dice qué escenario revisar (sin revelar la respuesta)."""
+    from app.labs_docker import _d01_answers, activity
+
+    sid = _docker_session()
+    texts = activity("M08-D01-containers", 1)["scenarios"]
+    answers = _d01_answers(1)
+    choices = [answers[t] for t in texts]
+    choices[0] = 1 - choices[0]  # uno mal
+    r = _post_ui_event(sid, json={
+        "client_event_id": "pr-1", "widget_type": "ContainerVsVmExplorer",
+        "event_type": "evidenceSelected",
+        "payload": {"unit": "M08-D01-containers", "choices": choices}}, headers=H_S1).json()
+    assert r["check"]["revisar"] == ["1"] and r["check"]["correctas"] == ["2", "3"]
+    # Sin unidad válida (o con otro widget) no hay corrección.
+    r2 = _post_ui_event(sid, json={
+        "client_event_id": "pr-2", "widget_type": "DockerfileWorkbench",
+        "event_type": "evidenceSelected",
+        "payload": {"unit": "M08-D01-containers", "order": []}}, headers=H_S1).json()
+    assert "check" not in r2
+
+
+def test_gemini_failure_is_503_without_mock(monkeypatch):
+    """Producción: sin respuesta de Gemini no se inventa una pregunta; el cliente reintenta."""
+    monkeypatch.delenv("LLM_ALLOW_MOCK")
+    sid, aid = _attempt_with_text("hay overfit porque la validación sube")
+    client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1)
+    r = client.post(f"/sessions/{sid}/socratic", json={"attempt_id": aid}, headers=H_S1)
+    assert r.status_code == 503 and "Gemini" in r.json()["detail"]
+    r = client.post(f"/sessions/{sid}/next-intervention", json={"attempt_id": aid}, headers=H_S1)
+    assert r.status_code == 503
+
+
+def test_jev_evaluates_docker_with_server_facts(monkeypatch):
+    """EVALUATOR_MODE=jev: Docker también lo evalúa Jev, con los aciertos verificados."""
+    import httpx
+
+    sent = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.update(json)
+        return _FakeJev(200, _all_high())
+
+    monkeypatch.setenv("EVALUATOR_MODE", "jev")
+    monkeypatch.setenv("JEV_API_KEY", "test-key")
+    monkeypatch.setattr(httpx, "post", fake_post)
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D01-containers", "comparten kernel", choices=[0, 0, 0])
+    r = client.post(f"/sessions/{sid}/evaluate", json={"attempt_id": aid}, headers=H_S1).json()
+    assert r["evaluator"] == "jev" and r["rubric_version"] == "docker-mvp-v1"
+    assert "Verificado por el servidor" in sent["state"] and "decisiones correctas" in sent["state"]
+    assert "Docker" in sent["questions"]["exactitud"]["instructions"]
+
+
+def test_weak_base_reasks_gemini_instead_of_rules(monkeypatch):
+    """Siempre Gemini: si con base débil propone transferencia, se le pregunta otra vez."""
+    import app.socratic as soc
+
+    replies = ['{"activity": "raise_complexity", "params": {"complexity": 9}}',
+               '{"activity": "predict_and_simulate"}']
+    seen = []
+
+    async def fake(prompt):
+        if "planificador" in prompt:
+            seen.append(prompt)
+            return replies[min(len(seen), 2) - 1]
+        return None
+
+    monkeypatch.setattr(soc, "_gemini_ask", fake)
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert len(seen) == 2 and "base del estudiante es débil" in seen[0]
+    assert iv["decided_by"] == "gemini" and iv["widget_type"] == "LearningCurveSimulator"
+    # En producción (sin mock permitido), si insiste en transferir: 503, sin reglas.
+    replies[1] = replies[0]
+    aid = _attempt(sid, "sigo sin saber")
+    _eval_on(sid, aid)
+    monkeypatch.delenv("LLM_ALLOW_MOCK")
+    r = client.post(f"/sessions/{sid}/next-intervention", json={"attempt_id": aid}, headers=H_S1)
+    assert r.status_code == 503
+
+
+def _ev(sid, wt, et, payload, cid):
+    return _post_ui_event(sid, json={
+        "client_event_id": cid, "widget_type": wt, "event_type": et, "payload": payload},
+        headers=H_S1).json()
+
+
+def test_practice_is_corrected_at_once_in_every_lab():
+    from app.labs_ml import ml_curve
+    from app.labs_monitor import generate
+
+    # Datos: solo las filas que el alumno tocó (7 es unidad, no outlier).
+    sid = _data_session()
+    r = _ev(sid, "DataTableExplorer", "evidenceSelected",
+            {"row": 7, "type": "outlier", "cell_types": {"25": "outlier"}}, "pd-1")
+    assert r["check"]["correctas"] == ["25"] and r["check"]["revisar"] == ["7"]
+    # ML: la época donde la validación deja de bajar, con sobreajuste visible.
+    sid = _ml_session()
+    c = ml_curve(9, 30, 1)
+    best = min(range(10), key=lambda i: c["val"][i])
+    ok = _ev(sid, "LearningCurveSimulator", "evidenceSelected",
+             {"epoch": best, "complexity": 9, "noise_pct": 30}, "pm-1")["check"]
+    bad = _ev(sid, "LearningCurveSimulator", "evidenceSelected",
+              {"epoch": best, "complexity": 1, "noise_pct": 0}, "pm-2")["check"]
+    assert ok["revisar"] == [] and bad["correctas"] == []
+    # Monitoreo: feature y momento del cambio.
+    sid = _monitor_session()
+    t = generate(1)["truth"]
+    r = _ev(sid, "DriftDistributionExplorer", "evidenceSelected",
+            {"feature": t["drifted_feature"], "changepoint": t["changepoint"] + 60}, "pmo-1")
+    assert len(r["check"]["correctas"]) == 1 and r["check"]["revisar"] == ["el momento del cambio"]
+
+
+def test_partial_selection_is_corrected_but_not_a_submission():
+    from app.labs_docker import _d01_answers, activity
+
+    sid = _docker_session()
+    texts = activity("M08-D01-containers", 1)["scenarios"]
+    wrong = 1 - _d01_answers(1)[texts[0]]
+    r = _ev(sid, "ContainerVsVmExplorer", "selectionChanged",
+            {"unit": "M08-D01-containers", "choices": [wrong, None, None]}, "pp-1")
+    # Solo lo respondido; lo pendiente no se marca como error.
+    assert r["check"] == {**r["check"], "correctas": [], "revisar": ["1"], "pendientes": 2}
+    from app.helpers import submit_count
+
+    db = TestingSession()
+    assert submit_count(db, sid, "ContainerVsVmExplorer") == 0
+    db.close()
+
+
+def test_worked_examples_do_not_copy_experiment_cases():
+    """El ejemplo resuelto enseña la regla con casos propios: nunca regala un caso del banco."""
+    from app import labs_docker as L
+    from app.seed import OBJECTIVES
+
+    def norm(t):
+        return " ".join(t.lower().replace("¿", "").split())
+
+    banks = {"M08-D01-containers": [t for t, _ in L._D01]}
+    for u, items in L.DECISION_UNITS.items():
+        banks[u] = [it[0] if isinstance(it, (list, tuple)) else it["prompt"] for it in items]
+    for o in OBJECTIVES:
+        steps = " ".join(norm(s) for s in o["worked_example_steps"])
+        for case in banks.get(o["id"], []):
+            assert norm(case)[:40] not in steps, (o["id"], case)
+
+
+def test_seed_syncs_teaching_content_of_existing_objectives():
+    import json as _json
+
+    from app import seed as seed_mod
+
+    db = TestingSession()
+    row = db.query(models.LearningObjective).filter_by(id="M08-D01-containers").first()
+    if row is None:
+        db.close()
+        pytest.skip("objetivo no sembrado en la base de tests")
+    row.worked_example_json = _json.dumps(["viejo"])
+    db.commit()
+    db.close()
+    orig = seed_mod.SessionLocal
+    seed_mod.SessionLocal = TestingSession
+    try:
+        seed_mod.seed_if_empty()
+    finally:
+        seed_mod.SessionLocal = orig
+    db = TestingSession()
+    row = db.query(models.LearningObjective).filter_by(id="M08-D01-containers").first()
+    assert _json.loads(row.worked_example_json) == seed_mod.OBJECTIVE_D01["worked_example_steps"]
+    db.close()
+
+
+# Catálogo honesto e identidad de actividades (sin APIs reales).
+def test_active_catalog_matches_flutter_and_excludes_backlog():
+    from pathlib import Path
+    import re
+    from app.interventions import CATALOG, BACKLOG_WIDGETS, ALLOWED_BY_WIDGET, ACTIVITY_MENU
+
+    source = (Path(__file__).parents[2] / "frontend/lib/ui/tutor/catalog.dart").read_text(encoding="utf-8")
+    active = re.search(r"const cognitiveFlowWidgets = \{(.*?)\};", source, re.S)[1]
+    backlog = re.search(r"const backlogWidgets = \{(.*?)\};", source, re.S)[1]
+    assert set(re.findall(r"'([^']+)'", active)) == CATALOG
+    assert set(re.findall(r"'([^']+)'", backlog)) == BACKLOG_WIDGETS
+    assert not CATALOG & BACKLOG_WIDGETS
+    assert set(ALLOWED_BY_WIDGET) == CATALOG
+    assert all(widget is None or widget in CATALOG
+               for menu in ACTIVITY_MENU.values() for _, widget, _ in menu.values())
+
+
+def test_activity_identity_resume_retry_and_same_widget_isolation():
+    import json
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    first = _intervene_aid(sid, aid)
+    assert first["session_id"] == sid and first["previous_activity_id"] is None
+    assert first["activity_id"] == _intervene_aid(sid, aid)["activity_id"]
+    history = client.get(f"/sessions/{sid}/interventions", headers=H_S1).json()
+    assert len(history) == 1 and history[0]["activity_id"] == first["activity_id"]
+    event = {"client_event_id": f"identity-{sid}", "activity_id": first["activity_id"],
+             "widget_type": first["widget_type"], "event_type": "argumentSubmitted",
+             "payload": {"argument": "mi evidencia"}}
+    url = f"/sessions/{sid}/events"
+    assert client.post(url, json=event, headers=H_S1).status_code == 200
+    assert client.post(url, json=event, headers=H_S1).json()["deduped"] is True
+    stored = TestingSession().query(models.UiEvent).filter_by(id=event["client_event_id"]).one()
+    assert json.loads(stored.payload_json)["activity_id"] == first["activity_id"]
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
+
+    aid2 = _attempt(sid, "no sé")
+    _eval_on(sid, aid2)
+    second = _intervene_aid(sid, aid2)
+    assert second["widget_type"] == first["widget_type"]
+    assert second["activity_id"] != first["activity_id"]
+    assert second["previous_activity_id"] == first["activity_id"]
+    assert not client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
+    # Un reintento confirmado conserva el resultado, sin contar para el reto nuevo.
+    assert client.post(url, json=event, headers=H_S1).json()["deduped"]
+    stale = {**event, "client_event_id": f"stale-{sid}"}
+    assert client.post(url, json=stale, headers=H_S1).status_code == 409
+    no_id = {k: v for k, v in stale.items() if k != "activity_id"}
+    assert client.post(url, json=no_id, headers=H_S1).status_code == 422
+    wrong_widget = {**stale, "activity_id": second["activity_id"], "widget_type": "HypothesisEditor",
+                    "event_type": "hypothesisSubmitted"}
+    assert client.post(url, json=wrong_widget, headers=H_S1).status_code == 422
+    current = {**stale, "activity_id": second["activity_id"]}
+    assert client.post(url, json=current, headers=H_S1).status_code == 200
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
+    assert client.post(url, json={**current, "payload": {}}, headers=H_S1).status_code == 409
+    sid2 = _ml_session()
+    assert client.post(f"/sessions/{sid2}/events", json=current, headers=H_S1).status_code == 409
+
+
+def test_legacy_activity_gets_stable_identity_without_rewriting_history():
+    import json
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    spec = json.dumps({"widget_type": "EvidenceComparison", "widget_parameters": {"title": "Histórico"}})
+    with TestingSession() as db:
+        db.add(models.InterventionLog(id=f"old-{sid}", session_id=sid, attempt_id=aid,
+            strategy="contrast_example", widget_type="EvidenceComparison", spec_json=spec))
+        db.commit()
+    history = client.get(f"/sessions/{sid}/interventions", headers=H_S1).json()
+    assert history[-1]["activity_id"] == f"activity-old-{sid}"
+    assert _intervene_aid(sid, aid)["activity_id"] == history[-1]["activity_id"]
+    with TestingSession() as db:
+        assert db.get(models.InterventionLog, f"old-{sid}").spec_json == spec
+    r = client.post(f"/sessions/{sid}/events", json={"client_event_id": f"old-event-{sid}",
+        "widget_type": "EvidenceComparison", "event_type": "argumentSubmitted", "payload": {}}, headers=H_S1)
+    assert r.status_code == 200
+    assert client.get(f"/sessions/{sid}", headers=H_S1).json()["can_enter_posttest"]
+
+
+def test_activity_events_reject_foreign_identity_backlog_and_reserved_metadata():
+    sid = _ml_session()
+    aid = _attempt(sid, "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    body = {"activity_id": iv["activity_id"], "client_event_id": f"reserved-{sid}",
+            "widget_type": iv["widget_type"], "event_type": "argumentSubmitted", "payload": {}}
+    sid2 = _ml_session()
+    assert client.post(f"/sessions/{sid2}/events", json=body, headers=H_S1).status_code == 409
+    for key in ("activity_id", "server_check"):
+        assert client.post(f"/sessions/{sid}/events", json={**body, "payload": {key: "forged"}},
+                           headers=H_S1).status_code == 422
+    assert client.post(f"/sessions/{sid}/events", json={**body, "widget_type": "SqlQueryWorkbench"},
+                       headers=H_S1).status_code == 422
+    assert client.post(f"/sessions/{sid}/events", json=body, headers=H_S1).status_code == 200
+    client.post(f"/sessions/{sid}/posttest", json={"answer_text": ""}, headers=H_S1)
+    assert client.post(f"/sessions/{sid}/events", json={**body, "client_event_id": f"late-{sid}"},
+                       headers=H_S1).status_code == 409
+
+
+def test_practice_keeps_being_corrected_with_an_open_challenge():
+    """Volver al experimento con un reto abierto sigue dando corrección inmediata."""
+    from app.labs_docker import _d01_answers, activity
+
+    sid = _docker_session()
+    db = TestingSession()
+    db.add(models.InterventionLog(id="ivlog-1", session_id=sid, attempt_id="a-x",
+                                  strategy="remediate", widget_type="ContainerVsVmExplorer",
+                                  spec_json="{}"))
+    db.commit()
+    db.close()
+    texts = activity("M08-D01-containers", 1)["scenarios"]
+    answers = _d01_answers(1)
+    r = _ev(sid, "ContainerVsVmExplorer", "evidenceSelected",
+            {"unit": "M08-D01-containers", "choices": [answers[t] for t in texts]}, "op-1")
+    assert r["check"]["revisar"] == [] and len(r["check"]["correctas"]) == 3
+    # Un `unit` no textual no revienta el endpoint (el cliente no es la verdad).
+    assert "check" not in _ev(sid, "ContainerVsVmExplorer", "evidenceSelected",
+                              {"unit": ["x"], "choices": [0, 0, 0]}, "op-2")

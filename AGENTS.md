@@ -1,6 +1,7 @@
 # CognitiveFlow AI — instrucciones para agentes
 
 > **Fuentes de verdad (orden):** 1) código real + tests que pasan · 2) `PLAN_REDISENO_TAREAS_FLUTTER.md` (manda en UX Flutter/tareas/labs/motion) · 3) `PLAN.md` (arquitectura educativa/backend) · 4) `DESIGN.md` (tokens visuales) · 5) historial de avances. Ante discrepancia en Flutter, **gana el rediseño** y lo que interfiera **se quita** (ver §0.1).
+> **Cambios de reglas:** las reglas de este archivo solo cambian cuando el usuario lo pide explícitamente; cada cambio se anota aquí reemplazando la regla vieja (sin dejar contradicciones).
 > **Directiva rediseño:** continuar sin reiniciar Flutter, sin borrar estado/SQLite, sin modificar silenciosamente API/backend, sin perder avances. La plataforma NO es una colección de formularios: cada actividad es experiencia guiada, interactiva, comprensible y adaptada.
 
 ## 0. Directiva + qué se quita (interferencias eliminadas)
@@ -36,12 +37,14 @@ uv run uvicorn app.main:app --reload --port 8000
 ## 3. Reglas de dominio (no negociables, ya filtradas por rediseño)
 
 - `evaluation_results` es append-only; `instructor_reviews` es **histórico read-only** (no escribir desde Flutter; el maestro solo consulta).
-- Catálogo GenUI cerrado: `backend/app/interventions.py::CATALOG` debe coincidir con `frontend/lib/ui/tutor/catalog.dart::cognitiveFlowWidgets`. Documentar qué tipos funcionan de verdad y cuáles son `_simpleCard`; nunca presentar `_simpleCard` como lab interactivo.
+- Catálogo GenUI cerrado: `backend/app/interventions.py::CATALOG` debe coincidir con `frontend/lib/ui/tutor/catalog.dart::cognitiveFlowWidgets`. `_simpleCard` ya no existe: los tipos de backlog (`BACKLOG_WIDGETS`/`backlogWidgets`) solo identifican históricos, que Flutter muestra como «Actividad histórica · solo lectura»; el backend rechaza eventos nuevos de esos tipos y Gemini no puede elegirlos. Documentar qué hace de verdad cada tipo activo y su límite (`CATALOGO_GENUI_Y_ACTIVIDADES.md`).
 - `ui_spec` interna (`{type, version, parameters...}`) ≠ mensajes A2UI del wire (`{version: v0.9, createSurface|updateComponents}`); traducción vive en `frontend/lib/ui/tutor/tutor_surface.dart`. Conservar adaptador y completar ciclo de eventos según contrato real. No enviar JSON interno §4.1 como si fuera A2UI.
-- Rúbricas mock etiquetadas (`evaluator: mock`); Jev real solo en ML (`EVALUATOR_MODE=jev`), datos/monitoreo usan mock determinista. Jev evalúa **después** de entregas, descriptivo primero; números solo en `ExpansionTile` bajo demanda. Una probabilidad no es nota de dominio.
+- **Sin fallback en producción.** Jev evalúa los 4 labs (`EVALUATOR_MODE=jev`) con los hechos del verificador determinista del servidor en el `state` (`evaluation.verified_facts`); también juzga los argumentos de texto de los retos (`checks._judged`). Fallo de Jev ⇒ `pending` + «Reintentar evaluación», nunca mock. Gemini (pregunta, feedback, planificador) sin respuesta ⇒ `LLMUnavailable` ⇒ HTTP 503 y el cliente reintenta; nunca pregunta/actividad inventada. Mocks etiquetados (`evaluator: mock`, `provider: mock`) solo con `EVALUATOR_MODE=mock` y `LLM_ALLOW_MOCK=1` (tests/CI, los pone `_no_live_llm`).
+- **Corrección inmediata en la práctica de los 4 labs** (`checks.check_practice`, desde `_scenario_check` mientras no hay reto; nunca en postest): cada selección se corrige al momento y solo lo que el alumno tocó (Docker por unidad con `unit` en el payload; Data por fila clasificada con `cell_types`; ML la época marcada; Monitoring feature + momento del cambio), sin números. Docker sin botones de envío: `ContainerVsVmExplorer`/`DecisionScenarios` emiten `selectionChanged` (incompleta: se corrige, no cuenta como entrega ni evidencia) y `evidenceSelected` al completar; `DockerfileWorkbench` emite en cada movimiento. La justificación va en la misma misión, bajo el experimento («Experimenta y justifica» → «Evaluar mi razonamiento»); la misión 3 es «Revisa tu evaluación».
+- Jev evalúa **después** de entregas, descriptivo primero; números solo en `ExpansionTile` bajo demanda. Una probabilidad no es nota de dominio.
 - Auth demo: login por `user_id` (`s1-s4`, `i1`), token opaco en `auth_tokens` (sin passwords: solo piloto). Propiedad vía `session_for` (403 ajeno). Todo evento importante lleva `session_id` + `activity_id` + `client_event_id` idempotente + props validadas; backend valida fase/esquema/unit/límites/siguiente; el alumno no fuerza `posttest`, score, rol ni soluciones por payload. Deduplicar `client_event_id`, reanudar sin perder evidencia.
 - Currículo fija competencias/objetivos/prerrequisitos; Gemini **no inventa temario**, propone actividad entre widgets aprobados usando fallos Jev + verificadores deterministas. No hardcodear tareas generadas como secuencia visual fingiendo personalización.
-- **Planificador GenUI (Gemini, `interventions.py::ACTIVITY_MENU`):** en cada lab Gemini elige **una actividad del menú permitido de ese lab** (varios widgets del catálogo, no solo remediar/transferir) y propone **parámetros acotados** (p. ej. tipos de anomalía a contrastar, complejidad/ruido, features, unidad Docker). El backend valida actividad ∈ menú del lab y cada parámetro contra su esquema (rango, subconjunto, enum); lo inválido se descarta y se usa el valor por defecto; los datos (filas, escenarios, curvas) los genera siempre el servidor de forma determinista. Se consulta siempre que hay intento evaluado; salvaguarda: con promedio ≤ 1,5 se rechazan actividades de transferencia (tabla nueva, otra complejidad, decidir acción, otra unidad). Si Gemini falla, no hay clave o la propuesta no pasa la validación, deciden las reglas. La entrega de cada reto se corrige en el servidor (`app/checks.py`: qué está bien / qué revisar, sin números ni respuesta); los escenarios Docker salen de `app/labs_docker.py` con la verdad solo en el servidor. Se registra `decided_by` y los parámetros elegidos; lo que delate la respuesta (p. ej. tipos plantados) queda solo en el log del servidor, nunca en el payload al cliente. Gemini nunca emite A2UI ni JSON de UI directamente.
+- **Planificador GenUI (Gemini, `interventions.py::ACTIVITY_MENU`):** en cada lab Gemini elige **una actividad del menú permitido de ese lab** (varios widgets del catálogo, no solo remediar/transferir) y propone **parámetros acotados** (p. ej. tipos de anomalía a contrastar, complejidad/ruido, features, unidad Docker). El backend valida actividad ∈ menú del lab y cada parámetro contra su esquema (rango, subconjunto, enum); lo inválido se descarta y se usa el valor por defecto; los datos (filas, escenarios, curvas) los genera siempre el servidor de forma determinista. Se consulta siempre que hay intento evaluado; salvaguarda: con promedio ≤ 1,5 el prompt pide no transferir (tabla nueva, otra complejidad, decidir acción, otra unidad); si aun así propone transferencia se le pregunta otra vez a Gemini, y si insiste ⇒ 503 (nunca deciden las reglas). Si Gemini falla, no hay clave o propone una actividad fuera del menú ⇒ 503 reintentable (sin reglas de respaldo; solo con `LLM_ALLOW_MOCK=1` en tests). Parámetros inválidos se descartan uno a uno. La entrega de cada reto se corrige en el servidor (`app/checks.py`: qué está bien / qué revisar, sin números ni respuesta); los escenarios Docker salen de `app/labs_docker.py` con la verdad solo en el servidor. Se registra `decided_by` y los parámetros elegidos; lo que delate la respuesta (p. ej. tipos plantados) queda solo en el log del servidor, nunca en el payload al cliente. Gemini nunca emite A2UI ni JSON de UI directamente.
 - Intervención = **nuevo objeto actividad** con `activity_id`, objetivo, widget, reglas, evidencia; nuevo escenario central + estado distinto + evidencia nueva; guardar `previous_activity_id → intervention_activity_id` + motivación breve + resultados. Tutor lateral explica *por qué este reto* sin revelar respuesta. Variar escenarios, no repetir misma tarjeta con distinto título.
 - Progreso de pasos ≠ competencia; dominio solo con criterios definidos + postest/pruebas independientes. Postest: variante no vista, sin tutor/pistas/feedback, bloquea Gemini en backend.
 - Repaso espaciado configurable (p. ej. 1/3/7 días punto de partida), transferencia a escenario nuevo, `assistance_level` guardado para interpretar resultados. Piloto n=4: no generalizar eficacia.
@@ -51,7 +54,7 @@ uv run uvicorn app.main:app --reload --port 8000
 - Al arrancar, `app.db.upgrade_head()` migra la base a la última versión de `backend/alembic/versions/` (sin borrar datos). Tests en memoria usan `create_all`.
 - Un cambio de modelo (tabla, columna, tipo) **exige** su migración: `cd backend; uv run alembic revision --autogenerate -m "..."`, revisar el archivo y probar. `test_models_have_no_unmigrated_schema_changes` falla si falta. La nulabilidad queda excluida a propósito (la base inicial creó columnas opcionales que los modelos declaran obligatorias; forzarlo podría romper datos).
 - Preferir campos aditivos en JSON existentes (p. ej. `spec_json`, `input_state_json.extra`) cuando no hace falta consultar por ellos.
-- Seed demo: 8 módulos, 5 usuarios, 4 labs (`uv run python -m app.seed`).
+- Seed demo: 9 módulos, 5 usuarios, 4 labs, 15 objetivos (`uv run python -m app.seed`).
 
 ## 5. Frontend (Flutter 3.47.7, web)
 
@@ -69,6 +72,8 @@ flutter analyze --no-pub; flutter test; flutter build web
 - **Estado global con Riverpod (`flutter_riverpod`):** `lib/core/auth/auth_state.dart` (`authProvider`), `lib/ui/core/themes/cognitive_theme.dart` (`themeModeProvider`); `lib/config/routing/router.dart` (`routerProvider`) se recrea al cambiar auth; `lib/main.dart` solo bootstrap (`lib/app/app.dart`). Lo local de labs/charts/forms sigue en `setState`; borradores en `SharedPreferences` (`draft:<labId>:<campo>`, se limpian al cerrar reflexión). No meter labs/GenUI/fetch en providers sin motivo.
 - **`DESIGN.md` es fuente de verdad visual:** azul `#2457C5` (CTA/navegación), teal `#0F766E` (experimentos), ámbar `#A65B00` (preguntas/reflexión). Neutros dominantes. No usar solo color para informar; WCAG 2.2 AA, foco visible, teclado + `Semantics`. No usar ámbar automáticamente para «error».
 - No cambiar rutas existentes hasta mapear deep links + tests. Jerarquía conceptual: `Academia → Módulo → Unidad → Lección/Actividad → Feedback/Adaptación → Postest → Reflexión`. El estado de unidad lo determina el backend; widgets solo presentan la fase permitida.
+- **Navegación:** sin barra lateral ni inferior; la Academia es la única pantalla de inicio y avance (labs, unidades Docker, evidencia inicio → prueba por criterio, dominio y repasos pendientes). El shell solo tiene barra superior (logo → inicio, panel del instructor si aplica, perfil, tema, salir). `/progress` redirige a `/academy`; `/labs` sigue para enlaces directos.
+- **Reiniciar laboratorio** (botón en la cabecera del Studio): `POST /me/labs/{id}/reset` archiva las sesiones del estudiante (`status = archived`: no cuentan como progreso ni se reanudan) sin borrar nada (append-only; el instructor conserva el historial) y el cliente borra los borradores `draft:<labId>:*`.
 
 ### 5.1 Principios UX educativa (obligatorios)
 
@@ -79,7 +84,7 @@ flutter analyze --no-pub; flutter test; flutter build web
 5. Ayudas graduales (intento autónomo → pista → evidencia señalada → ejemplo análogo → explicación directa si persiste bloqueo o se solicita). No bloquear explicaciones para siempre; no confundir esfuerzo innecesario con aprendizaje. No castigar pedir ayuda.
 6. Evaluación descriptiva post-intento; números solo bajo detalles. Intervención = actividad nueva (ver §3).
 7. Profesor solo consulta (estudiantes, unidades, progreso, habilidades, Jev, historial, pre/post, telemetría del planificador en `GET /instructor/planner-stats`). Sin comentarios/sliders/asignaciones/edición. En backend, `auth.session_for_write` rechaza (403) toda escritura del instructor en sesiones y `POST /sessions` no acepta `student_id` del payload; en Flutter el instructor que abre `/labs/:id` va a `/instructor`.
-8. Docker: los prerrequisitos (`labs_docker.PREREQ`: D02←D01, D04←D02, D07←D02) se exigen en el servidor (intento rechazado con 403) y la academia muestra la unidad como «Bloqueada» con su motivo; una unidad ya empezada nunca se bloquea.
+8. Docker: los prerrequisitos (`labs_docker.PREREQ`: D02←D01; D03, D04, D07←D02; D05←D04; D06←D03; D08←D06; D09←D08; D10←D05; D11←D09; D12←D11) se exigen en el servidor (intento rechazado con 403) y la academia muestra la unidad como «Bloqueada» con su motivo; una unidad ya empezada nunca se bloquea.
 9. Animación funcional y calmada; respetar movimiento reducido (§7).
 
 ### 5.2 Workspace compartido `lib/ui/labs/workspace/`
@@ -104,7 +109,7 @@ flutter analyze --no-pub; flutter test; flutter build web
 | Postest | variante autónoma nueva | desactivado/oculto | Entregar prueba | pistas, solución, eval en vivo |
 | Reflexión | transferencia, cambio hipótesis, repaso | resumen breve | Volver a unidad / siguiente habilitada | felicitación no sustentada |
 
-Política CTA: `ContainerVsVmExplorer` usa `Registrar clasificación` en exploración (no es entrega final); justificación en fase siguiente. GenUI puede emitir `selectionChanged` interno sin segundo `FilledButton` competidor. `ActivityActionBar` orquesta la CTA, o se delega al widget si él es toda la fase; nunca ambos. Si el envío falla: conservar controles/evidencia/respuesta + `Reintentar envío` idempotente.
+Política CTA: los widgets de práctica **no tienen botón de envío**: cada selección se corrige al momento (ver §3); la única CTA de la fase es la de `ActivityActionBar`. Si el envío falla: conservar controles/evidencia/respuesta + `Reintentar envío` idempotente.
 
 ### 5.4 Contrato actividad adaptativa (interno, NO A2UI; verificar esquema backend, no romper sesiones/tests)
 
@@ -112,25 +117,29 @@ Política CTA: `ContainerVsVmExplorer` usa `Registrar clasificación` en explora
 {"schema_version": 2, "activity_id": "docker-d01-contrast-002", "session_id": "<server-issued-id>", "unit_id": "M08-D01-containers", "phase": "intervention", "goal": "Distinguir aislamiento de contenedores y máquinas virtuales", "prerequisites": ["kernel", "sistema operativo"], "widget_type": "ContainerVsVmExplorer", "widget_props": {"scenario_set_id": "contrast-b"}, "allowed_events": ["selectionChanged", "predictionSubmitted", "argumentSubmitted"], "evidence_required": ["categorization", "justification"], "help_policy": {"mode": "graduated", "max_hint_level": 3}, "feedback_policy": "after_submission", "transition_policy": {"next_by_server_decision": true}}
 ```
 
-### 5.5 Docker Academy (4 implementadas D01/D02/D04/D07; 12 es objetivo futuro)
+### 5.5 Docker Academy (12 unidades implementadas: D01/D02/D04/D07 con experimento propio; D03, D05, D06, D08–D12 con `DecisionScenarios`)
 
-| U | Microlección | GenUI real | Evidencia / transferencia |
+- `DecisionScenarios`: casos realistas por unidad desde `backend/app/labs_docker.py::DECISION_UNITS` (situación + respuesta + distractores = errores típicos); 3 casos por variante (4 en D12, mezclando unidades), opciones barajadas por semilla; práctica semilla 1, reto semilla+3, postest variante. La respuesta solo vive en el servidor (corrección `check` y evaluación mock por aciertos). D03 muestra las opciones como comandos de terminal. El lab Docker cuenta como completado solo con las 12 unidades.
+
+| U | Microlección | GenUI real **hoy** | Evidencia / transferencia |
 |---|---|---|---|
-| D01 | contenedor vs VM, kernel, aislamiento | `ContainerVsVmExplorer` | explicar por qué carga pide VM o contenedor |
-| D02 | imagen, instancia, ciclo de vida | `ImageContainerLifecycle` (transiciones animadas) | predecir qué sobrevive a `stop/rm/run` |
-| D03 | CLI `build/run/ps/logs/exec/rm` | terminal **simulada** | elegir comandos para diagnosticar |
-| D04 | FROM/WORKDIR/COPY/RUN/CMD/EXPOSE | `DockerfileBuilder` (ordenar, capas) | Dockerfile FastAPI + detectar errores |
-| D05 | build context, `.dockerignore` | árbol interactivo + simulador context | excluir secretos/artefactos; explicar COPY |
-| D06 | filesystem, bind mounts, volumes | sandbox persistencia visual | predecir qué persiste tras recrear |
-| D07 | redes, puertos, DNS, localhost | topología app/API/DB | corregir conexión + explicar puertos |
-| D08 | Compose services/networks/env/volumes | `ComposeBuilder` con validación | orquestar API+DB con volumen |
-| D09 | debugging | consola/logs simulados causales | diagnosticar por qué no arranca |
-| D10 | registry y deploy | pipeline build→push→pull→run | explicar deploy local vs servidor |
-| D11 | seguridad y optimización | auditoría Dockerfile | secretos, root, permisos, capas |
-| D12 | capstone | simulador integral + debugging | diseñar/defender contenedorización real |
+| D01 | contenedor vs VM, kernel, aislamiento | `ContainerVsVmExplorer` | explicar por qué cada carga pide VM o contenedor |
+| D02 | imagen, instancia, ciclo de vida | `ImageContainerLifecycle` (predicción + simulación por pasos) | predecir qué sobrevive a `stop/rm/run` |
+| D03 | CLI `build/run/ps/logs/exec/rm` | `DecisionScenarios` (opciones como comandos) | elegir el comando que diagnostica cada síntoma |
+| D04 | FROM/WORKDIR/COPY/RUN/CMD/EXPOSE | `DockerfileWorkbench` (ordenar, capas, caché) | ordenar un Dockerfile y explicar qué invalida la caché |
+| D05 | build context, `.dockerignore` | `DecisionScenarios` | excluir secretos/artefactos; explicar qué ve COPY |
+| D06 | redes, puertos, DNS, localhost | `DecisionScenarios` | corregir la conexión entre servicios y explicar puertos |
+| D07 | filesystem, bind mounts, volumes | `PersistenceExperiment` (montaje → predicción → recrear) | predecir qué persiste tras recrear |
+| D08 | Compose services/networks/env/volumes | `DecisionScenarios` | elegir la clave que resuelve cada necesidad del stack |
+| D09 | depuración con evidencia | `DecisionScenarios` | diagnosticar por qué no arranca leyendo la evidencia |
+| D10 | seguridad e imágenes mínimas | `DecisionScenarios` | detectar el riesgo y elegir la alternativa segura |
+| D11 | despliegue y rollback | `DecisionScenarios` | publicar, configurar y volver atrás sin perder datos |
+| D12 | capstone | `DecisionScenarios` (4 casos de unidades distintas) | resolver casos que mezclan el temario, sin pistas |
 
-**D01 (6 pantallas):** 1 Aprender: 2 ilustraciones (contenedor comparte kernel; VM con guest OS/kernel) + 2–3 diferencias + ejemplo FastAPI resuelto → `Probar con escenarios`. 2 Predecir: escenario nuevo «necesito kernel distinto», opción + razón obligatoria, tutor «¿qué habría que virtualizar?» → `Registrar predicción`. 3 Experimentar: 3 tarjetas grandes **una a la vez**/carrusel sin respuesta revelada; comparación capas al seleccionar → `Comprobar mi clasificación`. 4 Justificar: resumen 3 decisiones + explicación anclada en kernel/aislamiento/requisitos → `Evaluar mi razonamiento`. 5 Feedback: si confunde kernel → **nuevo** `KernelContrastSimulation` (o variante `ContainerVsVmExplorer`); si acierta sin evidencia → `EvidenceComparison`. 6 Postest: escenario no visto, sin tutor/pistas/feedback → `Entregar prueba`.
-**D02:** animar imagen/contenedor con flechas/estados; predecir antes de `rm`; no fingir ejecución real si es motor determinista. **D04:** bloques arrastrables **o** subir/bajar accesible; preview + explicación por capa + errores con texto; verificar CMD vs RUN, EXPOSE no publica. **D06:** 2 contenedores lado a lado + volúmenes; `Crear archivo / Eliminar / Recrear`; predicción previa; bind vs volumen. **No ejecutar Docker real desde entradas arbitrarias.**
+**Backlog explícito (no anunciar como hecho):** terminal simulada (D03), árbol de contexto (D05), topología de red (D06), `ComposeBuilder` con validación (D08), consola de logs causales (D09), auditoría de Dockerfile (D10), pipeline build→push→pull→run (D11) y simulador integral (D12). Hoy esas unidades enseñan con `DecisionScenarios`: casos reales con distractores que son errores típicos, corregidos por el servidor.
+
+**D01 (6 pantallas):** 1 Aprender: 2 ilustraciones (contenedor comparte kernel; VM con guest OS/kernel) + 2–3 diferencias + ejemplo FastAPI resuelto → `Probar con escenarios`. 2 Predecir: escenario nuevo «necesito kernel distinto», opción + razón obligatoria, tutor «¿qué habría que virtualizar?» → `Registrar predicción`. 3 Experimentar: 3 escenarios; cada elección se corrige al momento (qué escenario revisar, sin decir la respuesta) y debajo va la justificación anclada en kernel/aislamiento/requisitos → `Evaluar mi razonamiento`. 4 Revisa tu evaluación. 5 Feedback: si confunde kernel → **nuevo** `KernelContrastSimulation` (o variante `ContainerVsVmExplorer`); si acierta sin evidencia → `EvidenceComparison`. 6 Postest: escenario no visto, sin tutor/pistas/feedback → `Entregar prueba`.
+**D02:** animar imagen/contenedor con flechas/estados; predecir antes de `rm`; no fingir ejecución real si es motor determinista. **D04:** bloques arrastrables **o** subir/bajar accesible; preview + explicación por capa + errores con texto; verificar CMD vs RUN, EXPOSE no publica. **D07:** 2 contenedores lado a lado + volúmenes; `Crear archivo / Eliminar / Recrear`; predicción previa; bind vs volumen. **No ejecutar Docker real desde entradas arbitrarias.**
 
 ### 5.6 Data / ML / Monitoring (migrar al Workspace, sin reescribir motor)
 
@@ -172,7 +181,7 @@ Widget animatedActivity(Widget child, String activityId) {
 ## 8. Reglas estrictas para OpenCode
 
 1. Preservar commits, tareas cerradas, navegación, GenUI, Gemini/Jev, SQLite y pruebas. El rediseño partió de frontend: investigar backend en repo antes de tocar contratos.
-2. Nunca reemplazar `_simpleCard` por tarjeta bonita y marcarla como lab interactivo.
+2. Nunca anunciar un widget como la herramienta que no implementa (`DecisionScenarios` no es terminal, editor Compose ni pipeline); si falta, va al backlog explícito de §5.5.
 3. Currículo fijo + generador entre widgets autorizados; sin secuencias hardcodeadas fingiendo personalización.
 4. Sin 0 iniciales; evaluación descriptiva post-entrega, números bajo demanda.
 5. Maestro solo consulta; no mantener UI vieja de revisión manual como acción principal.

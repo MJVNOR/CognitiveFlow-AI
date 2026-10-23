@@ -20,7 +20,9 @@ Map<String, Object?> interventionToComponent(Map intervention) {
   var type = '${intervention['widget_type']}';
   if (!cognitiveFlowWidgets.contains(type)) type = 'SocraticQuestionCard';
   final spec = (intervention['widget_parameters'] as Map?) ?? {};
-  final title = type == '${intervention['widget_type']}'
+  final title = backlogWidgets.contains('${intervention['widget_type']}')
+      ? 'Actividad histórica · solo lectura'
+      : type == '${intervention['widget_type']}'
       ? '${spec['title'] ?? type}'
       : 'Actividad no disponible';
   final question = '${intervention['socratic_question'] ?? ''}';
@@ -43,11 +45,22 @@ Map<String, Object?> interventionToComponent(Map intervention) {
     'ContainerVsVmExplorer' ||
     'ImageContainerLifecycle' ||
     'DockerfileWorkbench' ||
-    'PersistenceExperiment' =>
+    'PersistenceExperiment' ||
+    'DecisionScenarios' =>
       {
         'title': title,
-        'question': question,
-        for (final k in const ['scenarios', 'stages', 'ask_index', 'ask_stage', 'options', 'lines', 'app', 'story', 'path'])
+        // La consigna curricular describe la acción; la pregunta generada vive
+        // en el tutor. No convertir una pregunta libre en instrucciones del lab.
+        'question': params['instruction'] ?? switch (type) {
+          'ContainerVsVmExplorer' => 'Elige contenedor o VM según los requisitos de cada caso y explica tu decisión.',
+          'ImageContainerLifecycle' => 'Predice qué existirá tras el paso señalado; después compruébalo con la simulación.',
+          'DockerfileWorkbench' => 'Ordena las instrucciones para construir la app y conservar la caché de dependencias. Coloca CMD al final.',
+          'PersistenceExperiment' => 'Elige un montaje, predice si el archivo sobrevivirá y compruébalo al recrear.',
+          _ => 'Lee cada caso, elige la acción que resuelve sus requisitos y justifica con evidencia.',
+        },
+        if ((type == 'DockerfileWorkbench' || type == 'PersistenceExperiment') && params['feedback_enabled'] is bool)
+          'feedback_enabled': params['feedback_enabled'],
+        for (final k in const ['context', 'scenarios', 'stages', 'ask_index', 'ask_stage', 'options', 'lines', 'app', 'story', 'path', 'items', 'mono'])
           if (params[k] != null) k: params[k],
       },
     'DataTableExplorer' => {
@@ -85,10 +98,14 @@ class _TutorSurfaceState extends State<TutorSurface> {
   late final A2uiTransportAdapter _transport;
   late final StreamSubscription<core.A2uiMessage> _sub;
 
+  void _emit(String type, String event, Map<String, Object?> payload) {
+    final id = widget.intervention['activity_id'];
+    widget.onEvent?.call(type, event, {...payload, if (id is String) 'activity_id': id});
+  }
+
   @override
   void initState() {
     super.initState();
-    TutorEvents.emit = widget.onEvent;
     _controller = SurfaceController(
       catalogs: [Catalog(cognitiveFlowCatalog, catalogId: tutorCatalogId)],
     );
@@ -110,7 +127,6 @@ class _TutorSurfaceState extends State<TutorSurface> {
   @override
   void didUpdateWidget(covariant TutorSurface old) {
     super.didUpdateWidget(old);
-    TutorEvents.emit = widget.onEvent;
     // Por contenido: cada emit del VM copia el mapa y no debe reiniciar el widget.
     if (jsonEncode(old.intervention) != jsonEncode(widget.intervention)) {
       _transport.addMessage(core.A2uiMessage.fromJson({
@@ -125,7 +141,6 @@ class _TutorSurfaceState extends State<TutorSurface> {
 
   @override
   void dispose() {
-    if (TutorEvents.emit == widget.onEvent) TutorEvents.emit = null;
     _sub.cancel();
     _transport.dispose();
     _controller.dispose();
@@ -134,6 +149,12 @@ class _TutorSurfaceState extends State<TutorSurface> {
 
   @override
   Widget build(BuildContext context) {
-    return Surface(surfaceContext: _controller.contextFor(tutorSurfaceId));
+    return TutorEventScope(
+      emit: _emit,
+      child: KeyedSubtree(
+        key: ValueKey(widget.intervention['activity_id']),
+        child: Surface(surfaceContext: _controller.contextFor(tutorSurfaceId)),
+      ),
+    );
   }
 }

@@ -90,7 +90,7 @@ class _EvidenceComparisonState extends State<_EvidenceComparison> {
                   selected: selection == o.$1,
                   onSelected: (_) {
                     setState(() => selection = o.$1);
-                    TutorEvents.send('EvidenceComparison', 'evidenceSelected',
+                    TutorEvents.send(context, 'EvidenceComparison', 'evidenceSelected',
                         {'selection': o.$1});
                   },
                 ),
@@ -113,7 +113,7 @@ class _EvidenceComparisonState extends State<_EvidenceComparison> {
             onPressed: argument.text.trim().isEmpty
                 ? null
                 : () {
-                    TutorEvents.send('EvidenceComparison', 'argumentSubmitted',
+                    TutorEvents.send(context, 'EvidenceComparison', 'argumentSubmitted',
                         {'argument': argument.text, 'selection': selection ?? ''});
                     setState(() => sent = true);
                   },
@@ -213,7 +213,7 @@ class _HypothesisEditorState extends State<_HypothesisEditor> {
                 ? null
                 : () {
                     revisions++;
-                    TutorEvents.send('HypothesisEditor', 'hypothesisSubmitted',
+                    TutorEvents.send(context, 'HypothesisEditor', 'hypothesisSubmitted',
                         {'hypothesis': field.text, 'revision': revisions});
                     setState(() {});
                   },

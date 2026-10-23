@@ -62,7 +62,7 @@ class _DriftDistributionExplorerState
 
   void _select(String f) {
     setState(() => feature = f);
-    TutorEvents.send('DriftDistributionExplorer', 'evidenceSelected',
+    TutorEvents.send(context, 'DriftDistributionExplorer', 'evidenceSelected',
         {'feature': f, 'changepoint': changepoint.round()});
   }
 
@@ -123,7 +123,7 @@ class _DriftDistributionExplorerState
             key: const ValueKey('dde_send'),
             onPressed: argument.text.trim().isEmpty || feature == null
                 ? null
-                : () => TutorEvents.send('DriftDistributionExplorer',
+                : () => TutorEvents.send(context, 'DriftDistributionExplorer',
                     'argumentSubmitted',
                     {'argument': argument.text, 'feature': feature!}),
             child: const Text('Enviar diagnóstico'),
@@ -249,9 +249,9 @@ class _DataTableExplorerState extends State<_DataTableExplorer> {
                     argument.text.trim().isEmpty
                 ? null
                 : () {
-                    TutorEvents.send('DataTableExplorer', 'evidenceSelected',
+                    TutorEvents.send(context, 'DataTableExplorer', 'evidenceSelected',
                         {'flags': parsed});
-                    TutorEvents.send('DataTableExplorer', 'argumentSubmitted',
+                    TutorEvents.send(context, 'DataTableExplorer', 'argumentSubmitted',
                         {'argument': argument.text, 'flags': parsed});
                   },
             child: const Text('Enviar hallazgo'),
@@ -296,7 +296,7 @@ class _ContrastTableState extends State<_ContrastTable> {
         marks[ref] = label;
       }
     });
-    TutorEvents.send('DataTableExplorer', 'evidenceSelected',
+    TutorEvents.send(context, 'DataTableExplorer', 'evidenceSelected',
         {'ref': ref, 'type': marks[ref] ?? 'sin_anomalia'});
   }
 
@@ -384,7 +384,7 @@ class _ContrastTableState extends State<_ContrastTable> {
             key: const ValueKey('dte_send'),
             onPressed: marks.isEmpty || argument.text.trim().isEmpty
                 ? null
-                : () => TutorEvents.send('DataTableExplorer', 'argumentSubmitted', {
+                : () => TutorEvents.send(context, 'DataTableExplorer', 'argumentSubmitted', {
                       'argument': argument.text,
                       'classifications': Map<String, String>.of(marks),
                       'flags': marks.keys.toList(),

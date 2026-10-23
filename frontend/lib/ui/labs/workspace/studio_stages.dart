@@ -4,14 +4,45 @@
 // la penúltima existe solo si el servidor emitió intervención y la última
 // solo si declara `can_enter_posttest`.
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/motion.dart';
 import '../../tutor/tutor_surface.dart';
-import '../view_models/lab_session.dart';
+import '../view_models/lab_session_viewmodel.dart';
 import '../widgets/reflection.dart';
 import 'mission_navigation.dart';
 
 bool inPosttestPhase(LabSession lab) => lab.posttestMode || lab.posttestSent || lab.done;
+
+/// Confirma y reinicia el lab desde cero; vuelve a la academia (la próxima
+/// apertura crea una sesión nueva). Irreversible para el estudiante, pero no
+/// borra el historial que consulta el instructor.
+Future<void> confirmResetLab(BuildContext context, LabSessionViewModel vm) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Text('¿Reiniciar el laboratorio?'),
+      content: const Text(
+          'Empezarás desde cero: se borran tus respuestas, marcas y borradores de este '
+          'laboratorio y volverás a la primera misión. Tu instructor conserva el '
+          'historial de lo que hiciste.'),
+      actions: [
+        TextButton(
+            key: const ValueKey('reset_cancel'),
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('Cancelar')),
+        FilledButton(
+            key: const ValueKey('reset_confirm'),
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('Reiniciar')),
+      ],
+    ),
+  );
+  if (ok != true || !await vm.resetLab() || !context.mounted) return;
+  ScaffoldMessenger.maybeOf(context)
+      ?.showSnackBar(const SnackBar(content: Text('Laboratorio reiniciado: empieza desde cero.')));
+  context.go('/academy');
+}
 
 /// Estado de cada misión. [localMax] = misión más lejana alcanzada antes de
 /// enviar (borrador local); [scenarioDone] = el reto GenUI ya recibió respuesta.
@@ -43,10 +74,10 @@ List<MissionView> studioMissionViews(
     for (var i = 0; i < missions.length; i++)
       MissionView(
         missions[i],
-        i == selected
-            ? MissionStatus.current
-            : done(i)
-                ? MissionStatus.done
+        done(i)
+            ? MissionStatus.done
+            : i == selected
+                ? MissionStatus.current
                 : unlocked(i)
                     ? MissionStatus.available
                     : MissionStatus.locked,
@@ -195,11 +226,11 @@ class ScenarioStage extends StatelessWidget {
             border: Border.all(color: cs.secondary, width: 1.5),
           ),
           child: TutorSurface(
-            key: ValueKey('surface-${iv['widget_type']}-${iv['strategy']}'),
+            key: ValueKey(iv['activity_id'] ?? 'surface-${iv['widget_type']}-${iv['strategy']}'),
             intervention: iv,
             onEvent: onEvent,
           ),
-        ).enterNote(context, ValueKey('iv-${iv['widget_type']}-${iv['strategy']}')),
+        ).enterNote(context, ValueKey(iv['activity_id'] ?? 'iv-${iv['widget_type']}-${iv['strategy']}')),
         if (scenarioDone)
           Padding(
             padding: const EdgeInsets.only(top: 12),
@@ -210,7 +241,7 @@ class ScenarioStage extends StatelessWidget {
               const Expanded(child: Text('Respuesta registrada en tu sesión.')),
             ]),
           ),
-        if (lab.scenarioCheck != null) _CheckView(check: lab.scenarioCheck!),
+        if (lab.scenarioCheck != null) CheckView(check: lab.scenarioCheck!),
       ],
     );
   }
@@ -219,9 +250,17 @@ class ScenarioStage extends StatelessWidget {
 /// Corrección del servidor: qué está bien y qué revisar, sin revelar la
 /// respuesta ni puntajes (se puede volver a enviar). `item` nombra cada
 /// elemento («fila», «escenario»…) y `consejo` orienta la revisión.
-class _CheckView extends StatelessWidget {
+class CheckView extends StatelessWidget {
   final Map<String, dynamic> check;
-  const _CheckView({required this.check});
+  /// Texto cuando no queda nada por revisar.
+  final String doneText;
+  final String? successTitle;
+  const CheckView({
+    super.key,
+    required this.check,
+    this.doneText = 'Ya puedes demostrar tu dominio en la prueba final.',
+    this.successTitle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -231,13 +270,16 @@ class _CheckView extends StatelessWidget {
     final ok = list(check['correctas']);
     final again = list(check['revisar']);
     final tip = '${check['consejo'] ?? ''}';
+    final pending = check['pendientes'] is int ? check['pendientes'] as int : 0;
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Semantics(
         key: const ValueKey('scenario_check'),
         liveRegion: true,
         child: StudioCard(
-          title: again.isEmpty ? 'Bien resuelto' : 'Revisa tu respuesta',
+          title: again.isNotEmpty
+              ? 'Revisa tu respuesta'
+              : (pending > 0 ? 'Vas bien' : successTitle ?? 'Bien resuelto'),
           icon: again.isEmpty ? Icons.verified_outlined : Icons.manage_search,
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             if (ok.isNotEmpty) Text('Bien: $ok.'),
@@ -245,13 +287,19 @@ class _CheckView extends StatelessWidget {
               const SizedBox(height: 4),
               Text('Vuelve a mirar: $again.${tip.isEmpty ? '' : ' $tip'}'),
             ],
-            if (again.isEmpty) const Text('Ya puedes demostrar tu dominio en la prueba final.'),
+            if (again.isEmpty) Text(pending > 0 ? 'Te faltan $pending por decidir.' : doneText),
           ]),
         ).enterNote(context, ValueKey('check-$again-$ok')),
       ),
     );
   }
 }
+
+/// Corrección inmediata de la práctica (aún sin reto): qué está bien y qué revisar.
+Widget practiceCheck(LabSession l, String doneText, {String? successTitle}) =>
+    l.scenarioCheck != null && l.intervention == null
+        ? CheckView(check: l.scenarioCheck!, doneText: doneText, successTitle: successTitle)
+        : const SizedBox.shrink();
 
 /// Reglas antes de empezar la prueba sin ayuda.
 class PosttestRulesCard extends StatelessWidget {

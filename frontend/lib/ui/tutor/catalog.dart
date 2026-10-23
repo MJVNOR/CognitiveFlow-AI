@@ -18,17 +18,18 @@ const cognitiveFlowWidgets = {
   'HypothesisEditor',
   'DataTableExplorer',
   'DriftDistributionExplorer',
-  'ChoiceReasoningWidget',
-  'SqlQueryWorkbench',
   'LearningCurveSimulator',
-  'ConceptMapBuilder',
-  'PipelineDAGBuilder',
-  'RubricFeedbackCard',
-  'ReflectionSummary',
   'ContainerVsVmExplorer',
   'ImageContainerLifecycle',
   'DockerfileWorkbench',
   'PersistenceExperiment',
+  'DecisionScenarios',
+};
+
+/// Solo lectura histórica; no se registran como herramientas GenUI disponibles.
+const backlogWidgets = {
+  'ChoiceReasoningWidget', 'SqlQueryWorkbench', 'ConceptMapBuilder',
+  'PipelineDAGBuilder', 'RubricFeedbackCard', 'ReflectionSummary',
 };
 
 final cognitiveFlowCatalog = [
@@ -37,15 +38,10 @@ final cognitiveFlowCatalog = [
   hypothesisEditor,
   dataTableExplorer,
   driftDistributionExplorer,
-  choiceReasoningWidget,
-  sqlQueryWorkbench,
   learningCurveSimulator,
-  conceptMapBuilder,
-  pipelineDAGBuilder,
-  rubricFeedbackCard,
-  reflectionSummary,
   containerVsVmExplorer,
   imageContainerLifecycle,
   dockerfileWorkbench,
   persistenceExperiment,
+  decisionScenarios,
 ];

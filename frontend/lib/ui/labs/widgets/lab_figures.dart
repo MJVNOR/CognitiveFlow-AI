@@ -8,19 +8,21 @@ export 'lab_figures_data.dart';
 const Map<String, LabFigure> labFigures = {
   // D01 · contenedor vs VM: mismo banco, distinto reparto del motor.
   'M08-D01-containers': LabFigure(
-    title: '¿Quién hace el trabajo?',
+    title: 'Contenedores (izquierda) frente a máquinas virtuales (derecha)',
     variants: [
       LabFigureVariant(
         asset: 'assets/figures/d01-shared',
-        caption: 'Un motor mueve un eje del que cuelgan tres cabezales: '
-            'comparten el motor. Si cambia o se para, los tres cambian con él.',
+        caption: 'Contenedores: el motor es el kernel del host y los tres '
+            'cabezales (contenedores) lo comparten. Ligeros y rápidos, pero si '
+            'el kernel cambia o se para, cambian todos con él.',
         alt: 'Banco con tres cabezales de taladro colgados de un único eje, '
             'movido por un solo motor en el extremo.',
       ),
       LabFigureVariant(
         asset: 'assets/figures/d01-own',
-        caption: 'Cada cabezal lleva su propio motor encima: funciona y se para '
-            'por su cuenta, y carga con el coste de tener su máquina completa.',
+        caption: 'Máquinas virtuales: cada cabezal lleva su propio motor '
+            '(su propio kernel). Puede ser otro sistema operativo, pero carga '
+            'con el coste de una máquina completa.',
         alt: 'Tres cabezales de taladro independientes, cada uno con su propio '
             'motor montado encima.',
       ),

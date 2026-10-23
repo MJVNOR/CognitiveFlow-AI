@@ -14,6 +14,28 @@ double _fillFactor(WidgetTester tester) => tester
     .widthFactor!;
 
 void main() {
+  testWidgets('un avance interrumpido continúa desde la posición visible',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrap(const RouteProgressBar(value: 0.75, label: 'Avance')),
+    );
+    await tester.pump(const Duration(milliseconds: 60));
+    final visible = _fillFactor(tester);
+    expect(visible, greaterThan(0));
+    await tester.pumpWidget(
+      _wrap(const RouteProgressBar(value: 1, label: 'Avance', steps: 5)),
+    );
+    expect(_fillFactor(tester), closeTo(visible, 0.001));
+    await tester.pumpAndSettle();
+    expect(_fillFactor(tester), 1);
+    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pumpWidget(
+      _wrap(const RouteProgressBar(value: 1, label: 'Avance', steps: 5)),
+    );
+    expect(_fillFactor(tester), 1);
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
   testWidgets('llena hasta el avance y anuncia el porcentaje final',
       (tester) async {
     await tester.pumpWidget(
@@ -46,7 +68,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(
       _wrap(
-        const RouteProgressBar(value: 0.5, label: 'Avance'),
+        const RouteProgressBar(value: 0.5, label: 'Avance', steps: 5),
         disableAnimations: true,
       ),
     );

@@ -11,11 +11,17 @@ import 'package:cognitiveflow/ui/auth/view_models/login_viewmodel.dart';
 import 'package:cognitiveflow/ui/labs/view_models/lab_session_viewmodel.dart';
 
 class FakeApi extends ApiClient {
+  final events = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> restoredInterventions = [];
   FakeApi() : super(baseUrl: 'http://fake');
 
   @override
   Future<Map<String, dynamic>> post(
       String path, Map<String, dynamic> body) async {
+    if (path.endsWith('/events')) {
+      events.add(body);
+      return {'id': body['client_event_id']};
+    }
     if (path == '/auth/login') {
       if (body['user_id'] == 's1') {
         return {'token': 'tok', 'user_id': 's1', 'role': 'student'};
@@ -41,6 +47,8 @@ class FakeApi extends ApiClient {
     }
     if (path == '/sessions/sess-1/next-intervention') {
       return {
+        'activity_id': 'activity-new',
+        'session_id': 'sess-1',
         'widget_type': 'SocraticQuestionCard',
         'widget_parameters': {'title': 'T'},
       };
@@ -68,7 +76,7 @@ class FakeApi extends ApiClient {
     }
     if (path == '/sessions/sess-9/attempts') return [];
     if (path == '/sessions/sess-9/tutor-history') return [];
-    if (path == '/sessions/sess-9/interventions') return [];
+    if (path == '/sessions/sess-9/interventions') return restoredInterventions;
     throw Exception('404 $path');
   }
 
@@ -85,9 +93,9 @@ class FakeApi extends ApiClient {
   }
 }
 
-ProviderContainer _container() {
+ProviderContainer _container([FakeApi? api]) {
   final c = ProviderContainer(
-    overrides: [apiClientProvider.overrideWithValue(FakeApi())],
+    overrides: [apiClientProvider.overrideWithValue(api ?? FakeApi())],
   );
   addTearDown(c.dispose);
   return c;
@@ -123,6 +131,34 @@ void main() {
   });
 
   group('LabSessionViewModel', () {
+    test('envía identidad recibida y restaura identidad histórica', () async {
+      final api = FakeApi();
+      final c = _container(api);
+      final vm = c.read(labSessionProvider('lab-x').notifier);
+      await vm.init('lab-x');
+      await vm.send({'answer_text': 'h'}, posttest: false);
+      await vm.next();
+      await vm.emitEvent('SocraticQuestionCard', 'hintRequested', {});
+      expect(api.events.last['activity_id'], 'activity-new');
+      // Un callback capturado conserva el ID de origen, no toma el reto nuevo.
+      await vm.emitEvent('SocraticQuestionCard', 'hintRequested', {'activity_id': 'activity-origin'});
+      expect(api.events.last['activity_id'], 'activity-origin');
+      expect((api.events.last['payload'] as Map).containsKey('activity_id'), isFalse);
+      api.restoredInterventions = [{
+        'activity_id': 'activity-old',
+        'session_id': 'sess-9',
+        'previous_activity_id': 'activity-previous',
+        'widget_type': 'HypothesisEditor',
+        'widget_parameters': {'title': 'Histórico'},
+        'strategy': 'contrast_example',
+      }];
+      expect(await vm.resume('lab-x'), isTrue);
+      expect(c.read(labSessionProvider('lab-x')).intervention?['activity_id'], 'activity-old');
+      expect(c.read(labSessionProvider('lab-x')).intervention?['previous_activity_id'], 'activity-previous');
+      await vm.emitEvent('HypothesisEditor', 'hypothesisSubmitted', {'hypothesis': 'x'});
+      expect(api.events.last['activity_id'], 'activity-old');
+    });
+
     test('init crea sesión', () async {
       final c = _container();
       final vm = c.read(labSessionProvider('lab-x').notifier);

@@ -5,36 +5,8 @@ import 'package:json_schema_builder/json_schema_builder.dart';
 import '_shared.dart';
 import 'events.dart';
 
-// ponytail: los 6 restantes del CATALOG comparten forma título+pregunta;
-// un solo helper en vez de 6 clases casi idénticas.
-CatalogItem _simpleCard(String name, String titleEx, String bodyEx,
-    {bool experiment = false}) {
-  return CatalogItem(
-    name: name,
-    dataSchema: S.object(
-      properties: {
-        'title': S.string(description: 'Título de la tarjeta'),
-        'question': S.string(description: 'Consigna o pregunta'),
-      },
-      required: ['question'],
-    ),
-    exampleData: [
-      () => '[{"id": "root", "component": "$name", '
-          '"title": "$titleEx", "question": "$bodyEx"}]',
-    ],
-    widgetBuilder: (ctx) => boundCard(ctx, 'title', 'question',
-        icon: experiment ? Icons.science : null,
-        accent: experiment ? (cs) => cs.secondary : null),
-  );
-}
-
-final choiceReasoningWidget =
-    _simpleCard('ChoiceReasoningWidget', 'Elige y razona', '¿Qué opción y por qué?');
-final sqlQueryWorkbench =
-    _simpleCard('SqlQueryWorkbench', 'Consulta', '¿Qué consulta responde esto?');
-
-/// P1.2: simulador paramétrico real (sliders + predicción); la curva vive en
-/// LabDetailPage. Emite parameterChanged y predictionSubmitted.
+/// Controles de parámetros con entrega de predicción. Pendiente integrar aquí
+/// curvas observables; no representa todavía un simulador visual completo.
 final learningCurveSimulator = CatalogItem(
   name: 'LearningCurveSimulator',
   dataSchema: S.object(
@@ -73,7 +45,7 @@ class _LearningCurveSimulatorState extends State<_LearningCurveSimulator> {
     noise = (numProp(data, 'noise_pct') ?? 20).clamp(0, 50);
   }
 
-  void _changed() => TutorEvents.send('LearningCurveSimulator', 'parameterChanged',
+  void _changed() => TutorEvents.send(context, 'LearningCurveSimulator', 'parameterChanged',
       {'complexity': complexity.round(), 'noise_pct': noise.round()});
 
   @override
@@ -124,7 +96,7 @@ class _LearningCurveSimulatorState extends State<_LearningCurveSimulator> {
           ),
           FilledButton.tonal(
             key: const ValueKey('lcs_send'),
-            onPressed: () => TutorEvents.send('LearningCurveSimulator',
+            onPressed: () => TutorEvents.send(context, 'LearningCurveSimulator',
                 'predictionSubmitted',
                 {'complexity': complexity.round(), 'noise_pct': noise.round()}),
             child: const Text('Enviar predicción'),
@@ -132,12 +104,3 @@ class _LearningCurveSimulatorState extends State<_LearningCurveSimulator> {
         ]);
   }
 }
-
-final conceptMapBuilder =
-    _simpleCard('ConceptMapBuilder', 'Mapa', '¿Cómo se conectan estos conceptos?');
-final pipelineDAGBuilder =
-    _simpleCard('PipelineDAGBuilder', 'Pipeline', '¿En qué orden van las etapas?');
-final rubricFeedbackCard =
-    _simpleCard('RubricFeedbackCard', 'Rúbrica', '¿En qué criterio estás más débil?');
-final reflectionSummary =
-    _simpleCard('ReflectionSummary', 'Reflexión', '¿Qué aprendiste?');

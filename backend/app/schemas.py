@@ -32,6 +32,9 @@ class SessionBriefOut(BaseModel):
 
 
 class InterventionLogOut(BaseModel):
+    activity_id: str
+    session_id: str
+    previous_activity_id: str | None = None
     attempt_id: str
     strategy: str
     widget_type: str

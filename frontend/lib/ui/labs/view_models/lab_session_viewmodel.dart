@@ -8,6 +8,7 @@ import '../../../core/di/providers.dart';
 import '../../../data/repositories/lab_repository.dart';
 import '../../../data/repositories/session_repository.dart';
 import '../../../utils/storage/drafts.dart';
+import '../../academy/view_models/academy_viewmodel.dart';
 import 'lab_session.dart';
 
 export 'lab_session.dart';
@@ -28,14 +29,20 @@ class LabSessionViewModel extends Notifier<LabSession> {
   /// Re-notifica tras mutaciones externas del state compartido.
   void touch() => _emit();
 
+  void clearPracticeCheck() {
+    state.scenarioCheck = null;
+    _emit();
+  }
+
   Future<void> init(String labId) async {
+    final fresh = LabSession();
     try {
       // ponytail: student_id derived server-side from token (main.py:159); don't send it.
-      state.sessionId = await _sessions.createSession(labId);
+      fresh.sessionId = await _sessions.createSession(labId);
     } catch (e) {
-      state.status = 'Error API: $e';
+      fresh.status = 'Error API: $e';
     }
-    _emit();
+    state = fresh;
   }
 
   Future<void> send(Map<String, dynamic> body,
@@ -52,7 +59,16 @@ class LabSessionViewModel extends Notifier<LabSession> {
       String widgetType, String eventType, Map<String, Object?> payload) async {
     final sid = state.sessionId;
     if (sid == null) return;
-    final r = await _sessions.emitEvent(sid, widgetType, eventType, payload);
+    final activityId = payload['activity_id'] as String? ??
+        state.intervention?['activity_id'] as String? ?? 'practice-$sid';
+    final eventPayload = Map<String, Object?>.from(payload)..remove('activity_id');
+    final r = await _sessions.emitEvent(sid, widgetType, eventType, eventPayload,
+        activityId: activityId);
+    // Una respuesta tardía del reto anterior no modifica el escenario actual.
+    if (state.sessionId != sid ||
+        activityId != (state.intervention?['activity_id'] ?? 'practice-$sid')) {
+      return;
+    }
     final check = r['check'];
     if (check is Map) {
       state.scenarioCheck = Map<String, dynamic>.from(check);
@@ -135,21 +151,45 @@ class LabSessionViewModel extends Notifier<LabSession> {
   }
 
   // P1.6: reanudar sesión abierta tras recarga — sin re-evaluar (cero créditos).
-  Future<bool> resume(String labId) async {
-    final s = state;
+  Future<bool> resume(String labId, {String? unitId}) async {
+    final s = LabSession();
     try {
       Map<String, dynamic>? open;
-      for (final mm in await _sessions.mySessions(labId)) {
-        if (mm['status'] != 'done') open = mm;
+      List<Map<String, dynamic>>? matchingAttempts;
+      final mine = await _sessions.mySessions(labId);
+      state = s;
+      for (final mm in mine.reversed) {
+        if (mm['status'] == 'archived') continue;
+        if (unitId == null) {
+          if (mm['status'] != 'done') {
+            open = mm;
+            break;
+          }
+          continue;
+        }
+        final attempts = await _sessions.attempts(mm['id'] as String);
+        final units = attempts.map((a) => (a['input'] as Map?)?['extra'])
+            .whereType<Map>().map((extra) => extra['unit']).whereType<String>();
+        if (units.contains(unitId)) {
+          open = mm;
+          matchingAttempts = attempts;
+          break;
+        }
+        // Una sesión vacía aún no tiene unidad ni evidencia que mezclar.
+        if (attempts.isEmpty && mm['status'] == 'active' && open == null) {
+          open = mm;
+          matchingAttempts = attempts;
+        }
       }
       if (open == null) return false;
       final sid = open['id'] as String;
       s.sessionId = sid;
       final det = await _sessions.sessionDetail(sid);
-      s.posttestMode = det['status'] == 'posttest';
+      s.done = det['status'] == 'done';
+      s.posttestMode = det['status'] == 'posttest' || s.done;
       final v = det['variant'];
       if (v is Map) s.posttestVariant = Map<String, dynamic>.from(v);
-      final atts = await _sessions.attempts(sid);
+      final atts = matchingAttempts ?? await _sessions.attempts(sid);
       s.attemptId = null;
       s.posttestSent = false;
       for (final am in atts) {
@@ -161,6 +201,7 @@ class LabSessionViewModel extends Notifier<LabSession> {
           s.lastInput = {...input, 'answer_text': am['answer'] ?? ''};
         }
       }
+      s.posttestMode = s.posttestMode || s.posttestSent;
       final le = det['last_eval'];
       s.evalResult = le is Map ? Map<String, dynamic>.from(le) : null;
       s.level = det['level'] as String?;
@@ -188,6 +229,9 @@ class LabSessionViewModel extends Notifier<LabSession> {
             final params = last['widget_parameters'];
             if (params is Map) {
               s.intervention = {
+                'activity_id': last['activity_id'],
+                'session_id': last['session_id'],
+                'previous_activity_id': last['previous_activity_id'],
                 'widget_type': last['widget_type'],
                 'widget_parameters': Map<String, dynamic>.from(params),
                 'socratic_question': last['socratic_question'],
@@ -204,6 +248,23 @@ class LabSessionViewModel extends Notifier<LabSession> {
     }
   }
 
+  /// Empezar el lab desde cero: el servidor archiva las sesiones (el historial
+  /// sigue para el instructor) y se borran los borradores locales.
+  Future<bool> resetLab() async {
+    try {
+      await _sessions.resetLab(labId);
+    } catch (e) {
+      state.status = 'No se pudo reiniciar: $e';
+      _emit();
+      return false;
+    }
+    await _drafts.clearAll(labId);
+    state = LabSession();
+    // La academia cachea estados por lab/unidad: que se recargue al volver.
+    ref.invalidate(academyViewModelProvider);
+    return true;
+  }
+
   Future<void> reflect(String text) async {
     final sid = state.sessionId;
     if (sid == null) return;
@@ -211,6 +272,7 @@ class LabSessionViewModel extends Notifier<LabSession> {
     state.reflectionSummary =
         (r['summary'] as Map?)?.map((k, v) => MapEntry('$k', v));
     state.done = true;
+    ref.invalidate(academyViewModelProvider);
     _emit();
   }
 

@@ -199,7 +199,13 @@ class _DataLabState extends ConsumerState<DataLabPage> {
       }
     });
     _persistFlags();
-    _emit('evidenceSelected', {'row': id, 'type': type, 'mission': dataMissions[mission].id});
+    // El servidor corrige al momento las filas que clasificaste (solo esas).
+    _emit('evidenceSelected', {
+      'row': id,
+      'type': type,
+      'cell_types': Map.of(cellTypes),
+      'mission': dataMissions[mission].id,
+    });
   }
 
   void _setAction(int id, String action) {
@@ -356,7 +362,8 @@ class _DataLabState extends ConsumerState<DataLabPage> {
       stageScroll: scrollCtrl,
       stageKey: ValueKey('scroll-$mission-${l.posttestMode}'),
       header: StudioHeader(
-        backRoute: '/labs',
+        backRoute: '/academy',
+        onReset: () => confirmResetLab(context, _vm),
         crumbs: [('Academia', '/academy'), (module, null), (widget.title, null)],
         title: 'Encuentra el error antes de entrenar',
         missionLabel: 'Misión ${mission + 1} de ${dataMissions.length} · ${m.title}',
@@ -531,7 +538,11 @@ class _DataLabState extends ConsumerState<DataLabPage> {
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [intro, body],
+      children: [
+        intro,
+        body,
+        if (mission == missionDetect) practiceCheck(l, 'Ahora explica por qué en la misión siguiente.'),
+      ],
     );
   }
 

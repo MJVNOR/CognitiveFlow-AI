@@ -45,6 +45,15 @@ class _ContainerVsVm extends StatefulWidget {
 
 class _ContainerVsVmState extends State<_ContainerVsVm> {
   final choices = <int, int>{}; // índice → 0 contenedor, 1 VM
+
+  // Sin botón: cada selección se corrige en el servidor; completa = entrega.
+  void _pick(int i, int v, int n) {
+    setState(() => choices[i] = v);
+    TutorEvents.send(context, 'ContainerVsVmExplorer',
+        choices.length == n ? 'evidenceSelected' : 'selectionChanged',
+        {'choices': [for (var k = 0; k < n; k++) choices[k]]});
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = widget.ctx.data as Map;
@@ -64,27 +73,21 @@ class _ContainerVsVmState extends State<_ContainerVsVm> {
                   key: ValueKey('cve_c_$i'),
                   label: const Text('Contenedor'),
                   selected: choices[i] == 0,
-                  onSelected: (_) => setState(() => choices[i] = 0),
+                  onSelected: (_) => _pick(i, 0, scenarios.length),
                 ),
                 ChoiceChip(
                   key: ValueKey('cve_v_$i'),
                   label: const Text('VM'),
                   selected: choices[i] == 1,
-                  onSelected: (_) => setState(() => choices[i] = 1),
+                  onSelected: (_) => _pick(i, 1, scenarios.length),
                 ),
               ],
             ),
             const SizedBox(height: 8),
           ],
-          FilledButton.tonal(
-            key: const ValueKey('cve_send'),
-            onPressed: ready
-                ? () => TutorEvents.send('ContainerVsVmExplorer', 'evidenceSelected', {
-                      'choices': [for (var i = 0; i < scenarios.length; i++) choices[i]]
-                    })
-                : null,
-            child: const Text('Enviar clasificación'),
-          ),
+          if (!ready)
+            Text('Clasificados ${choices.length} de ${scenarios.length}: cada elección se comprueba al momento.',
+                style: Theme.of(context).textTheme.bodySmall),
         ]);
   }
 }
@@ -97,6 +100,7 @@ final imageContainerLifecycle = CatalogItem(
     properties: {
       'title': S.string(description: 'Título del ciclo'),
       'question': S.string(description: 'Consigna'),
+      'context': S.string(description: 'Estado inicial y supuestos de la simulación'),
       'stages': S.list(description: 'Secuencia de comandos', items: S.string()),
       'ask_index': S.number(description: 'Índice del paso a predecir'),
       'ask_stage': S.string(description: 'Comando del paso a predecir'),
@@ -162,7 +166,7 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
     setState(() => step++);
     if (step == _stages.length && !sent) {
       sent = true;
-      TutorEvents.send('ImageContainerLifecycle', 'evidenceSelected', {
+      TutorEvents.send(context, 'ImageContainerLifecycle', 'evidenceSelected', {
         'completed': true,
         'stages': _stages,
         if (_askIndex != null) 'ask_index': _askIndex,
@@ -198,47 +202,75 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
                 ),
             ],
           ),
+          if (_data['context'] is String) ...[
+            const SizedBox(height: 8),
+            Text('${_data['context']}', style: Theme.of(context).textTheme.bodySmall),
+          ],
           if (ask != null) ...[
             const SizedBox(height: 8),
-            Text('Predice: tras el paso ${ask + 1} («${stages[ask]}»), ¿qué existe?',
+            Text('Predice: tras el paso ${ask + 1} («${stages[ask]}»), ¿qué recursos existen?',
                 style: Theme.of(context).textTheme.labelLarge),
             Wrap(spacing: 8, children: [
               for (final o in options)
                 ChoiceChip(
                   key: ValueKey('icl_pred_$o'),
-                  label: Text(o),
+                  label: Text(switch (o) {
+                    'imagen' => 'Solo la imagen',
+                    'contenedor' => 'Solo el contenedor',
+                    'ambos' => 'Imagen y contenedor',
+                    _ => 'Ninguno de los dos',
+                  }),
                   selected: prediction == o,
-                  onSelected: sent ? null : (_) => setState(() => prediction = o),
+                  onSelected: sent || step > ask ? null : (_) {
+                    setState(() => prediction = o);
+                    TutorEvents.send(context, 'ImageContainerLifecycle', 'selectionChanged', {
+                      'prediction': o, 'ask_index': ask, 'ask_stage': stages[ask],
+                      'completed': false,
+                    });
+                  },
                 ),
             ]),
           ],
           const SizedBox(height: 8),
+          Text('Comandos ejecutados: $step de ${stages.length}.',
+              style: Theme.of(context).textTheme.labelMedium),
           Semantics(
             liveRegion: true,
-            child: Text(_lifecycleNote(stages.take(step).toList()),
+            child: Text('${step == 0 ? 'Estado inicial' : 'Estado observado tras el paso $step'}: '
+                '${_lifecycleNote(stages.take(step).toList())}',
                 style: Theme.of(context).textTheme.bodySmall),
           ),
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton.tonal(
                 key: const ValueKey('icl_next'),
                 onPressed: step >= stages.length || mustPredict ? null : _advance,
                 child: Text(step < stages.length ? 'Ejecutar «${stages[step]}»' : 'Secuencia completa'),
               ),
-              const SizedBox(width: 8),
               TextButton(
                 key: const ValueKey('icl_reset'),
-                onPressed: () => setState(() {
-                  step = 0;
-                  sent = false;
-                }),
+                onPressed: () {
+                  setState(() {
+                    step = 0;
+                    sent = false;
+                    prediction = null;
+                  });
+                  TutorEvents.send(context, 'ImageContainerLifecycle', 'selectionChanged', {
+                    'completed': false, 'prediction': null,
+                  });
+                },
                 child: const Text('Reiniciar'),
               ),
             ],
           ),
           if (mustPredict)
             Text('Elige tu predicción para empezar la simulación.',
+                style: Theme.of(context).textTheme.bodySmall),
+          if (!mustPredict && step < stages.length)
+            Text('Ahora pulsa «Ejecutar…» para observar cada paso. La evaluación se habilita al completar la secuencia y escribir tu explicación.',
                 style: Theme.of(context).textTheme.bodySmall),
         ]);
   }
@@ -251,6 +283,7 @@ final dockerfileWorkbench = CatalogItem(
     properties: {
       'title': S.string(description: 'Título del reto'),
       'question': S.string(description: 'Consigna'),
+      'feedback_enabled': S.boolean(description: 'Corrección disponible durante la práctica'),
       'app': S.string(description: 'Qué se contenedoriza'),
       'lines': S.list(description: 'Instrucciones en orden inicial', items: S.string()),
     },
@@ -290,6 +323,8 @@ class _DockerfileWorkbenchState extends State<_DockerfileWorkbench> {
       order[pos] = order[next];
       order[next] = t;
     });
+    // Sin botón: cada movimiento reconstruye y el servidor lo corrige.
+    TutorEvents.send(context, 'DockerfileWorkbench', 'evidenceSelected', {'order': List.of(order)});
   }
 
   @override
@@ -326,13 +361,10 @@ class _DockerfileWorkbenchState extends State<_DockerfileWorkbench> {
                 ),
               ],
             ),
-          const SizedBox(height: 4),
-          FilledButton.tonal(
-            key: const ValueKey('dw_send'),
-            onPressed: () => TutorEvents.send(
-                'DockerfileWorkbench', 'evidenceSelected', {'order': List.of(order)}),
-            child: const Text('Reconstruir'),
-          ),
+          Text(data['feedback_enabled'] == false
+              ? 'Orden propuesto para la prueba; no se corrige antes de entregar.'
+              : 'Cada movimiento cambia el orden propuesto; el servidor comprueba las restricciones del ejercicio.',
+              style: Theme.of(context).textTheme.bodySmall),
         ]);
   }
 }
@@ -344,6 +376,7 @@ final persistenceExperiment = CatalogItem(
     properties: {
       'title': S.string(description: 'Título del experimento'),
       'question': S.string(description: 'Consigna'),
+      'feedback_enabled': S.boolean(description: 'Corrección disponible durante la práctica'),
       'story': S.string(description: 'Qué dato hay que conservar'),
       'path': S.string(description: 'Ruta del dato en el contenedor'),
     },
@@ -374,7 +407,7 @@ class _PersistenceExperimentState extends State<_PersistenceExperiment> {
     // Simulación del comportamiento real de Docker (no ejecuta Docker).
     final survives = (mount ?? 0) != 0;
     setState(() => observed = survives);
-    TutorEvents.send('PersistenceExperiment', 'evidenceSelected', {
+    TutorEvents.send(context, 'PersistenceExperiment', 'evidenceSelected', {
       'mount': _mountLabels[mount ?? 0],
       'predicted': predicted,
       'observed': survives,
@@ -384,7 +417,7 @@ class _PersistenceExperimentState extends State<_PersistenceExperiment> {
 
   void _predict(bool v) {
     setState(() => predicted = v);
-    TutorEvents.send('PersistenceExperiment', 'predictionSubmitted', {
+    TutorEvents.send(context, 'PersistenceExperiment', 'selectionChanged', {
       'predicted': v,
       'mount': mount == null ? null : _mountLabels[mount!],
     });
@@ -417,6 +450,7 @@ class _PersistenceExperimentState extends State<_PersistenceExperiment> {
                     mount = i;
                     written = false;
                     observed = null;
+                    predicted = null;
                   }),
                 ),
             ],
@@ -430,28 +464,29 @@ class _PersistenceExperimentState extends State<_PersistenceExperiment> {
                 key: const ValueKey('pe_pred_survive'),
                 label: const Text('Sobrevive'),
                 selected: predicted == true,
-                onSelected: (_) => _predict(true),
+                onSelected: mount == null || observed != null ? null : (_) => _predict(true),
               ),
               ChoiceChip(
                 key: const ValueKey('pe_pred_lost'),
                 label: const Text('Se pierde'),
                 selected: predicted == false,
-                onSelected: (_) => _predict(false),
+                onSelected: mount == null || observed != null ? null : (_) => _predict(false),
               ),
             ],
           ),
           const SizedBox(height: 4),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton.tonal(
                 key: const ValueKey('pe_write'),
                 onPressed: mount == null || written ? null : () => setState(() => written = true),
                 child: const Text('Escribir archivo'),
               ),
-              const SizedBox(width: 8),
               FilledButton.tonal(
                 key: const ValueKey('pe_recreate'),
-                onPressed: !written || observed != null ? null : _recreate,
+                onPressed: !written || predicted == null || observed != null ? null : _recreate,
                 child: const Text('Recrear'),
               ),
             ],
@@ -459,8 +494,127 @@ class _PersistenceExperimentState extends State<_PersistenceExperiment> {
           if (observed != null)
             Text(
                 'Lo escrito ${observed! ? 'sobrevivió' : 'se perdió'}'
-                '${predicted == null ? '.' : (predicted == observed ? ' — acertaste.' : ' — fallaste, revisa tu modelo.')}',
+                '${predicted == null || data['feedback_enabled'] == false ? '.' : (predicted == observed ? ' — coincide con tu predicción.' : ' — compara lo observado con tu predicción.')}',
                 style: Theme.of(context).textTheme.bodySmall),
+        ]);
+  }
+}
+
+/// D03, D05, D06, D08–D12: decidir qué hacer en casos realistas. Los casos y
+/// opciones (barajadas) los genera el servidor; la respuesta nunca llega aquí.
+/// Emite evidenceSelected con el índice elegido en cada caso.
+final decisionScenarios = CatalogItem(
+  name: 'DecisionScenarios',
+  dataSchema: S.object(
+    properties: {
+      'title': S.string(description: 'Título del reto'),
+      'question': S.string(description: 'Consigna'),
+      'items': S.list(
+          description: 'Casos {prompt, options}',
+          items: S.object(properties: {
+            'prompt': S.string(),
+            'options': S.list(items: S.string()),
+          })),
+      'mono': S.boolean(description: 'Opciones como comandos de terminal'),
+    },
+    required: ['question'],
+  ),
+  exampleData: [
+    () => '[{"id": "root", "component": "DecisionScenarios", '
+        '"title": "Decide en cada caso", "question": "¿Qué harías?"}]',
+  ],
+  widgetBuilder: (ctx) => _DecisionScenarios(ctx),
+);
+
+const _exampleDecision = [
+  {
+    'prompt': 'El servicio api no responde. ¿Qué miras primero?',
+    'options': ['docker logs api', 'docker images', 'docker rm api'],
+  },
+];
+
+class _DecisionScenarios extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _DecisionScenarios(this.ctx);
+  @override
+  State<_DecisionScenarios> createState() => _DecisionScenariosState();
+}
+
+class _DecisionScenariosState extends State<_DecisionScenarios> {
+  final choices = <int, int>{};
+
+  // Sin botón: cada elección se corrige en el servidor; completa = entrega.
+  void _pick(int i, int j, int n) {
+    setState(() => choices[i] = j);
+    TutorEvents.send(context, 'DecisionScenarios',
+        choices.length == n ? 'evidenceSelected' : 'selectionChanged',
+        {'choices': [for (var k = 0; k < n; k++) choices[k]]});
+  }
+
+  List<Map> get _items {
+    final v = (widget.ctx.data as Map)['items'];
+    return v is List && v.isNotEmpty
+        ? [for (final i in v) if (i is Map) i]
+        : const [..._exampleDecision];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    final mono = data['mono'] == true;
+    final items = _items;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final ready = choices.length == items.length;
+    return titledCard(context, '${data['title'] ?? 'Decide en cada caso'}', '${data['question'] ?? ''}',
+        icon: mono ? Icons.terminal : Icons.fact_check_outlined,
+        accent: cs.secondary,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            const SizedBox(height: 8),
+            Text('Caso ${i + 1}. ${items[i]['prompt']}', style: tt.bodyMedium),
+            const SizedBox(height: 4),
+            for (final (j, opt) in _strings(items[i]['options'], const []).indexed)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Material(
+                  color: choices[i] == j ? cs.secondaryContainer : cs.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(color: choices[i] == j ? cs.secondary : cs.outlineVariant),
+                  ),
+                  child: InkWell(
+                    key: ValueKey('ds_${i}_$j'),
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => _pick(i, j, items.length),
+                    child: Semantics(
+                      selected: choices[i] == j,
+                      button: true,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 44),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          child: Row(children: [
+                            Icon(choices[i] == j ? Icons.radio_button_checked : Icons.radio_button_off,
+                                size: 18, color: choices[i] == j ? cs.secondary : cs.onSurfaceVariant),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(mono ? '\$ $opt' : opt,
+                                  style: mono
+                                      ? const TextStyle(fontFamily: 'monospace', fontSize: 13)
+                                      : tt.bodyMedium),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+          if (!ready)
+            Text('Seleccionados ${choices.length} de ${items.length}. Responde todos los casos y explica tus decisiones.',
+                style: tt.bodySmall),
         ]);
   }
 }

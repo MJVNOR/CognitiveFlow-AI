@@ -13,7 +13,6 @@ import '../../ui/instructor/instructor_page.dart';
 import '../../ui/auth/login_page.dart';
 import '../../ui/labs/ml_lab_page.dart';
 import '../../ui/labs/monitor_lab_page.dart';
-import '../../ui/progress/progress_page.dart';
 import '../../ui/instructor/review_page.dart';
 import '../../ui/core/shell.dart';
 
@@ -52,7 +51,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             unit: s.uri.queryParameters['unit'],
           ),
         ),
-        GoRoute(path: '/progress', builder: (c, s) => const ProgressPage()),
+        // El progreso vive en la Academia; el enlace viejo redirige allí.
+        GoRoute(path: '/progress', redirect: (c, s) => '/academy'),
         GoRoute(path: '/instructor', builder: (c, s) => const InstructorPage()),
         GoRoute(
           path: '/instructor/session/:sid',

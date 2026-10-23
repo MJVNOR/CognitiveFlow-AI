@@ -13,11 +13,19 @@ class AcademyData {
 
   /// Estado por unidad Docker ({unidad: active|posttest|done}); vacío si falla.
   final Map dockerUnits;
+
+  /// Evidencia por lab (`/me/progress`: baseline → postest, dominio); vacío si falla.
+  final Map<String, Map> prog;
+
+  /// Repasos espaciados vencidos (`/me/recall-due`); vacío si falla.
+  final List recalls;
   const AcademyData({
     required this.modules,
     required this.labs,
     required this.statusMap,
     this.dockerUnits = const {},
+    this.prog = const {},
+    this.recalls = const [],
   });
 }
 
@@ -38,17 +46,39 @@ class AcademyViewModel extends AsyncNotifier<AcademyData> {
         dockerUnits = await ref.read(labRepositoryProvider).fetchDockerUnits();
       } catch (_) {} // el temario se muestra igual, sin estado por unidad
     }
+    // Progreso y repasos: la academia es la única pantalla de avance; si fallan,
+    // el temario se muestra igual.
+    Map<String, Map> prog = const {};
+    List recalls = const [];
+    try {
+      prog = {
+        for (final p in await ref.read(progressRepositoryProvider).fetchProgress())
+          (p['lab_template_id'] as String): p as Map
+      };
+    } catch (_) {}
+    try {
+      recalls = await ref.read(progressRepositoryProvider).fetchRecallDue();
+    } catch (_) {}
     return AcademyData(
       modules: results[0] as List<Module>,
       labs: labs,
       statusMap: results[2] as Map,
       dockerUnits: dockerUnits,
+      prog: prog,
+      recalls: recalls,
     );
   }
 
   Future<void> refresh() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(load);
+  }
+
+  Future<void> markRecallDone(String id) async {
+    try {
+      await ref.read(progressRepositoryProvider).markRecallDone(id);
+    } catch (_) {}
+    await refresh();
   }
 }
 

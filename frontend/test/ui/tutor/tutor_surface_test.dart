@@ -5,6 +5,64 @@ import 'package:cognitiveflow/ui/tutor/catalog.dart';
 import 'package:cognitiveflow/ui/tutor/tutor_surface.dart';
 
 void main() {
+  testWidgets('identidad conserva borrador y reinicia solo para otra actividad', (tester) async {
+    Future<void> show(String id) async {
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: TutorSurface(
+        intervention: {
+          'activity_id': id,
+          'widget_type': 'HypothesisEditor',
+          'widget_parameters': {'title': 'Mismo tipo y estrategia'},
+          'socratic_question': 'Justifica tu hipótesis',
+        },
+      ))));
+      await tester.pumpAndSettle();
+    }
+    await show('a');
+    await tester.enterText(find.byKey(const ValueKey('he_field')), 'Mi borrador');
+    await show('a');
+    expect(find.text('Mi borrador'), findsOneWidget);
+    await show('b');
+    expect(find.text('Mi borrador'), findsNothing);
+  });
+
+  testWidgets('superficies simultáneas envían a su propia actividad', (tester) async {
+    final got = <Map<String, Object?>>[];
+    Widget surface(String id) => Expanded(child: TutorSurface(
+      key: ValueKey(id),
+      intervention: {
+        'activity_id': id,
+        'widget_type': 'HypothesisEditor',
+        'widget_parameters': {'title': id},
+        'socratic_question': 'Justifica',
+      },
+      onEvent: (_, _, payload) => got.add(payload),
+    ));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Row(children: [surface('a'), surface('b')]))));
+    await tester.pumpAndSettle();
+    for (final id in ['a', 'b']) {
+      final root = find.byKey(ValueKey(id));
+      await tester.enterText(find.descendant(of: root, matching: find.byKey(const ValueKey('he_field'))), 'Razón $id');
+      await tester.pump();
+      await tester.tap(find.descendant(of: root, matching: find.byKey(const ValueKey('he_save'))));
+      await tester.pump();
+    }
+    expect(got.map((e) => e['activity_id']), ['a', 'b']);
+    expect(got.map((e) => e['hypothesis']), ['Razón a', 'Razón b']);
+  });
+
+  testWidgets('backlog se consulta como histórico sin controles ficticios', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TutorSurface(intervention: {
+      'widget_type': 'SqlQueryWorkbench',
+      'widget_parameters': {'title': 'SQL'},
+      'socratic_question': 'Consigna histórica',
+    }))));
+    await tester.pumpAndSettle();
+    expect(find.text('Actividad histórica · solo lectura'), findsOneWidget);
+    expect(find.text('Consigna histórica'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(cognitiveFlowWidgets.contains('SqlQueryWorkbench'), isFalse);
+  });
+
   tearDown(() => TutorEvents.emit = null);
   testWidgets('intervención se renderiza vía Surface GenUI', (tester) async {
     await tester.pumpWidget(
@@ -30,14 +88,15 @@ void main() {
           home: Scaffold(
             body: TutorSurface(intervention: {
               'widget_type': name,
-              'widget_parameters': {'title': 'T'},
+              'widget_parameters': {'title': 'T', 'parameters': {'instruction': 'consigna $name'}},
               'socratic_question': 'pregunta $name',
             }),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('pregunta $name'), findsOneWidget);
+      const docker = {'ContainerVsVmExplorer', 'ImageContainerLifecycle', 'DockerfileWorkbench', 'PersistenceExperiment', 'DecisionScenarios'};
+      expect(find.text(docker.contains(name) ? 'consigna $name' : 'pregunta $name'), findsOneWidget);
     });
   }
 
@@ -251,15 +310,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('¿Contenedor o VM?'), findsOneWidget);
+    expect(find.textContaining('según los requisitos'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('cve_c_0')));
     await tester.pump();
+    // Sin botón: cada elección sale al momento; incompleta = selectionChanged.
+    expect(got.last[1], 'selectionChanged');
+    expect((got.last[2] as Map)['choices'], [0, null, null]);
     await tester.tap(find.byKey(const ValueKey('cve_v_1')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('cve_c_2')));
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('cve_send')));
-    await tester.pump();
+    expect(find.byKey(const ValueKey('cve_send')), findsNothing);
     expect(
         got.any((g) =>
             g[0] == 'ContainerVsVmExplorer' &&
@@ -297,6 +358,45 @@ void main() {
         isTrue);
   });
 
+  testWidgets('D02 separa consigna de pregunta ajena y bloquea predicción tras observar', (tester) async {
+    final events = <List>[];
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: TutorSurface(intervention: {
+        'widget_type': 'ImageContainerLifecycle',
+        'socratic_question': '¿Cómo se ajustan los pesos durante el entrenamiento?',
+        'widget_parameters': {'parameters': {
+          'instruction': 'Predice y comprueba qué recursos existen.',
+          'context': 'Partimos sin imágenes ni contenedores.',
+          'stages': ['docker build', 'docker run', 'docker stop', 'docker start'],
+          'ask_index': 2,
+        }},
+      }, onEvent: (w, e, p) => events.add([w, e, p])),
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('pesos'), findsNothing);
+    expect(find.text('Predice y comprueba qué recursos existen.'), findsOneWidget);
+    final both = find.byKey(const ValueKey('icl_pred_ambos'));
+    await tester.tap(both);
+    await tester.pump();
+    expect(events.last[1], 'selectionChanged');
+    expect((events.last[2] as Map)['prediction'], 'ambos');
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(find.byKey(const ValueKey('icl_next')));
+      await tester.pump();
+    }
+    expect(find.textContaining('Estado observado tras el paso 3'), findsOneWidget);
+    expect(find.textContaining('Contenedor: detenido'), findsOneWidget);
+    expect(tester.widget<ChoiceChip>(both).onSelected, isNull);
+    await tester.tap(find.byKey(const ValueKey('icl_next')));
+    await tester.pump();
+    expect(find.textContaining('Contenedor: corriendo'), findsOneWidget);
+    expect(events.last[1], 'evidenceSelected');
+    await tester.tap(find.byKey(const ValueKey('icl_reset')));
+    await tester.pump();
+    expect(tester.widget<ChoiceChip>(both).selected, isFalse);
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('icl_next'))).onPressed, isNull);
+  });
+
   testWidgets('DockerfileWorkbench reordena y emite', (tester) async {
     final got = <List>[];
     await tester.pumpWidget(
@@ -315,9 +415,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('dw_up_1')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('dw_send')));
-    await tester.pump();
+    await tester.pump(); // cada movimiento se envía solo
     expect(
         got.any((g) =>
             g[0] == 'DockerfileWorkbench' &&
@@ -350,7 +448,7 @@ void main() {
     expect(
         got.any((g) =>
             g[0] == 'PersistenceExperiment' &&
-            g[1] == 'predictionSubmitted' &&
+            g[1] == 'selectionChanged' &&
             (g[2] as Map)['predicted'] == true),
         isTrue);
     await tester.tap(find.byKey(const ValueKey('pe_write')));
@@ -414,8 +512,7 @@ void main() {
       await tester.tap(find.byKey(ValueKey('cve_c_$i')));
       await tester.pump();
     }
-    await tester.tap(find.byKey(const ValueKey('cve_send')));
-    await tester.pump();
+    expect(got.last[1], 'evidenceSelected');
     expect((got.last[2] as Map)['choices'], [0, 0, 0]);
   });
 

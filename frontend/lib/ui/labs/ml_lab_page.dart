@@ -323,7 +323,8 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
       stageScroll: scrollCtrl,
       stageKey: ValueKey('scroll-$mission-${l.posttestMode}'),
       header: StudioHeader(
-        backRoute: '/labs',
+        backRoute: '/academy',
+        onReset: () => confirmResetLab(context, _vm),
         crumbs: [('Academia', '/academy'), (module, null), (widget.title, null)],
         title: '¿Aprende o memoriza?',
         missionLabel: 'Misión ${mission + 1} de ${mlMissions.length} · ${m.title}',
@@ -475,7 +476,10 @@ class _LabDetailState extends ConsumerState<LabDetailPage> {
 
   Widget _stage(LabSession l) => switch (mission) {
         mlPredict => _predictStage(l),
-        mlExperiment => _experimentStage(l, locked: !_editable),
+        mlExperiment => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _experimentStage(l, locked: !_editable),
+            practiceCheck(l, 'Esa época muestra el sobreajuste: explícalo al justificar.'),
+          ]),
         mlJustify => _justifyStage(l),
         mlScenario =>
           ScenarioStage(lab: l, scenarioDone: scenarioDone, onEvent: _onScenarioEvent),

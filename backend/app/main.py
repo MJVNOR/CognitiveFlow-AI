@@ -4,12 +4,14 @@ from contextlib import asynccontextmanager
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.db import upgrade_head
 from app.routers import auth, instructor, labs, socratic
 from app.seed import seed_if_empty
+from app.socratic import LLMUnavailable
 
 load_dotenv()
 
@@ -33,6 +35,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(LLMUnavailable)
+async def llm_unavailable(_: Request, exc: LLMUnavailable):
+    # Sin respuestas inventadas: el cliente muestra el error y reintenta.
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.get("/health")

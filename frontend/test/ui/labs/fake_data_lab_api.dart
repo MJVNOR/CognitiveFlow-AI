@@ -5,7 +5,7 @@ import 'dart:convert';
 import 'package:cognitiveflow/data/services/api_client.dart';
 
 /// Etapa del servidor simulada: qué ya existe en la sesión al reanudar.
-enum FakeStage { fresh, evaluated, intervention, posttest }
+enum FakeStage { fresh, evaluated, intervention, posttest, done }
 
 class FakeDataLabApi extends ApiClient {
   FakeStage stage;
@@ -13,6 +13,8 @@ class FakeDataLabApi extends ApiClient {
   final events = <Map<String, dynamic>>[];
   /// Estado por unidad Docker que devuelve `/me/docker-units`.
   Map<String, dynamic> dockerUnits = {};
+  String? dockerSessionUnit;
+  bool failDockerActivity = false;
 
   /// Intervención que «elige» el servidor (por defecto, la de datos).
   final Map<String, dynamic> iv;
@@ -109,6 +111,7 @@ class FakeDataLabApi extends ApiClient {
       };
     }
     if (path.contains('/docker-activity?')) {
+      if (failDockerActivity) throw Exception('503');
       final q = Uri.parse(path).queryParameters;
       final seed = int.tryParse(q['seed'] ?? '1') ?? 1;
       return switch (q['unit']) {
@@ -124,6 +127,21 @@ class FakeDataLabApi extends ApiClient {
             'ask_index': 3,
             'ask_stage': 'docker rm',
             'options': ['imagen', 'contenedor', 'ambos', 'ninguno'],
+          },
+        'M08-D03-cli' => {
+            'unit': q['unit'],
+            'seed': seed,
+            'mono': true,
+            'items': [
+              {
+                'prompt': 'El servicio api no responde.',
+                'options': ['docker images', 'docker logs api', 'docker rm api'],
+              },
+              {
+                'prompt': '¿Qué contenedores corren?',
+                'options': ['docker ps', 'docker logs', 'docker images'],
+              },
+            ],
           },
         _ => {'unit': q['unit'], 'seed': seed},
       };
@@ -145,7 +163,7 @@ class FakeDataLabApi extends ApiClient {
     if (path == '/sessions/sess-1') {
       return {
         'id': 'sess-1',
-        'status': stage == FakeStage.posttest ? 'posttest' : 'active',
+        'status': stage == FakeStage.done ? 'done' : stage == FakeStage.posttest ? 'posttest' : 'active',
         'level': 'guided_practice',
         'assistance': {'hints': 0, 'socratic': 0, 'interventions': 0},
         // Como el backend: intento evaluado + respuesta al reto GenUI.
@@ -164,7 +182,7 @@ class FakeDataLabApi extends ApiClient {
   Future<List<dynamic>> getList(String path) async {
     if (path.startsWith('/me/sessions')) {
       return [
-        {'id': 'sess-1', 'status': 'active'}
+        {'id': 'sess-1', 'status': stage == FakeStage.done ? 'done' : 'active'}
       ];
     }
     if (path == '/sessions/sess-1/attempts') {
@@ -173,8 +191,11 @@ class FakeDataLabApi extends ApiClient {
           : [
               {
                 'id': 'att-1',
-                'input': {'flags': [25, 7], 'seed': 1},
-              }
+                'input': {'flags': [25, 7], 'seed': 1,
+                  if (dockerSessionUnit != null) 'extra': {'unit': dockerSessionUnit}},
+              },
+              if (stage == FakeStage.done)
+                {'id': 'post-1', 'input': {'kind': 'posttest'}},
             ];
     }
     if (path == '/sessions/sess-1/interventions') {
@@ -229,9 +250,28 @@ class FakeDataLabApi extends ApiClient {
           },
         };
       }
+      // Práctica Docker: el servidor corrige la entrega al momento (D03: 2.º caso mal).
+      if (body['widget_type'] == 'ImageContainerLifecycle' &&
+          stage != FakeStage.posttest && stage != FakeStage.done &&
+          (body['payload'] as Map)['prediction'] != null) {
+        final correct = (body['payload'] as Map)['prediction'] == 'imagen';
+        return {
+          'id': body['client_event_id'], 'deduped': false,
+          'check': {'correctas': correct ? ['qué existe tras docker rm'] : [],
+            'revisar': correct ? [] : ['qué existe tras docker rm']},
+        };
+      }
+      if (body['widget_type'] == 'DecisionScenarios' && (body['payload'] as Map)['unit'] != null) {
+        return {
+          'id': body['client_event_id'],
+          'deduped': false,
+          'check': {'correctas': ['1'], 'revisar': ['2'], 'item': 'caso', 'consejo': 'Relee el síntoma.'},
+        };
+      }
       return {'id': body['client_event_id'], 'deduped': false};
     }
     if (path == '/sessions/sess-1/posttest') return {'status': 'begin', 'seed': 412};
+    if (path.startsWith('/me/labs/') && path.endsWith('/reset')) return {'archived': 1};
     throw Exception('404 $path');
   }
 }
