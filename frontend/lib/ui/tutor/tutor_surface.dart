@@ -47,7 +47,7 @@ Map<String, Object?> interventionToComponent(Map intervention) {
       {
         'title': title,
         'question': question,
-        for (final k in const ['scenarios', 'ask_stage', 'options', 'lines', 'app', 'story', 'path'])
+        for (final k in const ['scenarios', 'stages', 'ask_index', 'ask_stage', 'options', 'lines', 'app', 'story', 'path'])
           if (params[k] != null) k: params[k],
       },
     'DataTableExplorer' => {

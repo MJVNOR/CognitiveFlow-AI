@@ -25,12 +25,16 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final loggingIn = state.matchedLocation == '/login';
       if (auth == null && !loggingIn) return '/login';
-      if (auth != null && loggingIn) return '/academy';
+      final instructor = auth != null && !auth.isStudent;
+      if (auth != null && loggingIn) return instructor ? '/instructor' : '/academy';
       // Guardia de rol: instructor/* solo para instructor.
       if (state.matchedLocation.startsWith('/instructor') &&
           (auth?.isStudent ?? false)) {
         return '/academy';
       }
+      // El instructor solo consulta: no abre labs (crearía una sesión, que el
+      // backend rechaza); su vista es el panel de seguimiento.
+      if (instructor && state.matchedLocation.startsWith('/labs/')) return '/instructor';
       return null;
     },
     routes: [
@@ -92,7 +96,7 @@ class LabRoute extends ConsumerWidget {
     return switch (type) {
       'data_detective' => DataLabPage(labId: labId, title: title),
       'model_monitoring' => MonitorLabPage(labId: labId, title: title),
-      'docker' => DockerLabPage(labId: labId, title: title, unit: unit),
+      'docker' => DockerLabPage(key: ValueKey('docker-$unit'), labId: labId, title: title, unit: unit),
       _ => LabDetailPage(labId: labId, title: title),
     };
   }

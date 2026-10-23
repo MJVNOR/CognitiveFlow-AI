@@ -63,6 +63,10 @@ class InstructorPage extends ConsumerWidget {
                 Text('Toca un estudiante para ver sus sesiones (solo lectura).'),
               ],
             ),
+            if (value.plannerStats.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _PlannerCard(stats: value.plannerStats),
+            ],
             const SizedBox(height: 12),
             for (final st in students)
               Card(
@@ -244,5 +248,66 @@ class _SessionsDialog extends ConsumerWidget {
         );
       }),
     };
+  }
+}
+
+/// Quién eligió los retos (Gemini o reglas), por qué y cuánto tardó, por lab.
+class _PlannerCard extends StatelessWidget {
+  final Map<String, dynamic> stats;
+  const _PlannerCard({required this.stats});
+
+  static const _labNames = {
+    'data_detective': 'Data Detective',
+    'ml_experiment': 'Curvas de aprendizaje (ML)',
+    'model_monitoring': 'Monitoreo de deriva',
+    'docker': 'Docker Academy',
+  };
+  static const _reasons = {
+    'ok': 'Gemini respondió',
+    'sin_clave': 'sin clave de Gemini',
+    'sin_respuesta': 'Gemini no respondió a tiempo',
+    'invalida': 'propuesta fuera del menú',
+    'salvaguarda': 'salvaguarda (base débil)',
+    'sin_evaluacion': 'intento sin evaluar',
+    'sin_registro': 'anterior a la telemetría',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    return Card(
+      child: ExpansionTile(
+        key: const ValueKey('planner_stats'),
+        leading: const Icon(Icons.auto_awesome_outlined),
+        title: const Text('Planificador de retos (GenUI)'),
+        subtitle: const Text('Quién eligió cada reto y por qué', style: TextStyle(fontSize: 12)),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: [
+          for (final e in stats.entries)
+            if (e.value is Map)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(_labNames[e.key] ?? e.key, style: tt.titleSmall),
+                  Text('Gemini eligió ${(e.value as Map)['gemini']} de ${(e.value as Map)['total']} '
+                      'retos; las reglas, ${(e.value as Map)['reglas']}.'),
+                  Text(
+                    [
+                      for (final m in ((e.value as Map)['motivos'] as Map? ?? {}).entries)
+                        '${_reasons[m.key] ?? m.key}: ${m.value}',
+                    ].join(' · '),
+                    style: tt.bodySmall,
+                  ),
+                  if ((e.value as Map)['latencia_ms'] is Map)
+                    Text(
+                        'Latencia de Gemini: mediana '
+                        '${((e.value as Map)['latencia_ms'] as Map)['mediana']} ms, '
+                        'máx ${((e.value as Map)['latencia_ms'] as Map)['max']} ms.',
+                        style: tt.bodySmall),
+                ]),
+              ),
+        ],
+      ),
+    );
   }
 }

@@ -71,7 +71,9 @@ void main() {
     }
     // D01 completada (servidor) → requisito de D02 cumplido; estado escrito por unidad.
     expect(find.text('Requisito cumplido: D01'), findsOneWidget);
-    expect(find.text('Conviene dominar antes: D02'), findsNWidgets(2));
+    expect(find.text('Primero completa D02'), findsNWidgets(2));
+    expect(tester.widget<Text>(find.byKey(const ValueKey('academy_unit_status_D04'))).data,
+        'Bloqueada');
     expect(tester.widget<Text>(find.byKey(const ValueKey('academy_unit_status_D01'))).data,
         'Completado');
     expect(find.textContaining('en preparación'), findsOneWidget);

@@ -8,10 +8,14 @@ class InstructorData {
   final List<Student> students;
   final Map<String, String> labTitles;
   final Map<String, Map> matrix;
+
+  /// Telemetría del planificador GenUI por tipo de lab (vacío si no cargó).
+  final Map<String, dynamic> plannerStats;
   const InstructorData({
     required this.students,
     required this.labTitles,
     required this.matrix,
+    this.plannerStats = const {},
   });
 }
 
@@ -25,6 +29,10 @@ class InstructorViewModel extends AsyncNotifier<InstructorData> {
       ref.read(labRepositoryProvider).fetchLabs(),
       ref.read(instructorRepositoryProvider).fetchMatrix(),
     ]);
+    Map<String, dynamic> planner = const {};
+    try {
+      planner = await ref.read(instructorRepositoryProvider).fetchPlannerStats();
+    } catch (_) {} // el panel funciona igual sin la telemetría
     return InstructorData(
       students: results[0] as List<Student>,
       labTitles: {for (final l in (results[1] as List<Lab>)) l.id: l.title},
@@ -32,6 +40,7 @@ class InstructorViewModel extends AsyncNotifier<InstructorData> {
         for (final m in (results[2] as List))
           (m['student_id'] as String): m as Map
       },
+      plannerStats: planner,
     );
   }
 

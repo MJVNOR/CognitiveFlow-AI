@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth import current_user, session_for
+from app.auth import current_user, session_for_write
 from app.db import get_db
 from app.helpers import (
     MAX_REVISIONS,
@@ -37,7 +37,7 @@ class EvaluateIn(BaseModel):
 @router.post("/sessions/{session_id}/evaluate")
 def evaluate(session_id: str, body: EvaluateIn, user=Depends(current_user),
              db: Session = Depends(get_db)):
-    session_for(user, db, session_id)
+    session_for_write(user, db, session_id)
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
@@ -53,7 +53,7 @@ class SocraticIn(BaseModel):
 @router.post("/sessions/{session_id}/socratic")
 async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user),
                    db: Session = Depends(get_db)):
-    _require_active(session_for(user, db, session_id))
+    _require_active(session_for_write(user, db, session_id))
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
@@ -89,7 +89,7 @@ async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user)
 async def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_user),
                             db: Session = Depends(get_db)):
     # ponytail: intervenciones no persistidas aún; deuda explícita (audit trail F5)
-    _require_active(session_for(user, db, session_id))
+    _require_active(session_for_write(user, db, session_id))
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
@@ -131,6 +131,7 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
     # P1.1: contrato versionado — el cliente valida tipo, versión y eventos.
     # Lo que delataría la respuesta (p. ej. tipos a contrastar) vive solo en el log.
     private = intervention.pop("_private", None)
+    planner = intervention.pop("planner", None)  # telemetría para el instructor
     intervention["schema_version"] = SCHEMA_VERSION
     intervention["allowed_events"] = ALLOWED_BY_WIDGET.get(intervention["widget_type"], [])
     # F5: audit trail — qué estrategia se decidió por intento (append-only).
@@ -149,6 +150,7 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
                                       "activity": intervention.get("activity"),
                                       "activity_params": intervention.get("activity_params"),
                                       "private": private,
+                                      "planner": planner,
                                       "submits_before": submit_count(
                                           db, session_id, intervention["widget_type"])})))
     db.commit()

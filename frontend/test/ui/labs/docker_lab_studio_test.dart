@@ -27,12 +27,17 @@ Future<FakeDataLabApi> _pump(WidgetTester tester,
     {String? unit,
     FakeStage stage = FakeStage.fresh,
     Size size = const Size(1440, 900),
-    Map<String, Object> prefs = const {}}) async {
+    Map<String, Object> prefs = const {},
+    // Por defecto los prerrequisitos de D02/D04/D07 están completados.
+    Map<String, dynamic> units = const {
+      'M08-D01-containers': 'done',
+      'M08-D02-lifecycle': 'done',
+    }}) async {
   SharedPreferences.setMockInitialValues(prefs);
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final api = FakeDataLabApi(stage, _dockerIntervention);
+  final api = FakeDataLabApi(stage, _dockerIntervention)..dockerUnits = units;
   await tester.pumpWidget(ProviderScope(
     overrides: [apiClientProvider.overrideWithValue(api)],
     child: MaterialApp(
@@ -59,7 +64,7 @@ void main() {
     expect(find.text('Experimenta'), findsWidgets);
     expect(tester.widget<ButtonStyleButton>(_key('docker_cta_experiment')).onPressed, isNull);
     // El escenario llega del servidor: primero se predice, luego se simula.
-    expect(find.textContaining('tras «rm»'), findsOneWidget);
+    expect(find.textContaining('tras el paso 4 («docker rm»)'), findsOneWidget);
     await tester.ensureVisible(_key('icl_pred_imagen'));
     await tester.tap(_key('icl_pred_imagen'));
     await tester.pumpAndSettle();
@@ -111,4 +116,13 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('unidad con prerrequisito pendiente: bloqueada y con atajo a la previa',
+      (tester) async {
+    await _pump(tester, unit: 'M08-D04-dockerfile', units: const {'M08-D01-containers': 'done'});
+    expect(_key('docker_unit_locked'), findsOneWidget);
+    expect(find.text('Unidad D04 bloqueada'), findsOneWidget);
+    expect(find.text('Ir a D02'), findsOneWidget);
+    expect(_key('docker_cta_learn'), findsNothing);
+  });
 }

@@ -89,14 +89,17 @@ class _ContainerVsVmState extends State<_ContainerVsVm> {
   }
 }
 
-/// D02: predecir qué existe tras un paso y simular el ciclo; emite al completar.
+/// D02: predecir qué existe en un paso de una secuencia de comandos y luego
+/// simular la secuencia; emite al completar (con la predicción).
 final imageContainerLifecycle = CatalogItem(
   name: 'ImageContainerLifecycle',
   dataSchema: S.object(
     properties: {
       'title': S.string(description: 'Título del ciclo'),
       'question': S.string(description: 'Consigna'),
-      'ask_stage': S.string(description: 'Paso tras el cual se pide la predicción'),
+      'stages': S.list(description: 'Secuencia de comandos', items: S.string()),
+      'ask_index': S.number(description: 'Índice del paso a predecir'),
+      'ask_stage': S.string(description: 'Comando del paso a predecir'),
       'options': S.list(description: 'Opciones de predicción', items: S.string()),
     },
     required: ['question'],
@@ -108,14 +111,27 @@ final imageContainerLifecycle = CatalogItem(
   widgetBuilder: (ctx) => _ImageLifecycle(ctx),
 );
 
-const _lifecycleStages = ['pull / build', 'run', 'stop', 'rm'];
-const _lifecycleNotes = [
-  'La imagen aún no existe aquí.',
-  'Imagen lista. El contenedor corre.',
-  'Contenedor detenido (existe, no corre).',
-  'Contenedor eliminado.',
-  'Ciclo completo: la imagen sigue disponible.',
-];
+const _lifecycleStages = ['docker pull', 'docker run', 'docker stop', 'docker rm'];
+
+/// Simulación del estado (no ejecuta Docker): ¿hay imagen? ¿contenedor y cómo?
+String _lifecycleNote(List<String> done) {
+  var image = false, autoRm = false;
+  String? container; // null = no existe; 'corriendo' / 'detenido'
+  for (final s in done) {
+    if (s == 'docker pull' || s == 'docker build') image = true;
+    if (s.startsWith('docker run')) {
+      container = 'corriendo';
+      autoRm = s.endsWith('--rm');
+    }
+    if (s == 'docker stop') container = autoRm ? null : 'detenido';
+    if (s == 'docker start' && container != null) container = 'corriendo';
+    if (s == 'docker rm') container = null;
+    if (s == 'docker rmi') image = false;
+  }
+  if (done.isEmpty) return 'Aún no hay imagen ni contenedor.';
+  return 'Imagen: ${image ? 'existe' : 'no existe'} · '
+      'Contenedor: ${container ?? 'no existe'}.';
+}
 
 class _ImageLifecycle extends StatefulWidget {
   final CatalogItemContext ctx;
@@ -129,20 +145,28 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
   bool sent = false;
   String? prediction;
 
-  String? get _askStage {
-    final s = (widget.ctx.data as Map)['ask_stage'];
-    return _lifecycleStages.contains(s) ? s as String : null;
+  Map get _data => widget.ctx.data as Map;
+  List<String> get _stages => _strings(_data['stages'], _lifecycleStages);
+
+  /// Paso (índice) sobre el que se predice; null = sin predicción (ejemplo).
+  int? get _askIndex {
+    final i = _data['ask_index'];
+    if (i is num && i >= 0 && i < _stages.length) return i.toInt();
+    final s = _data['ask_stage'];
+    final j = _stages.indexOf('$s');
+    return j >= 0 ? j : null;
   }
 
   void _advance() {
-    if (step >= _lifecycleStages.length) return;
+    if (step >= _stages.length) return;
     setState(() => step++);
-    if (step == _lifecycleStages.length && !sent) {
+    if (step == _stages.length && !sent) {
       sent = true;
       TutorEvents.send('ImageContainerLifecycle', 'evidenceSelected', {
         'completed': true,
-        'stages': _lifecycleStages,
-        if (_askStage != null) 'ask_stage': _askStage,
+        'stages': _stages,
+        if (_askIndex != null) 'ask_index': _askIndex,
+        if (_askIndex != null) 'ask_stage': _stages[_askIndex!],
         if (prediction != null) 'prediction': prediction,
       });
     }
@@ -150,18 +174,33 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.ctx.data as Map;
-    final ask = _askStage;
-    final options = _strings(data['options'], const ['imagen', 'contenedor', 'ambos', 'ninguno']);
+    final stages = _stages;
+    final ask = _askIndex;
+    final options = _strings(_data['options'], const ['imagen', 'contenedor', 'ambos', 'ninguno']);
     // Primero se predice; la simulación se habilita después (predecir antes de ver).
     final mustPredict = ask != null && prediction == null;
-    return titledCard(context, '${data['title'] ?? 'Ciclo de vida'}',
-        '${data['question'] ?? ''}',
+    final cs = Theme.of(context).colorScheme;
+    return titledCard(context, '${_data['title'] ?? 'Ciclo de vida'}', '${_data['question'] ?? ''}',
         icon: Icons.sync,
-        accent: Theme.of(context).colorScheme.secondary,
+        accent: cs.secondary,
         children: [
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              for (var i = 0; i < stages.length; i++)
+                Chip(
+                  label: Text('${i + 1}. ${stages[i]}',
+                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                  visualDensity: VisualDensity.compact,
+                  side: i == ask ? BorderSide(color: cs.tertiary) : BorderSide.none,
+                  backgroundColor: i < step ? cs.primaryContainer : null,
+                ),
+            ],
+          ),
           if (ask != null) ...[
-            Text('Predice: tras «$ask», ¿qué existe?',
+            const SizedBox(height: 8),
+            Text('Predice: tras el paso ${ask + 1} («${stages[ask]}»), ¿qué existe?',
                 style: Theme.of(context).textTheme.labelLarge),
             Wrap(spacing: 8, children: [
               for (final o in options)
@@ -172,30 +211,20 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
                   onSelected: sent ? null : (_) => setState(() => prediction = o),
                 ),
             ]),
-            const SizedBox(height: 8),
           ],
-          Wrap(
-            spacing: 4,
-            children: [
-              for (var i = 0; i < _lifecycleStages.length; i++)
-                Chip(
-                  label: Text(_lifecycleStages[i], style: const TextStyle(fontSize: 11)),
-                  visualDensity: VisualDensity.compact,
-                  side: BorderSide.none,
-                  backgroundColor:
-                      i < step ? Theme.of(context).colorScheme.primaryContainer : null,
-                ),
-            ],
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(_lifecycleNote(stages.take(step).toList()),
+                style: Theme.of(context).textTheme.bodySmall),
           ),
-          const SizedBox(height: 4),
-          Text(_lifecycleNotes[step], style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 8),
           Row(
             children: [
               FilledButton.tonal(
                 key: const ValueKey('icl_next'),
-                onPressed: step >= _lifecycleStages.length || mustPredict ? null : _advance,
-                child: const Text('Avanzar'),
+                onPressed: step >= stages.length || mustPredict ? null : _advance,
+                child: Text(step < stages.length ? 'Ejecutar «${stages[step]}»' : 'Secuencia completa'),
               ),
               const SizedBox(width: 8),
               TextButton(

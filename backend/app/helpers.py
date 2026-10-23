@@ -207,3 +207,34 @@ def _lab_progress(db: Session, student_id: str, lab_template_id: str) -> dict:
             # Sprint 4: el dominio SOLO lo demuestra el postest; la práctica no cuenta.
             "mastery": posttest,
             "mastery_status": "demonstrated" if posttest else "not_demonstrated"}
+
+
+def docker_unit_status(db: Session, student_id: str) -> dict:
+    """Estado por unidad Docker derivado de los intentos (una sesión = una unidad).
+    Sin cambio de esquema: la unidad viaja en `extra.unit` de cada intento."""
+    rank = {"active": 1, "posttest": 2, "done": 3}
+    out: dict[str, str] = {}
+    tpl_ids = [t.id for t in db.query(models.LabTemplate).filter_by(lab_type="docker").all()]
+    for s in db.query(models.LearningSession).filter(
+            models.LearningSession.student_id == student_id,
+            models.LearningSession.lab_template_id.in_(tpl_ids)).all():
+        unit = None
+        for a in db.query(models.LabAttempt).filter_by(session_id=s.id).all():
+            try:
+                extra = json.loads(a.input_state_json).get("extra") or {}
+            except ValueError:
+                continue
+            unit = unit or (extra.get("unit") if isinstance(extra, dict) else None)
+        if unit and rank.get(s.status, 0) > rank.get(out.get(unit), 0):
+            out[unit] = s.status
+    return out
+
+
+def docker_prereq_missing(db: Session, student_id: str, unit: str) -> str | None:
+    """Unidad previa que falta completar (hasta la reflexión) o None si puede empezar."""
+    from app.labs_docker import PREREQ
+
+    need = PREREQ.get(unit)
+    if need and docker_unit_status(db, student_id).get(need) != "done":
+        return need
+    return None

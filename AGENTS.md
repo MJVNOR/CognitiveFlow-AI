@@ -46,10 +46,12 @@ uv run uvicorn app.main:app --reload --port 8000
 - Progreso de pasos ≠ competencia; dominio solo con criterios definidos + postest/pruebas independientes. Postest: variante no vista, sin tutor/pistas/feedback, bloquea Gemini en backend.
 - Repaso espaciado configurable (p. ej. 1/3/7 días punto de partida), transferencia a escenario nuevo, `assistance_level` guardado para interpretar resultados. Piloto n=4: no generalizar eficacia.
 
-## 4. Esquema SQLite sin Alembic (deuda explícita)
+## 4. Esquema SQLite con Alembic
 
-- `Base.metadata.create_all` no altera tablas existentes: un cambio de modelo exige borrar `backend/cognitiveflow.db*` + `seed` (solo con API apagada; en Windows el archivo se bloquea mientras un servidor lo tiene abierto).
-- Seed demo: 8 módulos, 5 usuarios, 3 labs (`uv run python -m app.seed`).
+- Al arrancar, `app.db.upgrade_head()` migra la base a la última versión de `backend/alembic/versions/` (sin borrar datos). Tests en memoria usan `create_all`.
+- Un cambio de modelo (tabla, columna, tipo) **exige** su migración: `cd backend; uv run alembic revision --autogenerate -m "..."`, revisar el archivo y probar. `test_models_have_no_unmigrated_schema_changes` falla si falta. La nulabilidad queda excluida a propósito (la base inicial creó columnas opcionales que los modelos declaran obligatorias; forzarlo podría romper datos).
+- Preferir campos aditivos en JSON existentes (p. ej. `spec_json`, `input_state_json.extra`) cuando no hace falta consultar por ellos.
+- Seed demo: 8 módulos, 5 usuarios, 4 labs (`uv run python -m app.seed`).
 
 ## 5. Frontend (Flutter 3.47.7, web)
 
@@ -76,8 +78,9 @@ flutter analyze --no-pub; flutter test; flutter build web
 4. Fases flexibles (no todas en toda unidad): **predecir → experimentar → observar → justificar → feedback → nuevo desafío → transferencia/postest**.
 5. Ayudas graduales (intento autónomo → pista → evidencia señalada → ejemplo análogo → explicación directa si persiste bloqueo o se solicita). No bloquear explicaciones para siempre; no confundir esfuerzo innecesario con aprendizaje. No castigar pedir ayuda.
 6. Evaluación descriptiva post-intento; números solo bajo detalles. Intervención = actividad nueva (ver §3).
-7. Profesor solo consulta (estudiantes, unidades, progreso, habilidades, Jev, historial, pre/post). Sin comentarios/sliders/asignaciones/edición.
-8. Animación funcional y calmada; respetar movimiento reducido (§7).
+7. Profesor solo consulta (estudiantes, unidades, progreso, habilidades, Jev, historial, pre/post, telemetría del planificador en `GET /instructor/planner-stats`). Sin comentarios/sliders/asignaciones/edición. En backend, `auth.session_for_write` rechaza (403) toda escritura del instructor en sesiones y `POST /sessions` no acepta `student_id` del payload; en Flutter el instructor que abre `/labs/:id` va a `/instructor`.
+8. Docker: los prerrequisitos (`labs_docker.PREREQ`: D02←D01, D04←D02, D07←D02) se exigen en el servidor (intento rechazado con 403) y la academia muestra la unidad como «Bloqueada» con su motivo; una unidad ya empezada nunca se bloquea.
+9. Animación funcional y calmada; respetar movimiento reducido (§7).
 
 ### 5.2 Workspace compartido `lib/ui/labs/workspace/`
 

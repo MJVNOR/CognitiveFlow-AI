@@ -452,3 +452,12 @@ Límites de herramientas: obscura bloquea `localhost` sin `OBSCURA_ALLOW_PRIVATE
 - [x] **Rendimiento** (build de producción, Chrome headless): frames ~7 ms, p95 7,1 ms, ninguno > 33 ms al arrastrar complejidad o desplazar Data.
 - [x] Hot reload aplicado en la app del usuario (hot restart falló: DWDS devolvió HTML).
 - Pendiente: lector de pantalla real (NVDA), modelo LLM más rápido para no esperar ~30 s, revisión del panel instructor (UX07), piloto (UX08), commit.
+
+### 12.5 Pendientes 2, 4–9 (tras commit 2151ef8)
+- [x] **Instructor solo lectura también en backend**: `session_for_write` (403 a escrituras del instructor en eventos, intentos, evaluar, tutor, intervención, postest, reflexión); `POST /sessions` sin `student_id` del payload. Flutter: instructor que abre un lab → `/instructor`. Tests backend + widget (`instructor_page_test`).
+- [x] **Prerrequisitos Docker exigidos**: servidor rechaza intentos con prerrequisito incompleto; academia «Bloqueada» + motivo; página con atajo a la unidad previa.
+- [x] **D02 con variantes reales**: 7 secuencias de comandos (`pull/build`, `run`, `run --rm`, `stop`, `start`, `rm`, `rmi`) y paso a predecir variable; verdad simulada en servidor; el widget simula el estado tras predecir.
+- [x] **Telemetría del planificador**: cada intervención guarda `planner {outcome, ms}` (ok / sin_clave / sin_respuesta / invalida / salvaguarda / sin_evaluacion); `GET /instructor/planner-stats` y tarjeta en el panel del instructor.
+- [x] **Alembic**: ya estaba en uso (`upgrade_head`); AGENTS §4 corregido; `test_models_have_no_unmigrated_schema_changes` (excluye nulabilidad, documentado).
+- [x] **Prueba de punta a punta con proveedores reales** (backend propio con `.env`, base nueva): ML evaluado por Jev + feedback/pregunta/planificador Gemini; Data con reto elegido por Gemini (`revise_hypothesis`) y corrección del servidor; postest habilitado. Encontrado y corregido: Markdown crudo en textos de Gemini y preguntas demasiado largas.
+- [ ] **NVDA real**: no instalado en el equipo; sustituido por árbol de accesibilidad de Chrome (0 controles sin nombre) y tests de texto grande/teclado.

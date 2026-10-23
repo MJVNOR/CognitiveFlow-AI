@@ -51,6 +51,13 @@ def session_for(user, db: Session, session_id: str):
     return s
 
 
+def session_for_write(user, db: Session, session_id: str):
+    """Escrituras en una sesión: solo su estudiante. El instructor solo consulta."""
+    if user.role == "instructor":
+        raise HTTPException(403, "el instructor solo consulta (sin escribir en sesiones)")
+    return session_for(user, db, session_id)
+
+
 def new_token(db: Session, user_id: str) -> str:
     tok = secrets.token_hex(16)
     db.add(models.AuthToken(token=tok, user_id=user_id, created_at=int(time.time())))

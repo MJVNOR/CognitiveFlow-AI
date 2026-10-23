@@ -120,7 +120,9 @@ class FakeDataLabApi extends ApiClient {
         'M08-D02-lifecycle' => {
             'unit': q['unit'],
             'seed': seed,
-            'ask_stage': 'rm',
+            'stages': ['docker pull', 'docker run', 'docker stop', 'docker rm'],
+            'ask_index': 3,
+            'ask_stage': 'docker rm',
             'options': ['imagen', 'contenedor', 'ambos', 'ninguno'],
           },
         _ => {'unit': q['unit'], 'seed': seed},

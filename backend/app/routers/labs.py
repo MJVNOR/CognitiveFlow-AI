@@ -7,9 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth import current_user, session_for
+from app.auth import current_user, session_for, session_for_write
 from app.db import get_db
 from app.helpers import (
+    docker_prereq_missing,
+    docker_unit_status,
     _evaluate_attempt,
     _lab_type,
     _lab_progress,
@@ -106,8 +108,11 @@ class SessionIn(BaseModel):
 
 @router.post("/sessions")
 def create_session(body: SessionIn, user=Depends(current_user), db: Session = Depends(get_db)):
+    # El instructor solo consulta: no abre ni asigna sesiones a estudiantes.
+    if user.role == "instructor":
+        raise HTTPException(403, "el instructor solo consulta (sin asignar sesiones)")
     sid = uuid.uuid4().hex[:8]
-    student_id = body.student_id if user.role == "instructor" else user.id
+    student_id = user.id  # nunca del payload
     db.add(
         models.LearningSession(
             id=sid, student_id=student_id, lab_template_id=body.lab_template_id
@@ -192,7 +197,7 @@ class EventIn(BaseModel):
 def record_event(session_id: str, body: EventIn, user=Depends(current_user),
                  db: Session = Depends(get_db)):
     # P1.5: canal bidireccional — ownership primero, nunca score/cliente como verdad.
-    session_for(user, db, session_id)
+    session_for_write(user, db, session_id)
     if body.widget_type not in CATALOG:
         raise HTTPException(422, f"widget_type desconocido: {body.widget_type}")
     if body.event_type not in ALLOWED_EVENTS:
@@ -244,7 +249,13 @@ def _scenario_check(db: Session, session_id: str, body: EventIn) -> dict | None:
 @router.post("/sessions/{session_id}/attempts")
 def create_attempt(session_id: str, body: AttemptIn, user=Depends(current_user),
                    db: Session = Depends(get_db)):
-    session_for(user, db, session_id)
+    s = session_for_write(user, db, session_id)
+    # Docker: una unidad se abre cuando su prerrequisito está completado.
+    unit = body.extra.get("unit") if isinstance(body.extra, dict) else None
+    if unit and _lab_type(db, session_id) == "docker":
+        missing = docker_prereq_missing(db, s.student_id, unit)
+        if missing:
+            raise HTTPException(403, f"unidad bloqueada: primero completa {missing}")
     aid = uuid.uuid4().hex[:8]
     db.add(
         models.LabAttempt(
@@ -285,24 +296,8 @@ def lab_docker_activity(lab_id: str, unit: str, seed: int = 1):
 
 @router.get("/me/docker-units")
 def my_docker_units(user=Depends(current_user), db: Session = Depends(get_db)):
-    """Estado por unidad Docker derivado de los intentos (una sesión = una unidad).
-    Sin cambio de esquema: la unidad viaja en `extra.unit` de cada intento."""
-    rank = {"active": 1, "posttest": 2, "done": 3}
-    out: dict[str, str] = {}
-    tpl_ids = [t.id for t in db.query(models.LabTemplate).filter_by(lab_type="docker").all()]
-    for s in db.query(models.LearningSession).filter(
-            models.LearningSession.student_id == user.id,
-            models.LearningSession.lab_template_id.in_(tpl_ids)).all():
-        unit = None
-        for a in db.query(models.LabAttempt).filter_by(session_id=s.id).all():
-            try:
-                extra = json.loads(a.input_state_json).get("extra") or {}
-            except ValueError:
-                continue
-            unit = unit or (extra.get("unit") if isinstance(extra, dict) else None)
-        if unit and rank.get(s.status, 0) > rank.get(out.get(unit), 0):
-            out[unit] = s.status
-    return out
+    """Estado por unidad Docker del estudiante: {unidad: active|posttest|done}."""
+    return docker_unit_status(db, user.id)
 
 
 @router.get("/labs/{lab_id}/distributions")
@@ -394,7 +389,7 @@ class PosttestIn(BaseModel):
 @router.post("/sessions/{session_id}/posttest")
 def posttest(session_id: str, body: PosttestIn, user=Depends(current_user),
              db: Session = Depends(get_db)):
-    s = session_for(user, db, session_id)
+    s = session_for_write(user, db, session_id)
     if s.status == "done":
         raise HTTPException(403, "sesión terminada")
     variant = _posttest_variant(session_id)
@@ -437,7 +432,7 @@ class ReflectionIn(BaseModel):
 @router.post("/sessions/{session_id}/reflection")
 def reflection(session_id: str, body: ReflectionIn, user=Depends(current_user),
                db: Session = Depends(get_db)):
-    s = session_for(user, db, session_id)
+    s = session_for_write(user, db, session_id)
     if s.status != "posttest":
         raise HTTPException(403, "reflexión solo tras el postest")
     s.status = "done"

@@ -20,9 +20,35 @@ _D01 = [
 ]
 
 # D02: qué existe tras cada paso del ciclo
-LIFECYCLE = ["pull / build", "run", "stop", "rm"]
-_D02_EXISTS = {"pull / build": "imagen", "run": "ambos", "stop": "ambos", "rm": "imagen"}
 D02_OPTIONS = ["imagen", "contenedor", "ambos", "ninguno"]
+# Secuencias de comandos válidas; la respuesta sale de simular el estado.
+_D02_SEQUENCES = [
+    ["docker pull", "docker run", "docker stop", "docker rm"],
+    ["docker build", "docker run", "docker stop", "docker start"],
+    ["docker pull", "docker run --rm", "docker stop"],
+    ["docker pull", "docker run", "docker stop", "docker rm", "docker rmi"],
+    ["docker build", "docker run", "docker stop"],
+    ["docker pull", "docker run --rm", "docker stop", "docker run"],
+    ["docker build", "docker run", "docker stop", "docker rm", "docker run"],
+]
+
+
+def _d02_exists(steps: list[str]) -> str:
+    """Qué existe tras ejecutar los pasos: imagen / contenedor / ambos / ninguno."""
+    image, container, auto_rm = False, False, False
+    for s in steps:
+        if s in ("docker pull", "docker build"):
+            image = True
+        elif s.startswith("docker run"):
+            container, auto_rm = True, s.endswith("--rm")
+        elif s == "docker stop" and auto_rm:
+            container = False  # --rm: el contenedor se borra al detenerse
+        elif s == "docker rm":
+            container = False
+        elif s == "docker rmi":
+            image = False
+    return {(True, True): "ambos", (True, False): "imagen",
+            (False, True): "contenedor", (False, False): "ninguno"}[(image, container)]
 
 # D04: Dockerfiles en orden correcto; rol de cada línea para corregir
 _ROLES = ["base", "workdir", "deps", "install", "code", "cmd"]
@@ -53,8 +79,10 @@ def activity(unit: str, seed: int = 1) -> dict:
             picks[2] = next(i for i in range(len(_D01)) if _D01[i][1] != _D01[picks[0]][1])
         return {"unit": unit, "seed": seed, "scenarios": [_D01[i][0] for i in picks]}
     if unit == "M08-D02-lifecycle":
-        return {"unit": unit, "seed": seed, "ask_stage": rnd.choice(LIFECYCLE),
-                "options": D02_OPTIONS}
+        steps = _D02_SEQUENCES[rnd.randrange(len(_D02_SEQUENCES))]
+        ask = rnd.randrange(1, len(steps))  # nunca el primer paso (sería trivial)
+        return {"unit": unit, "seed": seed, "stages": steps, "ask_index": ask,
+                "ask_stage": steps[ask], "options": D02_OPTIONS}
     if unit == "M08-D04-dockerfile":
         app, lines = _D04[rnd.randrange(len(_D04))]
         shuffled = list(lines)
@@ -112,9 +140,9 @@ def check(unit: str, seed: int, payload: dict) -> dict | None:
         return {"correctas": ok, "revisar": bad, "item": "escenario",
                 "consejo": "Pregúntate si el caso necesita su propio kernel o solo aislar procesos."}
     if unit == "M08-D02-lifecycle":
-        stage = activity(unit, seed)["ask_stage"]
-        right = p.get("prediction") == _D02_EXISTS[stage]
-        label = f"qué existe tras «{stage}»"
+        a = activity(unit, seed)
+        right = p.get("prediction") == _d02_exists(a["stages"][:a["ask_index"] + 1])
+        label = f"qué existe tras el paso {a['ask_index'] + 1} («{a['ask_stage']}»)"
         return {"correctas": [label] if right else [], "revisar": [] if right else [label],
                 "item": None,
                 "consejo": "Distingue la plantilla (imagen) de la instancia (contenedor)."}
@@ -149,3 +177,9 @@ def d02_right(seed: int, prediction) -> bool | None:
     if prediction is None:
         return None
     return bool(check("M08-D02-lifecycle", seed, {"prediction": prediction})["correctas"])
+
+
+# Prerrequisito de cada unidad (se exige completada: postest + reflexión).
+PREREQ = {"M08-D02-lifecycle": "M08-D01-containers",
+          "M08-D04-dockerfile": "M08-D02-lifecycle",
+          "M08-D07-persistence": "M08-D02-lifecycle"}

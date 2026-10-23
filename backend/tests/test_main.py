@@ -1527,7 +1527,33 @@ def _docker_session():
                        headers=H_S1).json()["id"]
 
 
+def _complete_docker_units(student_id: str, *units: str):
+    """Marca unidades Docker como completadas (sesión done) para cumplir prerrequisitos."""
+    import json as _json
+
+    from app.helpers import docker_unit_status
+
+    db = TestingSession()
+    for unit in units:
+        if docker_unit_status(db, student_id).get(unit) == "done":
+            continue
+        sid = f"done-{student_id}-{unit[-12:]}"
+        db.add(models.LearningSession(id=sid, student_id=student_id,
+                                      lab_template_id="lab-docker", status="done"))
+        db.add(models.LabAttempt(id=f"a-{sid}"[:30], session_id=sid, answer_text="x",
+                                 input_state_json=_json.dumps({"seed": 1, "extra": {"unit": unit}})))
+        db.commit()
+    db.close()
+
+
 def _docker_attempt(sid, unit, text, **kw):
+    from app.labs_docker import PREREQ
+
+    chain, u = [], unit
+    while u in PREREQ:  # completa la cadena de prerrequisitos de s1
+        u = PREREQ[u]
+        chain.append(u)
+    _complete_docker_units("s1", *reversed(chain))
     body = {"seed": 1, "answer_text": text, "extra": {"unit": unit, **kw}}
     return client.post(f"/sessions/{sid}/attempts", json=body, headers=H_S1).json()["id"]
 
@@ -1952,10 +1978,12 @@ def test_ml_and_monitor_challenge_checks():
 def test_my_docker_units_status_per_unit():
     h_s3 = {"Authorization": f"Bearer {client.post('/auth/login', json={'user_id': 's3'}).json()['token']}"}
     assert client.get("/me/docker-units", headers=h_s3).json() == {}
+    _complete_docker_units("s3", "M08-D01-containers")
     sid = client.post("/sessions", json={"lab_template_id": "lab-docker"}, headers=h_s3).json()["id"]
     client.post(f"/sessions/{sid}/attempts", json={
         "seed": 1, "answer_text": "x", "extra": {"unit": "M08-D02-lifecycle"}}, headers=h_s3)
-    assert client.get("/me/docker-units", headers=h_s3).json() == {"M08-D02-lifecycle": "active"}
+    assert client.get("/me/docker-units", headers=h_s3).json() == {
+        "M08-D01-containers": "done", "M08-D02-lifecycle": "active"}
     assert client.get("/me/docker-units").status_code == 401
 
 
@@ -1990,3 +2018,107 @@ def test_planner_motivo_that_names_error_types_is_dropped(monkeypatch):
                        headers=H_S1)
     assert resp.json()["decided_by"] == "gemini"
     assert "ausente" not in resp.text
+
+
+def test_models_have_no_unmigrated_schema_changes(tmp_path, monkeypatch):
+    # Un cambio de modelo (tabla/columna/tipo) exige su migración Alembic.
+    # La nulabilidad se excluye: la base inicial creó columnas opcionales que los
+    # modelos declaran obligatorias; en SQLite es inocuo y forzarla podría romper datos.
+    import sqlalchemy as sa
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    import app.db as dbmod
+    from app.models import Base as ModelsBase
+
+    url = f"sqlite:///{(tmp_path / 'drift.db').as_posix()}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    monkeypatch.setattr(dbmod, "DATABASE_URL", url)
+    monkeypatch.setattr(dbmod, "engine", sa.create_engine(url))
+    dbmod.upgrade_head()
+    with dbmod.engine.connect() as conn:
+        diffs = compare_metadata(MigrationContext.configure(conn), ModelsBase.metadata)
+    flat = [d for group in diffs for d in (group if isinstance(group, list) else [group])]
+    structural = [d for d in flat if d[0] != "modify_nullable"]
+    assert structural == [], f"Cambios de esquema sin migración: {structural}"
+
+
+def test_instructor_is_read_only():
+    # El instructor consulta todo pero no escribe: ni asigna sesiones ni actúa en la de un alumno.
+    assert client.post("/sessions", json={"student_id": "s1", "lab_template_id": "lab-ml"},
+                       headers=H_I1).status_code == 403
+    sid = _ml_session()
+    aid = _attempt(sid, "La validación sube con complejidad alta")
+    for path, body in [("attempts", {"answer_text": "x"}), ("evaluate", {"attempt_id": aid}),
+                       ("socratic", {"attempt_id": aid}), ("next-intervention", {"attempt_id": aid}),
+                       ("posttest", {"answer_text": ""}), ("reflection", {"text": "x"}),
+                       ("events", {"client_event_id": "i1-ev", "widget_type": "HypothesisEditor",
+                                   "event_type": "hypothesisSubmitted", "payload": {}})]:
+        assert client.post(f"/sessions/{sid}/{path}", json=body, headers=H_I1).status_code == 403, path
+    # lectura intacta
+    assert client.get(f"/sessions/{sid}", headers=H_I1).status_code == 200
+    assert client.get(f"/sessions/{sid}/attempts", headers=H_I1).status_code == 200
+    # el estudiante no puede crear sesiones a nombre de otro
+    other = client.post("/sessions", json={"student_id": "s2", "lab_template_id": "lab-ml"},
+                        headers=H_S1).json()["id"]
+    assert client.get(f"/sessions/{other}", headers=H_S1).status_code == 200
+
+
+def test_docker_prerequisites_block_until_completed():
+    h_s2 = {"Authorization": f"Bearer {client.post('/auth/login', json={'user_id': 's2'}).json()['token']}"}
+    sid = client.post("/sessions", json={"lab_template_id": "lab-docker"}, headers=h_s2).json()["id"]
+
+    def attempt(unit):
+        return client.post(f"/sessions/{sid}/attempts", json={
+            "seed": 1, "answer_text": "x", "extra": {"unit": unit}}, headers=h_s2)
+
+    r = attempt("M08-D04-dockerfile")
+    assert r.status_code == 403 and "M08-D02-lifecycle" in r.json()["detail"]
+    _complete_docker_units("s2", "M08-D01-containers")
+    assert attempt("M08-D04-dockerfile").status_code == 403  # aún falta D02
+    _complete_docker_units("s2", "M08-D02-lifecycle")
+    assert attempt("M08-D04-dockerfile").status_code == 200
+
+
+def test_docker_d02_sequences_vary_and_are_simulated():
+    from app import labs_docker
+
+    seen = {(tuple(a["stages"]), a["ask_index"])
+            for a in (labs_docker.activity("M08-D02-lifecycle", s) for s in range(1, 40))}
+    assert len(seen) >= 8  # muchas variantes, no solo el paso preguntado
+    assert labs_docker._d02_exists(["docker pull", "docker run --rm", "docker stop"]) == "imagen"
+    assert labs_docker._d02_exists(["docker pull", "docker run", "docker stop"]) == "ambos"
+    assert labs_docker._d02_exists(["docker pull", "docker run", "docker stop", "docker rm",
+                                    "docker rmi"]) == "ninguno"
+    a = labs_docker.activity("M08-D02-lifecycle", 7)
+    truth = labs_docker._d02_exists(a["stages"][:a["ask_index"] + 1])
+    assert labs_docker.check("M08-D02-lifecycle", 7, {"prediction": truth})["revisar"] == []
+    assert "answer" not in a and truth not in str(a.get("ask_stage"))
+
+
+def test_planner_telemetry_recorded_and_aggregated(monkeypatch):
+    import json
+
+    _planner(monkeypatch, '{"activity": "compare_curves"}')
+    sid, aid = _mixed_ml_attempt()
+    iv = _intervene_aid(sid, aid)
+    assert "planner" not in iv  # telemetría solo en el log, no al alumno
+    log = TestingSession().query(models.InterventionLog).filter_by(session_id=sid).all()[-1]
+    planner = json.loads(log.spec_json)["planner"]
+    assert planner["outcome"] == "ok" and isinstance(planner["ms"], int)
+    _planner(monkeypatch, '{"activity": "inventada"}')
+    sid2, aid2 = _mixed_ml_attempt()
+    _intervene_aid(sid2, aid2)
+    stats = client.get("/instructor/planner-stats", headers=H_I1).json()["ml_experiment"]
+    assert stats["gemini"] >= 1 and stats["reglas"] >= 1
+    assert stats["motivos"]["ok"] >= 1 and stats["motivos"]["invalida"] >= 1
+    assert stats["latencia_ms"]["n"] >= 2
+    assert client.get("/instructor/planner-stats", headers=H_S1).status_code == 403
+
+
+def test_llm_text_is_plain_and_bounded():
+    from app.socratic import _clean
+
+    assert _clean("¡Bien! El **sobreajuste** se ve en *validación* y `loss`", 500) == (
+        "¡Bien! El sobreajuste se ve en validación y loss")
+    assert len(_clean("x " * 400, 120)) <= 120

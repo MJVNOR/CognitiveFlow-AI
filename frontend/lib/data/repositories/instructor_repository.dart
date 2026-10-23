@@ -14,4 +14,7 @@ class InstructorRepository {
   Future<List<Attempt>> fetchAttempts(String sessionId) async =>
       parseAttempts(await api.getList('/sessions/$sessionId/attempts'));
   Future<List<dynamic>> fetchMatrix() => api.getList('/instructor/matrix');
+
+  /// Telemetría del planificador GenUI por lab: Gemini vs reglas, motivos y latencia.
+  Future<Map<String, dynamic>> fetchPlannerStats() => api.getMap('/instructor/planner-stats');
 }

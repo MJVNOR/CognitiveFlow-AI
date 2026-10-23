@@ -270,6 +270,8 @@ class LabSessionViewModel extends Notifier<LabSession> {
   Future<Map<String, dynamic>> fetchDockerActivity(String labId, String unit, int seed) =>
       _labs.fetchDockerActivity(labId, unit, seed);
 
+  Future<Map<String, dynamic>> fetchDockerUnits() => _labs.fetchDockerUnits();
+
   // Borradores (sobreviven a salir del lab).
   Future<String?> loadDraft(String labId, String field) =>
       _drafts.load(labId, field);

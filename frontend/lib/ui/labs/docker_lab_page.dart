@@ -46,6 +46,9 @@ class _DockerState extends ConsumerState<DockerLabPage> {
   /// La sesión abierta ya trabaja otra unidad que la pedida por la ruta.
   String? otherUnitInProgress;
 
+  /// Prerrequisito sin completar de la unidad pedida (null = disponible).
+  String? lockedBy;
+
   bool ready = false;
   int mission = 0;
   int localMax = 0;
@@ -115,6 +118,13 @@ class _DockerState extends ConsumerState<DockerLabPage> {
         otherUnitInProgress = dockerUnitById(sessionUnit).code;
       }
       unit = dockerUnitById(sessionUnit);
+    } else {
+      // Unidad nueva: se abre solo con su prerrequisito completado (el servidor
+      // también rechaza el intento). Sin red, no se bloquea en el cliente.
+      try {
+        lockedBy = dockerLockedBy(unit, await _vm.fetchDockerUnits());
+      } catch (_) {}
+      if (!mounted) return;
     }
     _vm.saveDraft(widget.labId, 'unit', unit.id);
     if (j != null) justification.text = j;
@@ -293,6 +303,7 @@ class _DockerState extends ConsumerState<DockerLabPage> {
         ),
       );
     }
+    if (lockedBy != null) return _lockedView(lockedBy!);
     final views = studioMissionViews(dockerMissions, l,
         localMax: localMax, scenarioDone: scenarioDone, selected: mission);
     final m = dockerMissions[mission];
@@ -329,6 +340,35 @@ class _DockerState extends ConsumerState<DockerLabPage> {
           : dockerCoach(m.id, interacted: interacted, submitted: _submitted),
       actionBar: _actionBar(l) ?? const SizedBox.shrink(),
       missions: MissionNavigation(missions: views, selected: mission, onSelect: _goto),
+    );
+  }
+
+  /// Unidad con prerrequisito pendiente: explica el motivo y ofrece la previa.
+  Widget _lockedView(String code) {
+    final prev = dockerUnits.firstWhere((u) => u.code == code);
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: StudioCard(
+            key: const ValueKey('docker_unit_locked'),
+            title: 'Unidad ${unit.code} bloqueada',
+            icon: Icons.lock_outline,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('«${unit.title}» se apoya en ${prev.code}: «${prev.title}». '
+                  'Complétala (hasta la prueba y la reflexión) para abrir esta unidad.'),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                key: const ValueKey('docker_goto_prereq'),
+                onPressed: () => context.go('/labs/${widget.labId}?unit=${prev.id}'),
+                icon: const Icon(Icons.arrow_forward),
+                label: Text('Ir a ${prev.code}'),
+              ),
+            ]),
+          ),
+        ),
+      ),
     );
   }
 

@@ -105,6 +105,37 @@ def instructor_matrix(user=Depends(require_instructor), db: Session = Depends(ge
              "labs": {l.id: _lab_progress(db, u.id, l.id) for l in labs}} for u in users]
 
 
+@router.get("/instructor/planner-stats")
+def instructor_planner_stats(user=Depends(require_instructor), db: Session = Depends(get_db)):
+    """Cuántas veces decidió Gemini vs las reglas (y por qué), con latencia, por lab.
+    Lee la telemetría que guarda cada intervención; solo lectura."""
+    labs = {t.id: t.lab_type for t in db.query(models.LabTemplate).all()}
+    sess = {s.id: labs.get(s.lab_template_id, "?")
+            for s in db.query(models.LearningSession).all()}
+    out: dict = {}
+    for log in db.query(models.InterventionLog).all():
+        try:
+            spec = json.loads(log.spec_json)
+        except ValueError:
+            continue
+        if not isinstance(spec, dict):
+            continue
+        p = spec.get("planner") if isinstance(spec.get("planner"), dict) else {}
+        row = out.setdefault(sess.get(log.session_id, "?"),
+                             {"total": 0, "gemini": 0, "reglas": 0, "motivos": {}, "ms": []})
+        row["total"] += 1
+        row["gemini" if spec.get("decided_by") == "gemini" else "reglas"] += 1
+        reason = p.get("outcome", "sin_registro")
+        row["motivos"][reason] = row["motivos"].get(reason, 0) + 1
+        if isinstance(p.get("ms"), int):
+            row["ms"].append(p["ms"])
+    for row in out.values():
+        ms = sorted(row.pop("ms"))
+        row["latencia_ms"] = ({"mediana": ms[len(ms) // 2], "max": ms[-1], "n": len(ms)}
+                              if ms else None)
+    return out
+
+
 @router.get("/instructor/backup")
 def instructor_backup(user=Depends(require_instructor)):
     # P7.2: descarga del sqlite para backup externo (solo instructor).

@@ -279,13 +279,20 @@ PLANNER_PROMPT_V2 = (
 )
 
 
-async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str):
+async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
+                       info: dict | None = None):
     """(actividad, parámetros válidos, motivo) o (None, {}, None) → deciden las reglas.
-    Parámetros fuera de esquema se descartan uno a uno (valor por defecto del servidor)."""
+    Parámetros fuera de esquema se descartan uno a uno (valor por defecto del servidor).
+    [info] recibe `outcome` (ok | sin_clave | sin_respuesta | invalida) y `ms`."""
     import json
+    import os
     import re
+    import time
 
     from app.socratic import _clean, _gemini_ask
+
+    info = info if info is not None else {}
+    start = time.monotonic()
 
     menu = ACTIVITY_MENU.get(lab_type, ACTIVITY_MENU["ml_experiment"])
     lines = "\n".join(
@@ -295,6 +302,11 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str):
     rubric = ", ".join(f"{c.get('id')}={c.get('score', 0)}" for c in criteria)
     raw = await _gemini_ask(PLANNER_PROMPT_V2.format(
         menu=lines, rubric=rubric, answer=(answer_text or "")[:1200]))
+    info["ms"] = int((time.monotonic() - start) * 1000)
+    if raw is None:
+        info["outcome"] = ("sin_clave" if not (os.getenv("GEMINI_API_KEY") or
+                                               os.getenv("GOOGLE_API_KEY")) else "sin_respuesta")
+        return None, {}, None
     m = re.search(r"\{.*\}", raw or "", re.S)
     try:
         out = json.loads(m.group(0)) if m else {}
@@ -303,7 +315,9 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str):
     out = out if isinstance(out, dict) else {}
     act = out.get("activity")
     if act not in menu:
+        info["outcome"] = "invalida"
         return None, {}, None
+    info["outcome"] = "ok"
     given = out.get("params") if isinstance(out.get("params"), dict) else {}
     params = {k: val for k, (_, check) in menu[act][2].items()
               if k in given and (val := check(given[k])) is not None}
@@ -393,19 +407,28 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
     if eval_result and eval_result.get("status") == "evaluated" and lab_type in ACTIVITY_MENU:
         criteria = eval_result.get("criteria", [])
         avg = _avg(criteria)
-        act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type)
+        info: dict = {}
+        act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info)
         if act and avg <= 1.5 and _is_transfer(act, params, input_state):
             act = None  # salvaguarda: con base débil no se salta a transferencia
+            info["outcome"] = "salvaguarda"
         if act:
             weak = [c["id"] for c in criteria if c.get("score", 0) <= 2]
             q = (await socratic_question(answer_text, weak, lab_type))["question"]
             iv = _activity(lab_type, act, params, input_state, q, avg)
             iv["decided_by"] = "gemini"
+            iv["planner"] = info
             if motivo:
                 iv["reason"] = motivo
             return iv
+        iv = await _rule_intervention(answer_text, input_state, eval_result, lab_type,
+                                      attempt_number)
+        iv["decided_by"] = "rules"
+        iv["planner"] = info  # por qué decidieron las reglas (telemetría)
+        return iv
     iv = await _rule_intervention(answer_text, input_state, eval_result, lab_type, attempt_number)
     iv["decided_by"] = "rules"
+    iv["planner"] = {"outcome": "sin_evaluacion"}
     return iv
 
 

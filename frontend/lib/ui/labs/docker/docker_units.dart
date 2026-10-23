@@ -47,6 +47,16 @@ const dockerUnits = [
 DockerUnit dockerUnitById(String? id) =>
     dockerUnits.firstWhere((u) => u.id == id, orElse: () => dockerUnits.first);
 
+/// Código de la unidad que falta completar para abrir [u] (null = disponible).
+/// Espejo de backend `labs_docker.PREREQ`: el servidor rechaza intentos igual.
+/// Una unidad ya empezada nunca se bloquea.
+String? dockerLockedBy(DockerUnit u, Map status) {
+  final req = u.requires;
+  if (req == null || status[u.id] != null) return null;
+  final reqId = dockerUnits.firstWhere((x) => x.code == req).id;
+  return status[reqId] == 'done' ? null : req;
+}
+
 const dockerMissions = [
   Mission('aprender', 'Aprende el concepto',
       'Lee la idea central y el ejemplo resuelto. Después la pondrás a prueba con escenarios.',

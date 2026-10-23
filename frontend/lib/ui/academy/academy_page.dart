@@ -73,8 +73,10 @@ class AcademyPage extends ConsumerWidget {
           type: MaterialType.transparency,
           child: InkWell(
             key: ValueKey('academy_unit_${u.code}'),
-            onTap: () => context.go('/labs/${l.id}?unit=${u.id}',
-                extra: {'lab_type': l.labType, 'title': l.title}),
+            onTap: dockerLockedBy(u, unitStatus) != null
+                ? null
+                : () => context.go('/labs/${l.id}?unit=${u.id}',
+                    extra: {'lab_type': l.labType, 'title': l.title}),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(38, 8, 12, 8),
               child: Row(children: [
@@ -90,17 +92,21 @@ class AcademyPage extends ConsumerWidget {
                       Text(
                           statusOf(u.requires!) == 'done'
                               ? 'Requisito cumplido: ${u.requires}'
-                              : 'Conviene dominar antes: ${u.requires}',
+                              : 'Primero completa ${u.requires}',
                           style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                   ]),
                 ),
                 // Estado escrito, nunca solo color (DESIGN.md §4).
-                Text(labStatusLabel(statusOf(u.code)),
+                Text(
+                    dockerLockedBy(u, unitStatus) != null
+                        ? 'Bloqueada'
+                        : labStatusLabel(statusOf(u.code)),
                     key: ValueKey('academy_unit_status_${u.code}'),
                     style: tt.labelSmall?.copyWith(
                         color: statusOf(u.code) == null ? cs.onSurfaceVariant : cs.primary)),
                 const SizedBox(width: 4),
-                Icon(Icons.chevron_right, size: 18, color: cs.onSurfaceVariant),
+                Icon(dockerLockedBy(u, unitStatus) != null ? Icons.lock_outline : Icons.chevron_right,
+                    size: 18, color: cs.onSurfaceVariant),
               ]),
             ),
           ),
