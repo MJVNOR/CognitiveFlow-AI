@@ -80,7 +80,7 @@ void main() {
     expect(find.text('¿Qué observas en validación?'), findsOneWidget);
   });
 
-  // E4: los 12 del CATALOG backend existen y renderizan su pregunta.
+  // E4: todos los del CATALOG backend existen y renderizan su consigna o pregunta.
   for (final name in cognitiveFlowWidgets) {
     testWidgets('$name renderiza su pregunta', (tester) async {
       await tester.pumpWidget(
@@ -95,7 +95,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      const docker = {'ContainerVsVmExplorer', 'ImageContainerLifecycle', 'DockerfileWorkbench', 'PersistenceExperiment', 'DecisionScenarios'};
+      const docker = {'ContainerVsVmExplorer', 'ImageContainerLifecycle', 'DockerfileWorkbench', 'PersistenceExperiment', 'DecisionScenarios', 'ConfigAudit', 'CommandComposer'};
       expect(find.text(docker.contains(name) ? 'consigna $name' : 'pregunta $name'), findsOneWidget);
     });
   }

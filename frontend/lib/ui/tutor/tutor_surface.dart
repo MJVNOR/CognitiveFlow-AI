@@ -46,7 +46,9 @@ Map<String, Object?> interventionToComponent(Map intervention) {
     'ImageContainerLifecycle' ||
     'DockerfileWorkbench' ||
     'PersistenceExperiment' ||
-    'DecisionScenarios' =>
+    'DecisionScenarios' ||
+    'ConfigAudit' ||
+    'CommandComposer' =>
       {
         'title': title,
         // La consigna curricular describe la acción; la pregunta generada vive
@@ -56,11 +58,15 @@ Map<String, Object?> interventionToComponent(Map intervention) {
           'ImageContainerLifecycle' => 'Predice qué existirá tras el paso señalado; después compruébalo con la simulación.',
           'DockerfileWorkbench' => 'Ordena las instrucciones para construir la app y conservar la caché de dependencias. Coloca CMD al final.',
           'PersistenceExperiment' => 'Elige un montaje, predice si el archivo sobrevivirá y compruébalo al recrear.',
+          'ConfigAudit' => 'Marca todos los elementos que aplican; puede aplicar más de uno.',
+          'CommandComposer' => 'Elige en cada ranura la opción que cumple los requisitos del caso.',
           _ => 'Lee cada caso, elige la acción que resuelve sus requisitos y justifica con evidencia.',
         },
         if ((type == 'DockerfileWorkbench' || type == 'PersistenceExperiment') && params['feedback_enabled'] is bool)
           'feedback_enabled': params['feedback_enabled'],
-        for (final k in const ['context', 'scenarios', 'stages', 'ask_index', 'ask_stage', 'options', 'lines', 'app', 'story', 'path', 'items', 'mono'])
+        // `states` lo manda el servidor en las unidades que comparten el widget
+        // de predicción (null en el paso que se predice).
+        for (final k in const ['context', 'scenarios', 'stages', 'ask_index', 'ask_stage', 'options', 'states', 'lines', 'app', 'story', 'path', 'items', 'mono', 'subject', 'slots', 'prefix'])
           if (params[k] != null) k: params[k],
       },
     'DataTableExplorer' => {

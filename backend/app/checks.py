@@ -11,7 +11,11 @@ from app.evaluation import (
     mock_evaluate_docker,
     mock_evaluate_monitor,
 )
-from app.interventions import DOCKER_WIDGETS, check_data_contrast
+from app.interventions import DOCKER_SHARED, DOCKER_WIDGETS, check_data_contrast
+
+# Widgets que puede traer un reto de Docker: los de cada unidad más los
+# compartidos entre unidades (la unidad viaja en los parámetros, no en el widget).
+DOCKER_CHALLENGE_WIDGETS = set(DOCKER_WIDGETS.values()) | {w for _, w in DOCKER_SHARED.values()}
 from app.socratic import CRITERION_LABELS, criterion_explained
 
 _DATA_TIP = ("Compara su evidencia con las demás y cambia la etiqueta "
@@ -67,19 +71,23 @@ def check_challenge(lab_type: str, widget: str, payload: dict, spec: dict,
                                   private.get("types"))
         return {**res, "item": "fila", "consejo": _DATA_TIP}
 
-    if widget in DOCKER_WIDGETS.values():
-        unit = params.get("unit") or next(u for u, w in DOCKER_WIDGETS.items() if w == widget)
+    if widget in DOCKER_CHALLENGE_WIDGETS:
+        # El widget ya no identifica la unidad (varias lo comparten): la unidad,
+        # el motor y el eje salen de los parámetros con los que se generó el reto.
+        kind = params.get("kind", "default")
+        unit = (params.get("units") if kind == "mixed" else params.get("unit")) or next(
+            (u for u, w in DOCKER_WIDGETS.items() if w == widget), None)
         seed = int(params.get("seed") or _seed(state))
         # El reto cierra su ciclo con una justificación propia: se juzga ese texto.
         argument = p.get("argument")
         if isinstance(argument, str) and argument.strip():
             # Solo el texto: las decisiones del reto ya las corrigió el servidor y
             # las de la práctica son de otro escenario (mezclarlas puntuaría en falso).
-            res = _judged(lab_type, argument, state,
-                          lambda: mock_evaluate_docker(argument, {"unit": unit}, seed))
+            res = _judged(lab_type, argument, state, lambda: mock_evaluate_docker(
+                argument, {"unit": unit if isinstance(unit, str) else ""}, seed))
             return _text(res, "Nombra el mecanismo (kernel, capa, red o volumen) y cita qué "
                               "observaste en este reto, no en la práctica.")
-        return labs_docker.check(unit, seed, p)
+        return labs_docker.check(unit, seed, p, params.get("focus"), kind)
 
     if widget == "EvidenceComparison":
         sel = p.get("selection")

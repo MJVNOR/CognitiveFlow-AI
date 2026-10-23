@@ -16,6 +16,7 @@ from app.helpers import (
     _lab_type,
     _practice_attempts,
     _require_active,
+    docker_unit_status,
     submit_count,
 )
 from app.interventions import (
@@ -100,7 +101,8 @@ async def socratic(session_id: str, body: SocraticIn, user=Depends(current_user)
 async def next_intervention(session_id: str, body: SocraticIn, user=Depends(current_user),
                             db: Session = Depends(get_db)):
     # Reanuda el reto persistido del intento sin crear otra identidad ni gastar LLM.
-    _require_active(session_for_write(user, db, session_id))
+    session = session_for_write(user, db, session_id)
+    _require_active(session)
     attempt = db.query(models.LabAttempt).filter_by(id=body.attempt_id,
                                                     session_id=session_id).first()
     if not attempt:
@@ -119,10 +121,14 @@ async def next_intervention(session_id: str, body: SocraticIn, user=Depends(curr
         .first()
     )
     eval_result = json.loads(ev.normalized_scores_json) if ev else None
+    lab_type = _lab_type(db, session_id)
+    # Unidades ya completadas: habilitan repaso mezclado, transferencia y los
+    # bancos compartidos de esas unidades (el menú del planificador se filtra).
+    done = ([u for u, st in docker_unit_status(db, session.student_id).items() if st == "done"]
+            if lab_type == "docker" else None)
     intervention = await select_intervention(
-        attempt.answer_text, json.loads(attempt.input_state_json), eval_result,
-        _lab_type(db, session_id),
-        attempt_number=len(_practice_attempts(db, session_id)),
+        attempt.answer_text, json.loads(attempt.input_state_json), eval_result, lab_type,
+        attempt_number=len(_practice_attempts(db, session_id)), done_units=done,
     )
     spec = intervention["widget_parameters"]
     errors = validate_ui_spec(

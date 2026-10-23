@@ -1383,7 +1383,8 @@ def test_frozen_contract_versions():
                        "DataTableExplorer", "LearningCurveSimulator",
                        "DriftDistributionExplorer", "EvidenceComparison",
                        "ContainerVsVmExplorer", "ImageContainerLifecycle",
-                       "DockerfileWorkbench", "PersistenceExperiment", "DecisionScenarios"}
+                       "DockerfileWorkbench", "PersistenceExperiment", "DecisionScenarios",
+                       "ConfigAudit", "CommandComposer"}
     for wt, evs in ALLOWED_BY_WIDGET.items():
         assert wt in CATALOG and evs
 
@@ -2741,3 +2742,183 @@ def test_justification_feedback_is_not_counted_as_repeating_the_error():
     db.close()
     v = client.get("/instructor/planner-stats", headers=H_I1).json()["docker"]
     assert v["variantes_dirigidas"]["sin_entrega"] >= 1
+
+
+# ── Catálogo Docker compartido: ejes en las 12 unidades, motores compartidos
+# entre unidades y menú filtrado por la situación del estudiante.
+def test_decision_axes_cover_every_case_and_contrast():
+    from app import labs_docker as d
+
+    # Todo caso del banco tiene eje (si no, la variante dirigida calificaría otro tema).
+    for unit, axes in d.DECISION_AXES.items():
+        assert len(axes) == len(d.DECISION_UNITS[unit]) and all(axes)
+        assert set(axes) == set(d.FOCUS_AXES[unit])
+    assert "M08-D12-capstone" not in d.FOCUS_AXES  # el capstone mezcla, no contrasta
+    assert len(d.FOCUS_AXES) == 9
+    # Con eje: dos casos de ese tema y uno de otro (el contraste no desaparece).
+    for unit in d.DECISION_AXES:
+        for axis in d.FOCUS_AXES[unit]:
+            for seed in (1, 4, 7):
+                got = d._decision_axis_of(unit, seed, axis)
+                assert len(got) == 3 and got.count(axis) >= min(
+                    2, d.DECISION_AXES[unit].count(axis))
+                assert len(set(got)) > 1
+    # El eje inválido se ignora (no rompe ni cambia la variante base).
+    assert d.activity("M08-D06-network", 2, "kernel") == d.activity("M08-D06-network", 2)
+
+
+def test_decision_focus_reaches_failed_axes():
+    from app import labs_docker as d
+
+    unit, seed = "M08-D10-security", 5
+    items = d._decision_items(unit, seed)
+    axes = d._decision_axis_of(unit, seed)
+    wrong = [(a + 1) % len(o) for _, o, a in items]  # todo mal
+    out = d.failed_axes(unit, seed, {"choices": wrong})
+    assert out["fallados"] == sorted(set(axes)) and out["acertados"] == []
+    right = d.failed_axes(unit, seed, {"choices": [a for _, _, a in items]})
+    assert right["fallados"] == [] and right["acertados"] == sorted(set(axes))
+
+
+def _perfect_payload(kind: str, unit, seed: int):
+    from app import labs_docker as d
+
+    if kind == "audit":
+        _, _, items = d._audit_variant(unit, seed)
+        return {"marked": [i for i, (_, t) in enumerate(items) if t]}
+    if kind == "command":
+        return {"slots": [right for _, _, right in d._command_slots(unit, seed)]}
+    if kind == "order":
+        return {"order": list(d._order_variant(unit, seed)[1])}
+    if kind == "timeline":
+        _, _, _, _, options, right = d._timeline_variant(unit, seed)
+        return {"prediction": options[right]}
+    return {"choices": [a for _, _, a in d._mixed_items(d.mixed_units(unit), seed)]}
+
+
+def test_shared_docker_engines_are_public_and_corrected():
+    from app import labs_docker as d
+
+    leaky = {"answer", "answers", "truth", "correct", "right", "marked"}
+    for kind, units in d.SHARED_UNITS.items():
+        assert units
+        for unit in units:
+            for seed in (1, 2, 4):
+                a = d.activity(unit, seed, None, kind)
+                assert a["unit"] == unit and not leaky & set(a)
+                assert a["instruction"]
+                # La entrega perfecta no deja nada por revisar...
+                ok = d.check(unit, seed, _perfect_payload(kind, unit, seed), None, kind)
+                assert ok["revisar"] == [] and ok["consejo"]
+                # ...y sin datos útiles no se inventa corrección.
+                assert d.check(unit, seed, {"x": 1}, None, kind) is None
+    # El estado del paso que se predice no viaja al cliente.
+    for unit in d.SHARED_UNITS["timeline"]:
+        a = d.activity(unit, 1, None, "timeline")
+        assert a["states"][a["ask_index"]] is None and a["states"].count(None) == 1
+        reveal = d.check(unit, 1, {"prediction": a["options"][0]}, None, "timeline")["consejo"]
+        assert reveal.startswith("Lo observado")  # la observación llega al corregir
+    # Las opciones del comando no delatan cuál es la correcta.
+    slots = d.activity("M08-D03-cli", 1, None, "command")["slots"]
+    assert all(set(s) == {"label", "options"} for s in slots)
+
+
+def test_shared_engines_correct_only_what_was_answered():
+    from app import labs_docker as d
+
+    # Auditoría: lo marcado se corrige por elemento; las omisiones se avisan sin enumerarlas.
+    _, _, items = d._audit_variant("M08-D10-security", 1)
+    bad = next(i for i, (_, t) in enumerate(items) if not t)
+    out = d.check("M08-D10-security", 1, {"marked": [bad]}, None, "audit")
+    assert out["correctas"] == [] and f"el elemento {bad + 1}" in out["revisar"]
+    assert any("falta al menos un elemento" in r for r in out["revisar"])
+    assert not any(str(i + 1) in r for i, (_, t) in enumerate(items) if t
+                   for r in out["revisar"] if r.startswith("el elemento"))
+    # Comando: solo las ranuras elegidas, y la cuenta de pendientes.
+    half = d.check("M08-D03-cli", 1, {"slots": [0]}, None, "command")
+    assert len(half["correctas"] + half["revisar"]) == 1 and half["pendientes"] >= 1
+    # Mezclado: hacen falta al menos dos unidades ya trabajadas.
+    assert d.mixed_units(["M08-D03-cli"]) == ["M08-D03-cli"]
+    assert d.check(["M08-D03-cli"], 1, {"choices": [0]}, None, "mixed")["item"] == "caso"
+    assert d.check([], 1, {"choices": [0]}, None, "mixed") is None
+
+
+def test_docker_menu_filters_by_unit_and_progress():
+    from app.interventions import ACTIVITY_MENU, docker_menu
+
+    first = docker_menu("M08-D01-containers", [])
+    # Sin nada completado: solo lo que el servidor puede construir para D01.
+    assert set(first) == {"unit_practice", "focused_contrast", "explain_axis"}
+    done = ["M08-D01-containers", "M08-D02-lifecycle", "M08-D03-cli", "M08-D05-context"]
+    mid = docker_menu("M08-D06-network", done)
+    assert {"config_audit", "command_build", "order_steps", "predict_state",
+            "mixed_review", "transfer_unit"} <= set(mid)
+    # Las unidades ofrecidas son solo las que el estudiante ya vio y tienen banco.
+    assert mid["config_audit"][2]["unit"][1]("M08-D05-context") == "M08-D05-context"
+    assert mid["config_audit"][2]["unit"][1]("M08-D10-security") is None  # aún no la trabajó
+    assert mid["transfer_unit"][2]["unit"][1]("M08-D12-capstone") is None  # sin prerrequisito
+    assert mid["transfer_unit"][2]["unit"][1]("M08-D04-dockerfile") == "M08-D04-dockerfile"
+    assert mid["mixed_review"][2]["units"][1](["M08-D03-cli", "M08-D05-context"])
+    assert mid["mixed_review"][2]["units"][1](["M08-D03-cli"]) is None  # mínimo dos
+    assert "mixed_review" not in docker_menu("M08-D06-network", ["M08-D01-containers"])
+    assert set(mid) <= set(ACTIVITY_MENU["docker"])
+
+
+def test_docker_menu_offers_really_different_activities():
+    from app.interventions import _activity, docker_menu
+
+    import json
+
+    done = ["M08-D01-containers", "M08-D02-lifecycle", "M08-D03-cli", "M08-D05-context"]
+    state = {"seed": 1, "extra": {"unit": "M08-D06-network"}}
+    cand = {"unit": "M08-D05-context", "units": done[-2:], "focus": "alcance"}
+    menu = docker_menu("M08-D06-network", done)
+    seen = set()
+    for act, (_, _, schema) in menu.items():
+        params = {k: v for k, (_, chk) in schema.items()
+                  if (v := chk(cand[k])) is not None}
+        iv = _activity("docker", act, params, state, "¿q?", 2.0, done)
+        p = iv["widget_parameters"]["parameters"]
+        seen.add((iv["widget_type"], json.dumps(p, sort_keys=True)))
+    # Cada actividad produce un escenario distinto, no la misma tarjeta con otro
+    # título. unit_practice y focused_contrast comparten motor: con el mismo
+    # parámetro `focus` coinciden (su diferencia es ese parámetro).
+    assert len(seen) >= len(menu) - 1
+    assert len({w for w, _ in seen}) >= 4
+
+
+def test_planner_shared_activity_corrected_with_same_engine(monkeypatch):
+    from app import labs_docker as d
+
+    _planner(monkeypatch, '{"activity": "config_audit", "params": '
+             '{"unit": "M08-D04-dockerfile"}, "motivo": "Vas a revisar qué se reconstruye."}')
+    sid = _docker_session()
+    aid = _docker_attempt(sid, "M08-D04-dockerfile", "no sé")
+    _eval_on(sid, aid)
+    iv = _intervene_aid(sid, aid)
+    assert iv["decided_by"] == "gemini" and iv["widget_type"] == "ConfigAudit"
+    params = iv["widget_parameters"]["parameters"]
+    assert params["kind"] == "audit" and params["unit"] == "M08-D04-dockerfile"
+    _, _, items = d._audit_variant("M08-D04-dockerfile", params["seed"])
+    assert params["items"] == [t for t, _ in items]  # los textos, no la verdad
+    marked = [i for i, (_, t) in enumerate(items) if t]
+    chk = _post_ui_event(sid, json={
+        "client_event_id": "aud-1", "widget_type": "ConfigAudit",
+        "event_type": "evidenceSelected", "payload": {"marked": marked}}, headers=H_S1).json()
+    assert chk["check"]["revisar"] == [] and len(chk["check"]["correctas"]) == len(marked)
+
+
+def test_planner_docker_activity_outside_the_filtered_menu_is_rejected(monkeypatch):
+    # Un estudiante en D01 sin unidades completadas no tiene banco de auditoría:
+    # config_audit no está en su menú y se descarta (en producción, sin
+    # LLM_ALLOW_MOCK, eso es un 503 reintentable; aquí deciden las reglas).
+    import asyncio
+
+    from app.interventions import _gemini_plan, docker_menu
+
+    _planner(monkeypatch, '{"activity": "config_audit", "motivo": "x"}')
+    menu = docker_menu("M08-D01-containers", [])
+    info: dict = {}
+    act, _, _ = asyncio.run(_gemini_plan("texto", [{"id": "exactitud", "score": 2}], "docker",
+                                         info, False, None, menu))
+    assert act is None and info["outcome"] == "invalida"

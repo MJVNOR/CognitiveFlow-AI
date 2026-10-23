@@ -471,3 +471,93 @@ Límites de herramientas: obscura bloquea `localhost` sin `OBSCURA_ALLOW_PRIVATE
 - [x] **Alembic**: ya estaba en uso (`upgrade_head`); AGENTS §4 corregido; `test_models_have_no_unmigrated_schema_changes` (excluye nulabilidad, documentado).
 - [x] **Prueba de punta a punta con proveedores reales** (backend propio con `.env`, base nueva): ML evaluado por Jev + feedback/pregunta/planificador Gemini; Data con reto elegido por Gemini (`revise_hypothesis`) y corrección del servidor; postest habilitado. Encontrado y corregido: Markdown crudo en textos de Gemini y preguntas demasiado largas.
 - [ ] **NVDA real**: no instalado en el equipo; sustituido por árbol de accesibilidad de Chrome (0 controles sin nombre) y tests de texto grande/teclado.
+
+## 13. Plan GenUI Docker — widgets compartidos y menú real de actividades (2026-10-23)
+
+### 13.1 Diagnóstico (por qué «siempre elige lo mismo»)
+
+1. `interventions.ACTIVITY_MENU["docker"]` tiene **una sola actividad** (`unit_practice`). Gemini no elige actividad: elige unidad y, en D01/D02, eje. El prompt le ofrece un menú de un elemento.
+2. `DOCKER_WIDGETS` es una **biyección unidad → widget**: el widget del reto se deduce de la unidad, así que 8 de 12 unidades solo pueden producir `DecisionScenarios` y las otras 4 solo su experimento propio. La variedad está bloqueada por diseño, no por el modelo.
+3. `FOCUS_AXES` solo cubre D01 y D02 ⇒ en las 10 unidades restantes la «variante dirigida al error» no existe y el reto es otro caso al azar.
+4. Banco de contenido: 56 casos de decisión para 8 unidades (3 por variante) ⇒ con 2–3 intentos el estudiante ya vio casi todo el banco de su unidad.
+
+### 13.2 Desbloqueo arquitectónico (sin widgets nuevos, hace posible todo lo demás)
+
+- El widget deja de derivarse de la unidad: **cada actividad del menú declara su widget** y `unit` viaja como parámetro validado. `DOCKER_WIDGETS` se divide en:
+  - `DOCKER_DEFAULT_WIDGET` (unidad → widget): sigue mandando en **práctica y postest** (`labs.py::_scenario_check`, `labs_docker.response_evidence`) ⇒ esos dos caminos no cambian y los tests de postest siguen válidos.
+  - `DOCKER_ACTIVITIES` (actividad → widget + unidades con banco): manda en el **reto/intervención**.
+- `checks.check_challenge` deja de adivinar la unidad con `next(u for u, w in DOCKER_WIDGETS.items() if w == widget)`: toma `activity` + `unit` + `focus` de `spec.widget_parameters.parameters` y despacha a la corrección de esa actividad. Un widget compartido por varias unidades es justo lo que esa línea no soporta hoy.
+- El menú que ve Gemini se **filtra por unidad y por prerrequisitos cumplidos** antes del prompt (solo actividades con banco para esa unidad; `mixed_review`/`transfer_unit` solo si hay unidades completadas). Así no puede proponer algo imposible; si aun así responde fuera del menú ⇒ 503 reintentable, como ya hace.
+- Ejes de contraste (`FOCUS_AXES`) para las 12 unidades: cada caso de `DECISION_UNITS` recibe su eje (p. ej. D06 `dns`/`puerto`/`localhost`; D10 `secreto`/`privilegio`/`superficie`; D05 `secreto`/`artefacto`/`ruta`). Es una etiqueta por caso, sin lógica nueva: `_decision_items` filtra por eje igual que `_d01_picks` y garantiza contraste (nunca todos con la misma respuesta).
+
+### 13.3 Widgets compartidos nuevos (cada uno sirve ≥4 unidades)
+
+| Widget | Interacción real | Unidades que lo comparten | Entrega | Verdad en el servidor |
+|---|---|---|---|---|
+| `ConfigAudit` | marcar **todo lo que aplica** en un archivo o lista (multi-selección, cada toggle corregido al momento) | D05 (qué entra al contexto / `.dockerignore`), D08 (claves que faltan en el compose), D09 (qué líneas de la evidencia importan), D10 (riesgos del Dockerfile), D04 (qué invalida la caché) | `evidenceSelected` al cerrar; `selectionChanged` por toggle | `AUDIT_BANKS[unit]`: ítems + conjunto correcto + consejo; corrige marcados y omitidos, sin números |
+| `CommandComposer` | armar un comando por **ranuras** (imagen, `-p`, `-v`, `--name`, `--network`, `-u`) eligiendo en cada una | D03, D06 (publicar puerto), D07 (montaje), D10 (usuario/solo lectura), D11 (tag/registro) | `evidenceSelected` | `COMMAND_BANKS[unit]`: ranuras, opciones (distractores = errores típicos) y combinaciones válidas (puede haber más de una) |
+
+Reutilizan `_shared.dart::titledCard` y `TutorEvents`; sin dependencias nuevas. **No ejecutan Docker**: son composición y auditoría simuladas, y así se nombran en `CATALOGO_GENUI_Y_ACTIVIDADES.md`.
+
+### 13.4 Motores existentes que pasan a compartirse (sin widget nuevo)
+
+- `DockerfileWorkbench` → **ordenar pasos con reglas nombradas**: hoy el banco es solo `_D04` y las reglas están cableadas a los roles de un Dockerfile. Se añade `ORDER_BANKS[unit]` (pasos + reglas con su texto) y `_order_constraints` pasa a leer las reglas del banco: D03 (orden de diagnóstico), D08 (orden de arranque del stack), D11 (build → push → pull → run). El widget ya manda `order`: cero código Flutter.
+- `ImageContainerLifecycle` → **predecir el estado tras un paso y luego simular**: hoy la simulación (`_lifecycleNote`) vive en Dart y solo entiende el ciclo imagen/contenedor. Se añade `TIMELINE_BANKS[unit]` con los estados públicos por paso y el widget muestra el estado que manda el servidor cuando viene (`states`), conservando su simulación local como respaldo: D06 (tras conectar a la red), D07 (tras recrear), D09 (tras el reinicio), D11 (tras el rollback).
+- Coste de no renombrarlos: el nombre del catálogo (`DockerfileWorkbench`) ya no describe todo lo que hace. Renombrar a `SequenceBuilder`/`StatePrediction` es un PR aparte (el nombre viejo pasa a `BACKLOG_WIDGETS` y los históricos quedan «Actividad histórica · solo lectura»); hasta entonces el título y la consigna del servidor son los que el estudiante lee.
+
+### 13.5 Menú Docker resultante (1 → 9 actividades)
+
+| Actividad | Widget | Parámetros validados | Para qué |
+|---|---|---|---|
+| `unit_practice` | por defecto de la unidad | `unit`, `focus` | repetir la unidad con otro escenario |
+| `focused_contrast` | por defecto de la unidad | `unit`, `focus` (obligatorio) | variante que cambia **solo** en el eje fallado |
+| `config_audit` | `ConfigAudit` | `unit` ∈ banco | encontrar todo lo que aplica, no una opción |
+| `command_build` | `CommandComposer` | `unit` ∈ banco | construir la solución en vez de reconocerla |
+| `order_steps` | `DockerfileWorkbench` | `unit` ∈ banco | secuencia y dependencias |
+| `predict_state` | `ImageContainerLifecycle` | `unit` ∈ banco | predecir antes de observar |
+| `mixed_review` | `DecisionScenarios` | `units` (2–4 ya trabajadas) | repaso que cruza unidades (generaliza el mezclador de D12) |
+| `transfer_unit` | el de la unidad destino | `unit` (prerrequisito cumplido) | transferencia; bloqueada con base débil (salvaguarda actual) |
+| `explain_axis` | `HypothesisEditor` | — | reescribir la explicación del eje fallado, sin escenario nuevo |
+
+`mixed_review` es el «objeto que comparte unidades»: un banco común indexado por unidad + eje del que cualquier actividad saca casos (`_decision_items` ya hace exactamente eso para D12).
+
+### 13.6 Cableado obligatorio por widget nuevo (lista de verificación)
+
+`CATALOG` · `ALLOWED_BY_WIDGET` · `SUBMIT_EVENT` (y su `assert`) · `cognitiveFlowWidgets` + `cognitiveFlowCatalog` en `catalog.dart` · builder en `tutor/widgets/` · banco + `check` en `labs_docker.py` · despacho en `checks.check_challenge` · entrada en `ACTIVITY_MENU` con su validador · `dockerUnitWidget`/`dockerUnitForIntervention` y `dockerCoach` en `docker_units.dart` (un widget compartido **no** identifica la unidad: la pista debe venir de `params['unit']`) · fila en AGENTS §5.5 y en `CATALOGO_GENUI_Y_ACTIVIDADES.md` con su límite real.
+
+### 13.7 Orden de PRs (uno a la vez, con diff + capturas + tests + riesgos)
+
+- **PR-D1 desbloqueo**: §13.2 completo (widget↔unidad desacoplado, menú filtrado por unidad, ejes en las 12 unidades) + `focused_contrast`, `mixed_review`, `transfer_unit`, `explain_axis`. Cero widgets nuevos, menú 1 → 5. Aceptación: práctica y postest sin cambios de comportamiento; en 10 intervenciones simuladas del mismo estudiante salen ≥3 actividades distintas y ningún escenario repetido.
+- **PR-D2 `ConfigAudit`** + bancos D05/D08/D09/D10/D04.
+- **PR-D3 `CommandComposer`** + bancos D03/D06/D07/D10/D11.
+- **PR-D4 motores compartidos**: `ORDER_BANKS` y `TIMELINE_BANKS` (§13.4), decisión de renombrar o no.
+- **PR-D5 QA**: a11y (teclado, `textScaler` 200 %, 390 px sin overflow), postest intacto, telemetría `GET /instructor/planner-stats` por actividad para ver si el menú se usa entero o Gemini se encasilla.
+
+### 13.8 Pruebas (nuevas, por PR)
+
+- Por cada actividad × unidad con banco: `activity()` público sin respuestas; `check()` corrige solo lo respondido; `focus` inválido se ignora; payload basura ⇒ `None` (nunca «correcto»).
+- Menú filtrado: actividad sin banco para esa unidad no aparece en el prompt; si Gemini la propone ⇒ 503 (sin reglas de respaldo).
+- Ninguna respuesta viaja al cliente: comparar las claves de `widget_parameters.parameters` contra el banco (el conjunto correcto solo en `spec_json.private`).
+- Espejo catálogo backend ↔ `catalog.dart` y `SUBMIT_EVENT` ↔ lo que emite cada widget Flutter (tests existentes) actualizados.
+- Widget tests de los dos widgets nuevos: el toggle corrige al momento, la entrega completa emite `evidenceSelected` una sola vez, sin segunda CTA.
+
+### 13.9 Riesgo principal
+
+El trabajo real no es el código: son los **bancos de contenido técnicamente correctos** (≈4 ítems × 5 unidades para auditoría, ranuras + distractores para 5 unidades de comando, 3 secuencias y 4 líneas de tiempo). Un distractor mal elegido enseña algo falso; cada banco entra con su revisión en `REVISION_EJERCICIOS_DOCKER.md`.
+
+### 13.10 Estado (2026-10-23, implementado en una sola tanda)
+
+**Hecho y verificado** (backend `uv run pytest -q`: 151 pasan, 1 omitida · `flutter analyze --no-pub`: sin incidencias · `flutter test --no-pub`: 171 pasan, 1 omitida):
+
+- **PR-D1 desbloqueo**: `labs_docker.activity/check` aceptan `kind` (motor) y las unidades de decisión aceptan `focus`; `checks.check_challenge` ya no deduce la unidad del widget (lee `kind`, `unit`/`units` y `focus` de los parámetros del reto); `DOCKER_WIDGETS` queda solo para práctica y postest. Ejes (`DECISION_AXES`) en las siete unidades de decisión: `FOCUS_AXES` pasa de 2 a 9 unidades y `failed_axes` nombra el tema fallado también en ellas. Menú filtrado por situación (`docker_menu`), telemetría `planner.menu`, y `done_units` desde `docker_unit_status` en `POST /sessions/{id}/next-intervention`.
+- **PR-D2/D3 widgets compartidos nuevos**: `ConfigAudit` (D04/D05/D08/D09/D10, 10 variantes) y `CommandComposer` (D03/D06/D07/D10, 7 variantes), con builder Flutter, entrada en `catalog.dart`, `ALLOWED_BY_WIDGET`, `SUBMIT_EVENT` y traducción A2UI (`tutor_surface.dart`).
+- **PR-D4 motores compartidos**: `ORDER_BANKS` (D03/D08/D11) sobre `DockerfileWorkbench` sin tocar el widget, y `TIMELINE_BANKS` (D06/D07/D09) sobre `ImageContainerLifecycle`, que ahora usa los `states` del servidor cuando vienen. No se renombraron los dos tipos (ver §13.4): su nombre ya no describe todo lo que hacen.
+- **Menú Docker: de 1 a 9 actividades** (`unit_practice`, `focused_contrast`, `config_audit`, `command_build`, `order_steps`, `predict_state`, `mixed_review`, `transfer_unit`, `explain_axis`); un estudiante a mitad del temario ve 9 y uno recién llegado a D01 ve 3 (lo único que el servidor puede construirle).
+- **Pruebas nuevas** (8 backend + 6 Flutter): ejes que cubren todo caso del banco (falla si se añade un caso sin etiquetar); variante dirigida que sigue contrastando; `failed_axes` en unidades de decisión; cada motor × unidad × semilla es público, corrige solo lo respondido y devuelve `None` sin datos útiles; el estado del paso predicho no viaja al cliente; menú filtrado por unidad, progreso y bancos; cada actividad del menú produce un escenario distinto; reto `config_audit` elegido por Gemini y corregido con el mismo motor; actividad fuera del menú filtrado descartada; los dos widgets nuevos (eventos, previsualización del comando, 390 px con texto 1x y 2x).
+- **Corregido al implementar**: el relleno de la variante dirigida podía salir del mismo eje (monotema) en unidades con muchos casos del mismo tema; `dockerInterventionUnit` exigía que el widget coincidiera con el de la unidad, así que con widgets compartidos perdía la unidad y dejaba al tutor sin pistas.
+
+**Pendiente:**
+- PR-D5 en vivo: recorrido con marionette/obscura contra backend real y captura de pantallas; no se ejecutó en esta tanda.
+- Telemetría por actividad en `GET /instructor/planner-stats` (hoy guarda `planner.menu` y `activity`, pero el panel no los agrega todavía).
+- Bancos por revisar con criterio didáctico (`REVISION_EJERCICIOS_DOCKER.md`): el contenido nuevo (≈40 elementos de auditoría, 7 comandos, 3 secuencias, 3 líneas de tiempo) solo está verificado por pruebas, no revisado como contenido.
+- D01, D02 y D12 siguen sin bancos compartidos: su menú es el más pobre (3 actividades) justo donde empieza el estudiante.

@@ -73,6 +73,7 @@ MOUNTS = ["sin montaje", "named volume", "bind mount"]
 
 # Ejes de contraste por unidad: permiten pedir una variante dirigida al error
 # («solo cambia el requisito de kernel») en vez de otro escenario al azar.
+# Las unidades de decisión se añaden al final del módulo (DECISION_AXES).
 FOCUS_AXES = {
     "M08-D01-containers": ["kernel", "peso", "reproducibilidad"],
     "M08-D02-lifecycle": ["borrado", "estado", "efimero"],
@@ -83,6 +84,11 @@ def failed_axes(unit: str, seed: int, payload: dict, focus=None) -> dict:
     """Ejes de los casos acertados y fallados: «falló el caso de kernel» dice al
     planificador qué contrastar; «falló el caso 3» no dice nada."""
     c = check(unit, seed, payload, focus) or {}
+    if unit in DECISION_UNITS and unit in DECISION_AXES:
+        axes = _decision_axis_of(unit, seed, focus)
+        pick = lambda ids: sorted({axes[int(i) - 1] for i in ids  # noqa: E731
+                                   if str(i).isdigit() and int(i) <= len(axes)})
+        return {"fallados": pick(c.get("revisar", [])), "acertados": pick(c.get("correctas", []))}
     if unit == "M08-D01-containers":
         texts = activity(unit, seed, focus)["scenarios"]
         axis = {t: next(x[2] for x in _D01 if x[0] == t) for t in texts}
@@ -117,11 +123,16 @@ def _d01_picks(rnd, focus: str | None) -> list[int]:
     return picks
 
 
-def activity(unit: str, seed: int = 1, focus=None) -> dict:
+def activity(unit, seed: int = 1, focus=None, kind: str = "default") -> dict:
     """Contenido público del experimento (nunca incluye respuestas).
-    [focus] = eje a contrastar dentro de la unidad; inválido se ignora."""
+    [focus] = eje a contrastar dentro de la unidad; inválido se ignora.
+    [kind] = motor de la actividad: el de la unidad («default») o uno compartido
+    entre unidades (audit, command, order, timeline, mixed). En «mixed», [unit]
+    es la lista de unidades que se mezclan."""
+    if kind != "default":
+        return _SHARED_ACTIVITY[kind](unit, seed, focus)
     if unit in DECISION_UNITS:
-        return decision_activity(unit, seed)
+        return decision_activity(unit, seed, focus)
     rnd = random.Random(f"{unit}:{seed}:{focus_for(unit, focus) or ''}")
     axis = focus_for(unit, focus)
     if unit == "M08-D01-containers":
@@ -187,12 +198,15 @@ def dockerfile_ok(order: list) -> bool | None:
     return None if lines is None else not _order_constraints(order, lines)[1]
 
 
-def check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+def check(unit, seed: int, payload: dict, focus=None, kind: str = "default") -> dict | None:
     """Corrección descriptiva de una entrega del experimento (sin revelar respuestas).
-    [focus] debe ser el mismo con el que se generó: si no, calificaría otro escenario."""
+    [focus] y [kind] deben ser los mismos con los que se generó: si no, calificaría
+    otro escenario."""
     p = payload if isinstance(payload, dict) else {}
+    if kind != "default":
+        return _SHARED_CHECK[kind](unit, seed, p, focus)
     if unit in DECISION_UNITS:
-        return decision_check(unit, seed, p)
+        return decision_check(unit, seed, p, focus)
     if unit == "M08-D01-containers":
         texts = activity(unit, seed, focus)["scenarios"]
         answers = _d01_answers(seed, focus)
@@ -421,26 +435,54 @@ DECISION_UNITS["M08-D12-capstone"] = []  # mezcla casos de todas las unidades
 UNITS += list(DECISION_UNITS)
 
 
-def _decision_items(unit: str, seed: int) -> list[tuple[str, list[str], int]]:
-    """Casos de la variante: (situación, opciones barajadas, índice correcto)."""
+def _decision_picks(unit: str, seed: int, focus: str | None) -> list[int]:
+    """Índices de los 3 casos de la variante. Con eje: dos de ese eje y uno de
+    otro, para que el contraste siga existiendo (no todos del mismo tema)."""
+    rnd = random.Random(f"{unit}:{seed}:{focus or ''}")
+    n = len(DECISION_UNITS[unit])
+    if focus is None:
+        return rnd.sample(range(n), 3)
+    axes = DECISION_AXES[unit]
+    picks = rnd.sample([i for i, a in enumerate(axes) if a == focus], min(2, axes.count(focus)))
+    # El relleno sale de OTRO eje: dirigido no significa monotema.
+    rest = [i for i in range(n) if axes[i] != focus]
+    return picks + rnd.sample(rest, 3 - len(picks))
+
+
+def _decision_cases(unit: str, seed: int, focus: str | None = None) -> list[tuple]:
+    """Casos crudos elegidos para la variante (con su respuesta: uso interno)."""
     rnd = random.Random(f"{unit}:{seed}")
     if unit == "M08-D12-capstone":
         units = rnd.sample([u for u in DECISION_UNITS if u != unit], 4)
-        cases = [rnd.choice(DECISION_UNITS[u]) for u in units]
-    else:
-        cases = rnd.sample(DECISION_UNITS[unit], 3)
+        return [rnd.choice(DECISION_UNITS[u]) for u in units]
+    bank = DECISION_UNITS[unit]
+    return [bank[i] for i in _decision_picks(unit, seed, focus_for(unit, focus))]
+
+
+def _decision_axis_of(unit: str, seed: int, focus=None) -> list[str]:
+    """Eje de cada caso de la variante, en el orden en que se muestran."""
+    bank = DECISION_UNITS[unit]
+    axes = DECISION_AXES[unit]
+    return [axes[bank.index(c)] for c in _decision_cases(unit, seed, focus)]
+
+
+def _decision_items(unit: str, seed: int, focus=None) -> list[tuple[str, list[str], int]]:
+    """Casos de la variante: (situación, opciones barajadas, índice correcto)."""
+    rnd = random.Random(f"{unit}:{seed}")
     out = []
-    for prompt, right, wrong in cases:
+    for prompt, right, wrong in _decision_cases(unit, seed, focus):
         opts = [right, *wrong]
         rnd.shuffle(opts)
         out.append((prompt, opts, opts.index(right)))
     return out
 
 
-def decision_activity(unit: str, seed: int) -> dict:
+def decision_activity(unit: str, seed: int, focus=None) -> dict:
     """Contenido público de una unidad de decisión (nunca la respuesta)."""
-    items = _decision_items(unit, seed)
+    items = _decision_items(unit, seed, focus)
+    axis = focus_for(unit, focus)
     return {"unit": unit, "seed": seed, "mono": unit == "M08-D03-cli",
+            **({"focus": axis} if axis else {}),
             "instruction": ("Resuelve cuatro decisiones de unidades distintas y justifica cada una. Es un ejercicio de decisiones, no una ejecución real de Docker."
                             if unit == "M08-D12-capstone" else
                             "Lee los requisitos de cada caso, elige la acción que los cumple y justifica con una observación o un comando que permita comprobarla."),
@@ -464,8 +506,8 @@ _DECISION_ADVICE = {
 }
 
 
-def decision_check(unit: str, seed: int, payload: dict) -> dict:
-    items = _decision_items(unit, seed)
+def decision_check(unit: str, seed: int, payload: dict, focus=None) -> dict:
+    items = _decision_items(unit, seed, focus)
     choices = payload.get("choices") if isinstance(payload.get("choices"), list) else []
     given = _answered(choices, len(items))
     ok = [str(i + 1) for i, (_, _, ans) in enumerate(items) if i in given and choices[i] == ans]
@@ -503,3 +545,482 @@ def response_evidence(unit: str, seed: int, payload: dict) -> dict:
     if unit == "M08-D07-persistence" and payload.get("mount") in MOUNTS and type(payload.get("predicted")) is bool:
         return {"unit": unit, "mount": payload["mount"], "predicted": payload["predicted"]}
     raise ValueError("Falta la decisión del experimento de esta prueba")
+
+
+# ── Ejes de contraste de las unidades de decisión ──────────────────────────────
+# Eje por índice del caso en su banco (no en cada tupla, para no duplicar el
+# banco). `_axes_by_case` falla si un caso nuevo queda sin etiquetar: sin eje,
+# la variante dirigida calificaría otro tema.
+_DECISION_AXIS_INDEX = {
+    "M08-D03-cli": {"observar": [0, 2, 4, 6, 7], "ejecutar": [1, 3], "limpiar": [5]},
+    "M08-D05-context": {"alcance": [0, 4, 5], "exclusion": [1, 6], "secreto": [2], "rutas": [3]},
+    "M08-D06-network": {"dns": [0, 4], "puerto": [1, 2, 6], "red": [3, 5]},
+    "M08-D08-compose": {"configuracion": [0, 3, 6], "almacenamiento": [1],
+                        "disponibilidad": [2, 5], "puerto": [4]},
+    "M08-D09-debug": {"evidencia": [0, 3, 4], "causa": [1, 6], "capas": [2, 5]},
+    "M08-D10-security": {"secreto": [0], "privilegio": [1, 6], "superficie": [2, 3, 4, 5]},
+    "M08-D11-deploy": {"trazabilidad": [0, 5, 6], "datos": [1], "entrega": [2, 3, 4]},
+}
+
+
+def _axes_by_case(unit: str, groups: dict) -> list[str]:
+    axis = {i: a for a, ids in groups.items() for i in ids}
+    n = len(DECISION_UNITS[unit])
+    assert set(axis) == set(range(n)), f"{unit}: casos sin eje {sorted(set(range(n)) - set(axis))}"
+    return [axis[i] for i in range(n)]
+
+
+DECISION_AXES = {u: _axes_by_case(u, g) for u, g in _DECISION_AXIS_INDEX.items()}
+FOCUS_AXES.update({u: sorted(g) for u, g in _DECISION_AXIS_INDEX.items()})
+
+
+# ── Repaso mezclado (DecisionScenarios compartido entre unidades) ─────────────
+MIXED_MAX = 4
+
+
+def mixed_units(units) -> list[str]:
+    """Unidades de decisión válidas del repaso, en orden del temario (≤4)."""
+    if isinstance(units, str):
+        units = units.split("+")
+    units = units if isinstance(units, list) else []
+    return [u for u in UNITS if u in units and DECISION_UNITS.get(u)][:MIXED_MAX]
+
+
+def _mixed_items(units: list[str], seed: int) -> list[tuple[str, list[str], int]]:
+    rnd = random.Random("mixed:" + "+".join(units) + f":{seed}")
+    out = []
+    for u in units:
+        prompt, right, wrong = rnd.choice(DECISION_UNITS[u])
+        opts = [right, *wrong]
+        rnd.shuffle(opts)
+        out.append((prompt, opts, opts.index(right)))
+    return out
+
+
+def mixed_activity(units, seed: int, focus=None) -> dict:
+    us = mixed_units(units)
+    items = _mixed_items(us, seed)
+    return {"unit": None, "units": us, "seed": seed, "mono": False,
+            "instruction": "Un caso por tema ya trabajado: elige la acción que cumple los "
+                           "requisitos y justifica con qué lo comprobarías.",
+            "items": [{"prompt": p, "options": o} for p, o, _ in items]}
+
+
+def mixed_check(units, seed: int, payload: dict, focus=None) -> dict | None:
+    us = mixed_units(units)
+    if not us:
+        return None
+    items = _mixed_items(us, seed)
+    choices = payload.get("choices") if isinstance(payload.get("choices"), list) else []
+    given = _answered(choices, len(items))
+    ok = [str(i + 1) for i, (_, _, ans) in enumerate(items) if i in given and choices[i] == ans]
+    return {"correctas": ok, "revisar": [str(i + 1) for i in given if str(i + 1) not in ok],
+            "item": "caso", "pendientes": len(items) - len(given),
+            "consejo": "Cada caso es de un tema distinto: identifica el requisito antes de elegir."}
+
+
+# ── ConfigAudit (compartido): marcar TODO lo que aplica ───────────────────────
+# unidad → variantes [(consigna, qué se audita, [(elemento, aplica)])].
+# El orden de los elementos es contenido (no se baraja); la variedad sale de las
+# variantes y de la semilla.
+AUDIT_BANKS = {
+    "M08-D04-dockerfile": [
+        ("Cambias un archivo de app/ y vuelves a construir. Marca las instrucciones cuya capa "
+         "se reconstruye.", "Dockerfile de la API, en este orden",
+         [("FROM python:3.12-slim", False), ("WORKDIR /app", False),
+          ("COPY requirements.txt ./", False),
+          ("RUN pip install --no-cache-dir -r requirements.txt", False),
+          ("COPY ./app ./app", True), ('CMD ["uvicorn", "app.main:app"]', True)]),
+        ("Cambias una línea de requirements.txt y vuelves a construir. Marca las instrucciones "
+         "cuya capa se reconstruye.", "Dockerfile de la API, en este orden",
+         [("FROM python:3.12-slim", False), ("WORKDIR /app", False),
+          ("COPY requirements.txt ./", True),
+          ("RUN pip install --no-cache-dir -r requirements.txt", True),
+          ("COPY ./app ./app", True), ('CMD ["uvicorn", "app.main:app"]', True)]),
+    ],
+    "M08-D05-context": [
+        ("Construyes con docker build ./backend. Marca lo que no debe llegar a la imagen.",
+         "contenido de ./backend",
+         [(".env con las contraseñas de la base", True),
+          ("node_modules/ (se instala durante el build)", True),
+          (".git/ (historial del repositorio)", True),
+          ("requirements.txt", False), ("app/ (el código de la API)", False),
+          ("dist/ (artefacto de un build anterior)", True)]),
+        ("docker build ./backend con un .dockerignore que contiene «node_modules» y «.env». "
+         "Marca lo que COPY . . sí puede copiar.",
+         "archivos del proyecto",
+         [("backend/app/main.py", True), ("backend/requirements.txt", True),
+          ("backend/.env", False), ("backend/node_modules/", False),
+          ("config.yaml de la carpeta padre", False), ("backend/Dockerfile", True)]),
+    ],
+    "M08-D08-compose": [
+        ("Requisitos: la API debe recibir el host de la base por entorno, los datos de postgres "
+         "deben sobrevivir a «compose down» (sin -v) y la API no debe arrancar antes de que la "
+         "base acepte conexiones. Marca lo que falta en este compose.",
+         "compose.yaml: db (image: postgres:16) y api (build: ., depends_on: [db], "
+         "ports: 8000:8000)",
+         [("environment: DATABASE_HOST=db en api", True),
+          ("named volume montado en /var/lib/postgresql/data de db", True),
+          ("healthcheck en db + depends_on con condition: service_healthy", True),
+          ("ports: 5432:5432 en db", False), ("privileged: true en api", False),
+          ("restart: always en db", False)]),
+        ("Requisitos: las contraseñas no deben quedar en la imagen ni en compose.yaml, el "
+         "frontend (nginx, puerto 80) debe verse en el 3000 del host y la API no debe quedar "
+         "accesible desde el host. Marca lo que cumple esos requisitos.",
+         "opciones propuestas para el compose",
+         [("secrets montados como archivos para la API", True),
+          ('ports: ["3000:80"] en frontend', True),
+          ("api sin ports, solo en la red compartida", True),
+          ("environment: DB_PASSWORD=1234 en compose.yaml", False),
+          ("ENV DB_PASSWORD en el Dockerfile de la API", False),
+          ('ports: ["8000:8000"] en api', False)]),
+    ],
+    "M08-D09-debug": [
+        ("El contenedor api termina solo. Marca las líneas de la evidencia que sostienen el "
+         "diagnóstico.", "docker inspect api · docker logs api",
+         [("State.ExitCode: 137", True), ("State.OOMKilled: true", True),
+          ("HostConfig.Memory: 268435456", True),
+          ("Pulling from library/python: ya actualizado", False),
+          ("WARNING: pip cache deshabilitada", False), ("Started container api", False)]),
+        ("El build falla en la instrucción COPY. Marca lo que explica el fallo.",
+         "salida de docker build ./backend",
+         [('ERROR: failed to compute cache key: "/requirements.txt" not found', True),
+          ("requirements.txt está en la raíz del repo, no en ./backend", True),
+          ("requirements.txt aparece en .dockerignore", True),
+          ("Sending build context to Docker daemon 2.1MB", False),
+          ("Step 1/6 : FROM python:3.12-slim --- Using cache", False)]),
+    ],
+    "M08-D10-security": [
+        ("Marca los riesgos de este Dockerfile.", "Dockerfile de la API",
+         [("ENV API_KEY=abc123", True), ("COPY . . con .git y las pruebas incluidas", True),
+          ("sin USER: el proceso corre como root", True),
+          ("FROM python:3.12-slim", False),
+          ("RUN pip install --no-cache-dir -r requirements.txt", False),
+          ("EXPOSE 8000", False)]),
+        ("Marca lo que añade riesgo en este docker run.",
+         "docker run -d --privileged -v /var/run/docker.sock:/var/run/docker.sock "
+         "-e DB_PASSWORD=1234 -p 8000:8000 api:latest",
+         [("--privileged", True),
+          ("montar el socket de un daemon rootful del host", True),
+          ("-e DB_PASSWORD=1234 (queda en el historial y en inspect)", True),
+          ("api:latest en vez del digest publicado", True),
+          ("-p 8000:8000", False), ("-d", False)]),
+    ],
+}
+
+_AUDIT_TIP = {
+    "M08-D04-dockerfile": "Una capa invalidada obliga a reconstruir todas las siguientes: "
+                          "busca la primera instrucción afectada.",
+    "M08-D05-context": "Separa qué se envía como contexto, qué está excluido y qué pide COPY.",
+    "M08-D08-compose": "Vuelve a leer los requisitos: marca solo lo que cumple uno de ellos.",
+    "M08-D09-debug": "Distingue el síntoma del dato que confirma la causa; el ruido del log no "
+                     "prueba nada.",
+    "M08-D10-security": "Pregúntate qué dato o capacidad queda expuesto y si la app lo necesita.",
+}
+
+
+def _audit_variant(unit: str, seed: int) -> tuple:
+    bank = AUDIT_BANKS[unit]
+    return bank[seed % len(bank)]
+
+
+def audit_activity(unit: str, seed: int, focus=None) -> dict:
+    instruction, subject, items = _audit_variant(unit, seed)
+    return {"unit": unit, "seed": seed, "instruction": instruction, "subject": subject,
+            "items": [t for t, _ in items], "multi": True}
+
+
+def audit_check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+    _, _, items = _audit_variant(unit, seed)
+    marked = payload.get("marked")
+    if not isinstance(marked, list):
+        return None
+    sel = {i for i in marked if type(i) is int and 0 <= i < len(items)}
+    ok = [f"el elemento {i + 1}" for i in sorted(sel) if items[i][1]]
+    bad = [f"el elemento {i + 1}" for i in sorted(sel) if not items[i][1]]
+    # Las omisiones no se enumeran (sería dar la respuesta); se avisa que faltan.
+    if any(t for i, (_, t) in enumerate(items) if t and i not in sel):
+        bad.append("falta al menos un elemento que sí aplica")
+    return {"correctas": ok, "revisar": bad, "item": None, "consejo": _AUDIT_TIP[unit]}
+
+
+# ── CommandComposer (compartido): armar el comando por ranuras ───────────────
+# unidad → variantes [(consigna, prefijo, [(ranura, [opciones], índice correcto)])].
+# Una opción entre paréntesis significa «no añadir nada» (no se concatena).
+COMMAND_BANKS = {
+    "M08-D03-cli": [
+        ("Arranca la imagen web en segundo plano, con el nombre web y el 8080 del host "
+         "publicado en el 80 del contenedor.", "docker",
+         [("acción", ["run", "start", "exec"], 0),
+          ("modo", ["-d", "-it", "(sin esa opción)"], 0),
+          ("nombre", ["--name web", "--hostname web", "-n web"], 0),
+          ("publicación", ["-p 8080:80", "-p 80:8080", "--port 8080"], 0),
+          ("imagen", ["web", "web:8080", "./web"], 0)]),
+        ("Abre una shell nueva dentro del contenedor api, que ya está corriendo e incluye sh.",
+         "docker",
+         [("acción", ["exec", "run", "start"], 0),
+          ("modo", ["-it", "-d", "(sin esa opción)"], 0),
+          ("objetivo", ["api", "api:latest", "./api"], 0),
+          ("comando", ["sh", "docker sh", "(sin esa opción)"], 0)]),
+    ],
+    "M08-D06-network": [
+        ("El worker debe alcanzar la API por su nombre en la red app-net, sin publicar puertos "
+         "en el host.", "docker run -d",
+         [("red", ["--network app-net", "--network host", "(sin esa opción)"], 0),
+          ("publicación", ["(sin esa opción)", "-p 8000:8000", "-P"], 0),
+          ("destino de la API", ["-e API_URL=http://api:8000",
+                                 "-e API_URL=http://localhost:8000",
+                                 "-e API_URL=http://127.0.0.1:8000"], 0),
+          ("imagen", ["worker", "api", "worker:8000"], 0)]),
+        ("Publica el frontend (nginx escucha en el 80 del contenedor) en el 3000 del host, en la "
+         "red app-net.", "docker run -d",
+         [("publicación", ["-p 3000:80", "-p 80:3000", "--expose 3000"], 0),
+          ("red", ["--network app-net", "--network host", "(sin esa opción)"], 0),
+          ("imagen", ["frontend", "frontend:3000", "./frontend"], 0)]),
+    ],
+    "M08-D07-persistence": [
+        ("La base SQLite en /data/app.db debe sobrevivir a eliminar y recrear el contenedor, "
+         "sin depender de una carpeta del host.", "docker",
+         [("acción", ["run", "exec", "build"], 0),
+          ("modo", ["-d", "-it", "(sin esa opción)"], 0),
+          ("montaje", ["-v appdata:/data", "-v /data", "-v ./data:/data",
+                       "(sin esa opción)"], 0),
+          ("imagen", ["api", "api:/data", "./api"], 0)]),
+        ("Las fotos que suben los usuarios se guardan en /srv/uploads y el equipo debe poder "
+         "abrirlas en la carpeta ./uploads de su máquina.", "docker run -d",
+         [("montaje", ["-v ./uploads:/srv/uploads", "-v uploads:/srv/uploads",
+                       "(sin esa opción)"], 0),
+          ("imagen", ["api", "api:uploads", "./api"], 0)]),
+    ],
+    "M08-D10-security": [
+        ("Ejecuta la API sin privilegios de root, sin escritura en el filesystem de la imagen "
+         "pero con /tmp escribible, y con la contraseña en un archivo montado de solo lectura.",
+         "docker run -d",
+         [("usuario", ["-u 1000:1000", "-u root", "--privileged"], 0),
+          ("filesystem", ["--read-only", "(sin esa opción)", "--privileged"], 0),
+          ("temporal", ["--tmpfs /tmp", "-v /tmp:/tmp", "(sin esa opción)"], 0),
+          ("secreto", ["-v ./secrets/db:/run/secrets/db:ro", "-e DB_PASSWORD=1234",
+                       "(sin esa opción)"], 0),
+          ("imagen", ["api@sha256:9f2c", "api:latest", "api"], 0)]),
+    ],
+}
+
+_COMMAND_TIP = {
+    "M08-D03-cli": "Revisa si el comando actúa sobre una imagen o sobre un contenedor que ya "
+                   "existe, y en qué orden van host y contenedor.",
+    "M08-D06-network": "Separa red, dirección de destino y publicación al host: resuelven "
+                       "problemas distintos.",
+    "M08-D07-persistence": "Pregúntate qué recurso se elimina al recrear y cuál se reutiliza por "
+                           "su nombre.",
+    "M08-D10-security": "Comprueba qué capacidad o dato queda expuesto y si la app lo necesita.",
+}
+
+
+def _command_variant(unit: str, seed: int) -> tuple:
+    bank = COMMAND_BANKS[unit]
+    return bank[seed % len(bank)]
+
+
+def _command_slots(unit: str, seed: int) -> list[tuple[str, list[str], int]]:
+    """Ranuras con sus opciones barajadas por semilla (la correcta cambia de lugar)."""
+    _, _, slots = _command_variant(unit, seed)
+    rnd = random.Random(f"cmd:{unit}:{seed}")
+    out = []
+    for label, options, right in slots:
+        opts = list(options)
+        rnd.shuffle(opts)
+        out.append((label, opts, opts.index(options[right])))
+    return out
+
+
+def command_activity(unit: str, seed: int, focus=None) -> dict:
+    instruction, prefix, _ = _command_variant(unit, seed)
+    return {"unit": unit, "seed": seed, "instruction": instruction, "prefix": prefix,
+            "slots": [{"label": lbl, "options": opts} for lbl, opts, _ in
+                      _command_slots(unit, seed)]}
+
+
+def command_check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+    slots = _command_slots(unit, seed)
+    choices = payload.get("slots")
+    if not isinstance(choices, list):
+        return None
+    ok, bad = [], []
+    for i, (label, _, right) in enumerate(slots):
+        pick = choices[i] if i < len(choices) else None
+        if pick is None:
+            continue
+        (ok if pick == right else bad).append(label)
+    return {"correctas": ok, "revisar": bad, "item": None,
+            "pendientes": sum(1 for i in range(len(slots))
+                              if i >= len(choices) or choices[i] is None),
+            "consejo": _COMMAND_TIP[unit]}
+
+
+# ── Ordenar pasos (DockerfileWorkbench compartido) ───────────────────────────
+# unidad → variantes [(consigna, pasos en orden correcto, [(regla, antes, después)])].
+ORDER_BANKS = {
+    "M08-D03-cli": [
+        ("Ordena el diagnóstico de «api no responde»: de lo más general a lo que mira dentro "
+         "del contenedor.",
+         ["docker ps -a", "docker logs api", "docker inspect api", "docker exec -it api sh"],
+         [("averiguar si el contenedor existe y en qué estado quedó, antes de leer logs", 0, 1),
+          ("leer la evidencia antes de entrar al contenedor", 1, 3),
+          ("confirmar puertos y montajes antes de buscar dentro", 2, 3)]),
+    ],
+    "M08-D08-compose": [
+        ("Ordena el arranque del stack para que la API nunca vea la base caída.",
+         ["docker compose build", "docker compose up -d db", "esperar el healthcheck de db",
+          "docker compose up -d api", "docker compose logs -f api"],
+         [("construir antes de levantar servicios", 0, 1),
+          ("la base antes que la API", 1, 3),
+          ("esperar el healthcheck antes de arrancar la API", 2, 3),
+          ("comprobar con los logs al final", 3, 4)]),
+    ],
+    "M08-D11-deploy": [
+        ("Ordena la publicación y el despliegue de la versión 1.4.2 con una referencia exacta.",
+         ["docker build -t api:1.4.2 .",
+          "docker tag api:1.4.2 registry.example.com/api:1.4.2",
+          "docker push registry.example.com/api:1.4.2",
+          "docker pull registry.example.com/api@sha256:9f2c (en el servidor)",
+          "docker run -d registry.example.com/api@sha256:9f2c"],
+         [("construir antes de etiquetar", 0, 1),
+          ("etiquetar antes de publicar", 1, 2),
+          ("publicar antes de descargar en el servidor", 2, 3),
+          ("descargar la referencia exacta antes de ejecutarla", 3, 4)]),
+    ],
+}
+
+_ORDER_TIP = {
+    "M08-D03-cli": "Cada paso debe apoyarse en lo que mostró el anterior.",
+    "M08-D08-compose": "Un servicio solo puede depender de otro que ya acepta conexiones.",
+    "M08-D11-deploy": "Sigue la imagen: se construye, se etiqueta, se publica y se despliega por "
+                      "su referencia exacta.",
+}
+
+
+def _order_variant(unit: str, seed: int) -> tuple:
+    bank = ORDER_BANKS[unit]
+    return bank[seed % len(bank)]
+
+
+def order_activity(unit: str, seed: int, focus=None) -> dict:
+    instruction, steps, rules = _order_variant(unit, seed)
+    rnd = random.Random(f"order:{unit}:{seed}")
+    shuffled = list(steps)
+    while shuffled == steps or not _order_rules(shuffled, steps, rules)[1]:
+        rnd.shuffle(shuffled)
+    return {"unit": unit, "seed": seed, "instruction": instruction, "lines": shuffled,
+            "app": "pasos del procedimiento"}
+
+
+def _order_rules(order: list, steps: list, rules: list) -> tuple[list, list]:
+    pos = {str(x): i for i, x in enumerate(order)}
+    done, miss = [], []
+    for text, a, b in rules:
+        pa, pb = pos.get(steps[a]), pos.get(steps[b])
+        (done if pa is not None and pb is not None and pa < pb else miss).append(text)
+    return done, miss
+
+
+def order_check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+    _, steps, rules = _order_variant(unit, seed)
+    order = payload.get("order")
+    if not isinstance(order, list) or {str(x) for x in order} != set(steps):
+        return None
+    done, miss = _order_rules(order, steps, rules)
+    return {"correctas": done, "revisar": miss, "item": None, "consejo": _ORDER_TIP[unit]}
+
+
+# ── Predecir el estado (ImageContainerLifecycle compartido) ───────────────────
+# unidad → variantes [(contexto, pasos, estados visibles, paso a predecir,
+# opciones, índice correcto)]. El estado del paso predicho se revela después.
+TIMELINE_BANKS = {
+    "M08-D06-network": [
+        ("api escucha en 0.0.0.0:8000. Los dos contenedores arrancan en la red bridge por "
+         "defecto, que no resuelve nombres de contenedor.",
+         ["docker run -d --name api app", "docker run -d --name worker app",
+          "worker: curl http://api:8000", "docker network create app-net + connect api y worker",
+          "worker: curl http://api:8000"],
+         ["api corriendo, sin red propia", "worker corriendo, misma red por defecto",
+          "falla: en la red por defecto el nombre api no se resuelve",
+          "api y worker conectados a app-net",
+          "responde: app-net resuelve el nombre api"],
+         2, ["responde 200", "falla: el nombre no se resuelve",
+             "falla: el puerto no está publicado al host", "responde, pero el propio worker"], 1),
+    ],
+    "M08-D07-persistence": [
+        ("El contenedor api escribe en /data/app.db y se montó el volumen named appdata en /data. "
+         "No se elimina el volumen en ningún paso.",
+         ["docker run -d --name api -v appdata:/data api", "dentro: escribir /data/app.db",
+          "docker rm -f api", "docker run -d --name api -v appdata:/data api",
+          "dentro: ls /data"],
+         ["api corriendo con appdata montado", "app.db escrito dentro del volumen",
+          "contenedor eliminado; el volumen appdata sigue existiendo",
+          "api de nuevo corriendo con el mismo volumen",
+          "app.db sigue ahí: el volumen sobrevive al contenedor"],
+         4, ["app.db existe con sus datos", "/data está vacío", "app.db existe pero vacío",
+             "el contenedor no arranca"], 0),
+    ],
+    "M08-D09-debug": [
+        ("El servicio api tiene restart: always y su proceso termina al arrancar porque falta "
+         "una variable de entorno obligatoria.",
+         ["docker compose up -d api", "el proceso falla al leer la variable", "docker ps",
+          "docker logs api", "docker compose up -d api otra vez"],
+         ["api creado y arrancando", "el proceso termina con error de configuración",
+          "Restarting: la política lo levanta y vuelve a fallar",
+          "el log repite el mismo error de configuración",
+          "vuelve a fallar: reiniciar no añade la variable"],
+         2, ["api aparece Restarting", "api aparece Up y sano", "api no aparece: se eliminó",
+             "api aparece Exited y quieto"], 0),
+    ],
+}
+
+_TIMELINE_TIP = {
+    "M08-D06-network": "Separa resolución de nombre, red compartida y publicación de puertos.",
+    "M08-D07-persistence": "Ubica dónde se escribió el archivo y qué recurso se elimina al "
+                           "recrear.",
+    "M08-D09-debug": "Pregúntate si reiniciar cambia la causa o solo repite el síntoma.",
+}
+
+
+def _timeline_variant(unit: str, seed: int) -> tuple:
+    bank = TIMELINE_BANKS[unit]
+    return bank[seed % len(bank)]
+
+
+def timeline_activity(unit: str, seed: int, focus=None) -> dict:
+    context, steps, states, ask, options, _ = _timeline_variant(unit, seed)
+    rnd = random.Random(f"timeline:{unit}:{seed}")
+    opts = list(options)
+    rnd.shuffle(opts)
+    # El estado del paso predicho no viaja hasta que el alumno predice.
+    public = [s if i != ask else None for i, s in enumerate(states)]
+    return {"unit": unit, "seed": seed, "context": context,
+            "instruction": "Predice qué pasa en el paso señalado. Después recorre la simulación "
+                           "y compara tu predicción con lo observado.",
+            "stages": steps, "states": public, "ask_index": ask, "ask_stage": steps[ask],
+            "options": opts}
+
+
+def timeline_check(unit: str, seed: int, payload: dict, focus=None) -> dict | None:
+    _, steps, states, ask, options, right = _timeline_variant(unit, seed)
+    pred = payload.get("prediction")
+    if pred not in options:
+        return None
+    label = f"tu predicción del paso {ask + 1} («{steps[ask]}»)"
+    good = pred == options[right]
+    # La observación del paso predicho no viaja en la actividad (sería la
+    # respuesta): llega aquí, cuando el alumno ya predijo.
+    return {"correctas": [label] if good else [], "revisar": [] if good else [label],
+            "item": None, "consejo": f"Lo observado: {states[ask]}. {_TIMELINE_TIP[unit]}"}
+
+
+# Motores compartidos entre unidades: unidad(es) → contenido público / corrección.
+_SHARED_ACTIVITY = {"audit": audit_activity, "command": command_activity,
+                    "order": order_activity, "timeline": timeline_activity,
+                    "mixed": mixed_activity}
+_SHARED_CHECK = {"audit": audit_check, "command": command_check, "order": order_check,
+                 "timeline": timeline_check, "mixed": mixed_check}
+SHARED_UNITS = {"audit": sorted(AUDIT_BANKS), "command": sorted(COMMAND_BANKS),
+                "order": sorted(ORDER_BANKS), "timeline": sorted(TIMELINE_BANKS)}

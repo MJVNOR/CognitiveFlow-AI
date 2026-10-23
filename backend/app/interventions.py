@@ -1,4 +1,5 @@
 """F2-F3: política determinista de intervención + UI planner con catálogo cerrado."""
+from app import labs_docker
 from app.socratic import MOCK_QUESTION, socratic_question
 
 # Catálogo permitido (§7 del plan). Solo estos widget_type pueden salir del backend.
@@ -14,6 +15,8 @@ CATALOG = {
     "DockerfileWorkbench",
     "PersistenceExperiment",
     "DecisionScenarios",
+    "ConfigAudit",
+    "CommandComposer",
 }
 
 # Históricos legibles, pero no seleccionables ni aceptados como nuevas actividades.
@@ -45,6 +48,20 @@ _DOCKER_TITLES = {
     "DecisionScenarios": "Decide en cada caso",
 }
 
+# Actividades Docker que comparten un widget entre varias unidades:
+# actividad → (motor de labs_docker, widget GenUI). Las unidades con banco las
+# declara `labs_docker.SHARED_UNITS`; el widget ya no se deduce de la unidad.
+DOCKER_SHARED = {
+    "config_audit": ("audit", "ConfigAudit"),
+    "command_build": ("command", "CommandComposer"),
+    "order_steps": ("order", "DockerfileWorkbench"),
+    "predict_state": ("timeline", "ImageContainerLifecycle"),
+}
+_SHARED_TITLES = {"config_audit": "Marca todo lo que aplica",
+                  "command_build": "Arma el comando",
+                  "order_steps": "Ordena los pasos",
+                  "predict_state": "Predice y comprueba"}
+
 # P1.1: contrato mínimo versionado — qué eventos acepta cada widget.
 ALLOWED_EVENTS = {
     "parameterChanged",
@@ -73,6 +90,10 @@ ALLOWED_BY_WIDGET = {
                               "argumentSubmitted", "hintRequested"],
     "DecisionScenarios": ["selectionChanged", "evidenceSelected", "argumentSubmitted",
                           "hintRequested"],
+    "ConfigAudit": ["selectionChanged", "evidenceSelected", "argumentSubmitted",
+                    "hintRequested"],
+    "CommandComposer": ["selectionChanged", "evidenceSelected", "argumentSubmitted",
+                        "hintRequested"],
 }
 
 # Evento con el que cada widget ENTREGA su respuesta (lo que el widget Flutter
@@ -89,6 +110,8 @@ SUBMIT_EVENT = {
     "DockerfileWorkbench": "evidenceSelected",
     "PersistenceExperiment": "evidenceSelected",
     "DecisionScenarios": "evidenceSelected",
+    "ConfigAudit": "evidenceSelected",
+    "CommandComposer": "evidenceSelected",
 }
 assert all(e in ALLOWED_BY_WIDGET[w] for w, e in SUBMIT_EVENT.items())
 
@@ -194,16 +217,17 @@ def _curve(complexity: int, noise: int, input_state: dict) -> dict:
     return {"train": c["train"], "val": c["val"]}
 
 
-def _docker_params(unit: str, input_state: dict, focus=None) -> dict:
+def _docker_params(unit, input_state: dict, focus=None, kind: str = "default") -> dict:
     """Escenario público del reto Docker: otra semilla que la práctica (caso nuevo).
-    Con [focus] válido, el caso contrasta ese eje en vez de salir al azar."""
-    from app.labs_docker import activity
-
+    Con [focus] válido, el caso contrasta ese eje en vez de salir al azar.
+    [kind] elige el motor compartido y viaja en los parámetros: la corrección
+    tiene que usar el mismo o calificaría otro escenario."""
     try:
         seed = int(input_state.get("seed", 1))
     except (TypeError, ValueError):
         seed = 1
-    return activity(unit, seed + 3, focus)
+    a = labs_docker.activity(unit, seed + 3, focus, kind)
+    return a if kind == "default" else {**a, "kind": kind}
 
 
 def _avg(criteria: list[dict]) -> float:
@@ -236,6 +260,20 @@ def _v_features(v):
 
 def _v_unit(v):
     return v if v in DOCKER_ORDER else None
+
+
+def _v_unit_with_bank(kind: str, allowed):
+    """Unidad con banco de ese motor compartido y permitida para el estudiante."""
+    units = [u for u in labs_docker.SHARED_UNITS[kind] if u in allowed]
+    return lambda v: v if v in units else None
+
+
+def _v_units(allowed):
+    """2–4 unidades de decisión ya trabajadas, en orden del temario."""
+    def check(v):
+        us = labs_docker.mixed_units([x for x in v if x in allowed]) if isinstance(v, list) else []
+        return us if len(us) >= 2 else None
+    return check
 
 
 def _v_focus(v):
@@ -275,18 +313,74 @@ ACTIVITY_MENU = {
         "decide_action": ("decidir monitorear o reentrenar y justificar la acción",
                           "HypothesisEditor", {}),
     },
+    # Docker: el menú real del estudiante lo arma `docker_menu` (solo lo posible
+    # en su situación). Aquí está el universo con todas las unidades que tienen banco.
     "docker": {
         "unit_practice": ("practicar una unidad Docker con su experimento interactivo",
                           None, {
                               "unit": ("una de " + ", ".join(DOCKER_ORDER), _v_unit),
                               # Variante dirigida dentro de la misma unidad: el
                               # escenario cambia solo en ese eje (no es otro al azar).
-                              "focus": ("opcional, eje a contrastar: kernel, peso o "
-                                        "reproducibilidad (D01); borrado, estado o "
-                                        "efimero (D02)", _v_focus)}),
+                              "focus": ("opcional, uno de los temas de esa unidad (los temas "
+                                        "fallados vienen en las decisiones verificadas)",
+                                        _v_focus)}),
+        "focused_contrast": ("repetir la unidad con un caso que cambia solo en el tema fallado",
+                             None, {"unit": ("una de " + ", ".join(DOCKER_ORDER), _v_unit),
+                                    "focus": ("tema a contrastar", _v_focus)}),
+        "config_audit": ("marcar todo lo que aplica en un archivo o una configuración real "
+                         "(varias respuestas, no elegir una opción)", "ConfigAudit",
+                         {"unit": ("una unidad con banco de auditoría",
+                                   _v_unit_with_bank("audit", DOCKER_ORDER))}),
+        "command_build": ("armar ranura por ranura el comando que cumple los requisitos",
+                          "CommandComposer",
+                          {"unit": ("una unidad con banco de comandos",
+                                    _v_unit_with_bank("command", DOCKER_ORDER))}),
+        "order_steps": ("ordenar los pasos de un procedimiento y ver qué regla se incumple",
+                        "DockerfileWorkbench",
+                        {"unit": ("una unidad con banco de secuencias",
+                                  _v_unit_with_bank("order", DOCKER_ORDER))}),
+        "predict_state": ("predecir el estado tras un paso y comprobarlo en la simulación",
+                          "ImageContainerLifecycle",
+                          {"unit": ("una unidad con banco de líneas de tiempo",
+                                    _v_unit_with_bank("timeline", DOCKER_ORDER))}),
+        "mixed_review": ("repaso con un caso de cada tema ya trabajado", "DecisionScenarios",
+                         {"units": ("2-4 unidades ya completadas", _v_units(DOCKER_ORDER))}),
+        "transfer_unit": ("pasar a la siguiente unidad del temario (transferencia)",
+                          None, {"unit": ("una de " + ", ".join(DOCKER_ORDER), _v_unit)}),
+        "explain_axis": ("reescribir su explicación del tema fallado, sin escenario nuevo",
+                         "HypothesisEditor", {}),
     },
 }
 assert all(w is None or w in CATALOG for acts in ACTIVITY_MENU.values() for _, w, _ in acts.values())
+assert set(DOCKER_SHARED) <= set(ACTIVITY_MENU["docker"])
+
+
+def docker_menu(unit: str | None, done: list[str]) -> dict:
+    """Menú Docker posible en la situación del estudiante: unidad actual,
+    unidades completadas y bancos existentes. Gemini no puede proponer algo
+    que el servidor no sepa construir."""
+    full = ACTIVITY_MENU["docker"]
+    allowed = [u for u in DOCKER_ORDER if u == unit or u in done]
+    menu = {"unit_practice": full["unit_practice"], "explain_axis": full["explain_axis"]}
+    if labs_docker.FOCUS_AXES.get(unit):
+        menu["focused_contrast"] = full["focused_contrast"]
+    for aid, (kind, widget) in DOCKER_SHARED.items():
+        units = [u for u in labs_docker.SHARED_UNITS[kind] if u in allowed]
+        if units:
+            menu[aid] = (full[aid][0], widget,
+                         {"unit": ("una de " + ", ".join(units),
+                                   _v_unit_with_bank(kind, units))})
+    mixed = [u for u in done if labs_docker.DECISION_UNITS.get(u)]
+    if len(mixed) >= 2:
+        menu["mixed_review"] = (full["mixed_review"][0], "DecisionScenarios",
+                                {"units": ("2-4 de " + ", ".join(mixed), _v_units(mixed))})
+    nxt = [u for u in DOCKER_ORDER if u != unit and u not in done
+           and labs_docker.PREREQ.get(u) in (None, *done)]
+    if nxt:
+        menu["transfer_unit"] = (full["transfer_unit"][0], None,
+                                 {"unit": ("una de " + ", ".join(nxt),
+                                           lambda v: v if v in nxt else None)})
+    return menu
 
 PLANNER_PROMPT_V2 = (
     "Eres el planificador pedagógico de un laboratorio. Elige UNA actividad del menú "
@@ -310,7 +404,7 @@ _WEAK_BASE_RULE = ("\nLa base del estudiante es débil: NO elijas actividades qu
 
 async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
                        info: dict | None = None, weak_base: bool = False,
-                       evidence: str | None = None):
+                       evidence: str | None = None, menu: dict | None = None):
     """(actividad, parámetros válidos, motivo). Sin respuesta válida: LLMUnavailable
     (en tests con LLM_ALLOW_MOCK=1: (None, {}, None) y deciden las reglas).
     Parámetros fuera de esquema se descartan uno a uno (valor por defecto del servidor).
@@ -325,7 +419,7 @@ async def _gemini_plan(answer_text: str, criteria: list[dict], lab_type: str,
     info = info if info is not None else {}
     start = time.monotonic()
 
-    menu = ACTIVITY_MENU.get(lab_type, ACTIVITY_MENU["ml_experiment"])
+    menu = menu or ACTIVITY_MENU.get(lab_type, ACTIVITY_MENU["ml_experiment"])
     lines = "\n".join(
         f"- {aid}: {desc}" + (f" · parámetros: {'; '.join(f'{k} = {s}' for k, (s, _) in ps.items())}"
                              if ps else "")
@@ -370,8 +464,33 @@ _TYPE_WORDS = (r"ausen|faltant|nul|vac[ií]|duplic|repetid|unidad|escala|fahrenh
                r"convers|imposible|at[ií]pic|outlier|extrem|fuga|futuro|leak")
 
 
+def _docker_activity(act: str, params: dict, input_state: dict, done=()) -> tuple:
+    """(widget, parámetros públicos, título) de una actividad Docker. El widget
+    sale de la actividad, no de la unidad: varias unidades comparten widget."""
+    extra = input_state.get("extra")
+    current = extra.get("unit", "") if isinstance(extra, dict) else ""
+    if act == "mixed_review":
+        units = params.get("units") or [u for u in DOCKER_ORDER if u in done
+                                        and labs_docker.DECISION_UNITS.get(u)]
+        return ("DecisionScenarios",
+                _docker_params(units[-labs_docker.MIXED_MAX:], input_state, kind="mixed"),
+                "Repaso: un caso por tema")
+    kind, widget = DOCKER_SHARED.get(act, ("default", None))
+    if kind == "default":
+        unit = params.get("unit", current if current in DOCKER_ORDER else DOCKER_ORDER[0])
+    else:  # unidad con banco de ese motor, dentro de lo que el estudiante ya vio
+        pool = [u for u in labs_docker.SHARED_UNITS[kind]
+                if u == current or u in done] or labs_docker.SHARED_UNITS[kind]
+        unit = params.get("unit") if params.get("unit") in pool else pool[0]
+    widget = widget or DOCKER_WIDGETS[unit]
+    p = _docker_params(unit, input_state, params.get("focus"), kind)
+    title = _SHARED_TITLES.get(act) or (
+        ("" if unit == current else "Transfiere: ") + _DOCKER_TITLES.get(widget, widget))
+    return widget, p, title
+
+
 def _activity(lab_type: str, act: str, params: dict, input_state: dict, q: str,
-              avg: float) -> dict:
+              avg: float, done=()) -> dict:
     """Construye la actividad elegida con datos del servidor (nunca del LLM)."""
     _, widget, _ = ACTIVITY_MENU[lab_type][act]
     complexity = params.get("complexity", int(input_state.get("complexity", 5)))
@@ -398,16 +517,13 @@ def _activity(lab_type: str, act: str, params: dict, input_state: dict, q: str,
 
         p = {"features": params.get("features", list(FEATURES))}
         title = "¿Qué cambió?"
-    elif act == "unit_practice":
-        extra = input_state.get("extra")
-        current = extra.get("unit", "") if isinstance(extra, dict) else ""
-        unit = params.get("unit", current if current in DOCKER_ORDER else DOCKER_ORDER[0])
-        widget = DOCKER_WIDGETS[unit]
-        p = _docker_params(unit, input_state, params.get("focus"))
-        title = ("" if unit == current else "Transfiere: ") + _DOCKER_TITLES.get(widget, widget)
-    else:  # revise_hypothesis / decide_action
+    elif lab_type == "docker" and act != "explain_axis":
+        widget, p, title = _docker_activity(act, params, input_state, done)
+    else:  # revise_hypothesis / decide_action / explain_axis
         p = {}
-        title = "Revisa tu hipótesis" if act == "revise_hypothesis" else "¿Monitorear o reentrenar?"
+        title = {"revise_hypothesis": "Revisa tu hipótesis",
+                 "decide_action": "¿Monitorear o reentrenar?",
+                 "explain_axis": "Explícalo otra vez, con evidencia"}[act]
     transfer_like = _is_transfer(act, params, input_state)
     iv = {
         "strategy": "increase_difficulty" if transfer_like else "contrast_example",
@@ -430,7 +546,7 @@ def _activity(lab_type: str, act: str, params: dict, input_state: dict, q: str,
 
 def _is_transfer(act: str, params: dict, input_state: dict) -> bool:
     """Actividades que suben la dificultad o cambian de contexto/unidad."""
-    if act == "unit_practice":
+    if act in ("unit_practice", "transfer_unit"):
         extra = input_state.get("extra")
         current = extra.get("unit") if isinstance(extra, dict) else None
         return params.get("unit", current) != current
@@ -438,7 +554,10 @@ def _is_transfer(act: str, params: dict, input_state: dict) -> bool:
 
 
 async def select_intervention(answer_text: str, input_state: dict, eval_result: dict | None,
-                              lab_type: str = "ml_experiment", attempt_number: int = 1) -> dict:
+                              lab_type: str = "ml_experiment", attempt_number: int = 1,
+                              done_units: list[str] | None = None) -> dict:
+    """[done_units] = unidades Docker ya completadas por el estudiante: habilitan
+    el repaso mezclado, la transferencia y los bancos compartidos de esas unidades."""
     if eval_result and eval_result.get("status") == "evaluated" and lab_type in ACTIVITY_MENU:
         criteria = eval_result.get("criteria", [])
         avg = _avg(criteria)
@@ -449,12 +568,18 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
 
         evidence = verified_facts(lab_type, input_state)
         info["evidence"] = bool(evidence)
+        done = done_units or []
+        menu = None
+        if lab_type == "docker":
+            extra = input_state.get("extra")
+            menu = docker_menu(extra.get("unit") if isinstance(extra, dict) else None, done)
+            info["menu"] = sorted(menu)
         act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info, weak,
-                                                 evidence)
+                                                 evidence, menu)
         if act and weak and _is_transfer(act, params, input_state):
             # Salvaguarda: con base débil no se salta a transferencia; decide Gemini otra vez.
             act, params, motivo = await _gemini_plan(answer_text, criteria, lab_type, info,
-                                                     True, evidence)
+                                                     True, evidence, menu)
             if act and _is_transfer(act, params, input_state):
                 act = None
                 info["outcome"] = "salvaguarda"
@@ -463,7 +588,7 @@ async def select_intervention(answer_text: str, input_state: dict, eval_result: 
                 require_llm("planificador: propuso transferencia con base débil")
         if act:
             weak = [c["id"] for c in criteria if c.get("score", 0) <= 2]
-            iv = _activity(lab_type, act, params, input_state, "", avg)
+            iv = _activity(lab_type, act, params, input_state, "", avg, done)
             context = iv["widget_parameters"]["parameters"] if lab_type == "docker" else None
             q = (await socratic_question(answer_text, weak, lab_type, context))["question"]
             iv["socratic_question"] = q

@@ -24,6 +24,8 @@ const cognitiveFlowWidgets = {
   'DockerfileWorkbench',
   'PersistenceExperiment',
   'DecisionScenarios',
+  'ConfigAudit',
+  'CommandComposer',
 };
 
 /// Solo lectura histórica; no se registran como herramientas GenUI disponibles.
@@ -44,4 +46,6 @@ final cognitiveFlowCatalog = [
   dockerfileWorkbench,
   persistenceExperiment,
   decisionScenarios,
+  configAudit,
+  commandComposer,
 ];

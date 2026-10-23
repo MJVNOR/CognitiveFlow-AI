@@ -6,8 +6,13 @@ no completa los experimentos visuales pendientes de ML y Monitoring.
 ## Catálogo activo
 
 `backend/app/interventions.py::CATALOG` coincide con
-`frontend/lib/ui/tutor/catalog.dart::cognitiveFlowWidgets` (11 tipos).
+`frontend/lib/ui/tutor/catalog.dart::cognitiveFlowWidgets` (13 tipos).
 Una prueba compara ambos archivos y verifica que el menú del planificador solo use tipos activos.
+
+El widget **ya no se deduce de la unidad Docker**: varias unidades comparten un mismo
+widget y la unidad viaja en los parámetros (`parameters.unit`, o `parameters.units` en el
+repaso mezclado) junto con el motor que generó el escenario (`parameters.kind`). La
+corrección del reto usa esos mismos valores (`app/checks.py` → `labs_docker.check`).
 
 | Tipo | Función real actual | Límite |
 |---|---|---|
@@ -18,10 +23,35 @@ Una prueba compara ambos archivos y verifica que el menú del planificador solo 
 | DriftDistributionExplorer | Seleccionar variable, momento y argumento | Pendientes distribuciones/series dentro del reto |
 | LearningCurveSimulator | Controles de complejidad/ruido y entrega de predicción | Pendientes curvas y observación dentro del componente |
 | ContainerVsVmExplorer | Clasificar escenarios contenedor/VM | Simulación educativa |
-| ImageContainerLifecycle | Predecir y recorrer estados de imagen/contenedor | Simulación educativa |
-| DockerfileWorkbench | Reordenar instrucciones Dockerfile | No ejecuta Docker real |
+| ImageContainerLifecycle | Predecir el estado tras un paso y recorrer la secuencia: ciclo imagen/contenedor (D02) o la línea de tiempo que manda el servidor (`states`: D06, D07, D09) | Simulación educativa; el estado del paso predicho llega con la corrección, no en la actividad |
+| DockerfileWorkbench | Reordenar instrucciones Dockerfile (D04) o los pasos de un procedimiento con reglas del banco (`ORDER_BANKS`: D03, D08, D11) | No ejecuta Docker real; el nombre del tipo ya no describe todo lo que ordena |
 | PersistenceExperiment | Predecir y comprobar persistencia según montaje | Motor determinista |
-| DecisionScenarios | Elegir acciones ante casos de una unidad | No equivale a terminal, editor Compose o pipeline ejecutable |
+| DecisionScenarios | Elegir acciones ante casos de una unidad, o un caso por unidad en el repaso mezclado (`kind: mixed`) | No equivale a terminal, editor Compose o pipeline ejecutable |
+| ConfigAudit | Marcar **todos** los elementos que aplican de un archivo o configuración (D04 caché, D05 contexto, D08 compose, D09 evidencia, D10 riesgos); cada cambio se corrige al momento | No analiza archivos reales: audita el banco del servidor. Las omisiones se avisan sin enumerarlas |
+| CommandComposer | Armar un comando por ranuras eligiendo en cada una (D03, D06, D07, D10) | No ejecuta ni valida sintaxis real: compara con la combinación del banco |
+
+## Menú de actividades Docker (lo que puede elegir Gemini)
+
+`ACTIVITY_MENU["docker"]` tiene nueve actividades y `docker_menu(unidad, completadas)`
+devuelve solo las posibles para ese estudiante (unidad actual, unidades completadas y
+bancos existentes), así que el planificador nunca propone algo que el servidor no sepa
+construir; si lo hace, la actividad se descarta (503 reintentable en producción).
+
+| Actividad | Widget | Qué cambia |
+|---|---|---|
+| `unit_practice` | el de la unidad | otro escenario de la misma unidad |
+| `focused_contrast` | el de la unidad | variante que cambia solo en el tema fallado (`focus`) |
+| `config_audit` | ConfigAudit | marcar todo lo que aplica |
+| `command_build` | CommandComposer | construir el comando por ranuras |
+| `order_steps` | DockerfileWorkbench | ordenar pasos con reglas |
+| `predict_state` | ImageContainerLifecycle | predecir el estado tras un paso |
+| `mixed_review` | DecisionScenarios | un caso por unidad ya trabajada |
+| `transfer_unit` | el de la unidad destino | pasar a otra unidad con prerrequisito cumplido |
+| `explain_axis` | HypothesisEditor | reexplicar el tema fallado, sin escenario nuevo |
+
+Los ejes de contraste (`FOCUS_AXES`) cubren 9 unidades: D01, D02 y las siete de decisión
+(D03, D05, D06, D08–D11); el capstone (D12) mezcla y no contrasta. Cada caso del banco
+tiene su eje y una prueba falla si un caso nuevo queda sin etiquetar.
 
 ## Backlog e históricos
 

@@ -104,6 +104,8 @@ final imageContainerLifecycle = CatalogItem(
       'stages': S.list(description: 'Secuencia de comandos', items: S.string()),
       'ask_index': S.number(description: 'Índice del paso a predecir'),
       'ask_stage': S.string(description: 'Comando del paso a predecir'),
+      'states': S.list(description: 'Estado tras cada paso según el servidor '
+          '(null en el paso que se predice); sin él se simula el ciclo imagen/contenedor'),
       'options': S.list(description: 'Opciones de predicción', items: S.string()),
     },
     required: ['question'],
@@ -151,6 +153,23 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
 
   Map get _data => widget.ctx.data as Map;
   List<String> get _stages => _strings(_data['stages'], _lifecycleStages);
+
+  /// Unidades que comparten este widget envían el estado de cada paso ya
+  /// calculado por el servidor (null en el paso que se predice). Sin `states`
+  /// vale la simulación local del ciclo imagen/contenedor.
+  List<String?>? get _states {
+    final v = _data['states'];
+    return v is List && v.length == _stages.length
+        ? [for (final s in v) s is String ? s : null]
+        : null;
+  }
+
+  String _observed(int step) {
+    final states = _states;
+    if (states == null) return _lifecycleNote(_stages.take(step).toList());
+    if (step == 0) return 'Aún no se ejecuta ningún paso.';
+    return states[step - 1] ?? 'Este es el paso que predijiste: compara con la corrección.';
+  }
 
   /// Paso (índice) sobre el que se predice; null = sin predicción (ejemplo).
   int? get _askIndex {
@@ -208,9 +227,11 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
           ],
           if (ask != null) ...[
             const SizedBox(height: 8),
-            Text('Predice: tras el paso ${ask + 1} («${stages[ask]}»), ¿qué recursos existen?',
+            Text(_states == null
+                    ? 'Predice: tras el paso ${ask + 1} («${stages[ask]}»), ¿qué recursos existen?'
+                    : 'Predice: ¿qué pasa en el paso ${ask + 1} («${stages[ask]}»)?',
                 style: Theme.of(context).textTheme.labelLarge),
-            Wrap(spacing: 8, children: [
+            Wrap(spacing: 8, runSpacing: 8, children: [
               for (final o in options)
                 ChoiceChip(
                   key: ValueKey('icl_pred_$o'),
@@ -218,7 +239,8 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
                     'imagen' => 'Solo la imagen',
                     'contenedor' => 'Solo el contenedor',
                     'ambos' => 'Imagen y contenedor',
-                    _ => 'Ninguno de los dos',
+                    'ninguno' => 'Ninguno de los dos',
+                    _ => o,
                   }),
                   selected: prediction == o,
                   onSelected: sent || step > ask ? null : (_) {
@@ -237,7 +259,7 @@ class _ImageLifecycleState extends State<_ImageLifecycle> {
           Semantics(
             liveRegion: true,
             child: Text('${step == 0 ? 'Estado inicial' : 'Estado observado tras el paso $step'}: '
-                '${_lifecycleNote(stages.take(step).toList())}',
+                '${_observed(step)}',
                 style: Theme.of(context).textTheme.bodySmall),
           ),
           const SizedBox(height: 8),
@@ -614,6 +636,193 @@ class _DecisionScenariosState extends State<_DecisionScenarios> {
           ],
           if (!ready)
             Text('Seleccionados ${choices.length} de ${items.length}. Responde todos los casos y explica tus decisiones.',
+                style: tt.bodySmall),
+        ]);
+  }
+}
+
+
+/// Compartido entre unidades (D04/D05/D08/D09/D10): marcar TODO lo que aplica.
+/// Sin botón de envío: cada cambio es la evidencia actual y el servidor la
+/// corrige al momento (lo que falta se avisa sin enumerarlo).
+final configAudit = CatalogItem(
+  name: 'ConfigAudit',
+  dataSchema: S.object(
+    properties: {
+      'title': S.string(description: 'Título del reto'),
+      'question': S.string(description: 'Consigna: qué hay que marcar'),
+      'subject': S.string(description: 'Qué se audita (archivo, comando, configuración)'),
+      'items': S.list(description: 'Elementos a marcar', items: S.string()),
+    },
+    required: ['question'],
+  ),
+  exampleData: [
+    () => '[{"id": "root", "component": "ConfigAudit", '
+        '"title": "Auditoría", "question": "Marca todo lo que aplica"}]',
+  ],
+  widgetBuilder: (ctx) => _ConfigAudit(ctx),
+);
+
+const _auditItems = [
+  '.env con contraseñas',
+  'requirements.txt',
+  'node_modules/',
+];
+
+class _ConfigAudit extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _ConfigAudit(this.ctx);
+  @override
+  State<_ConfigAudit> createState() => _ConfigAuditState();
+}
+
+class _ConfigAuditState extends State<_ConfigAudit> {
+  final marked = <int>{};
+
+  void _toggle(int i) {
+    setState(() => marked.contains(i) ? marked.remove(i) : marked.add(i));
+    TutorEvents.send(context, 'ConfigAudit', 'evidenceSelected',
+        {'marked': marked.toList()..sort()});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    final items = _strings(data['items'], _auditItems);
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    return titledCard(context, '${data['title'] ?? 'Marca todo lo que aplica'}',
+        '${data['question'] ?? ''}',
+        icon: Icons.checklist_rtl,
+        accent: cs.secondary,
+        children: [
+          if (data['subject'] is String) ...[
+            const SizedBox(height: 4),
+            Text('${data['subject']}', style: tt.bodySmall),
+          ],
+          const SizedBox(height: 4),
+          for (var i = 0; i < items.length; i++)
+            CheckboxListTile(
+              key: ValueKey('ca_$i'),
+              value: marked.contains(i),
+              onChanged: (_) => _toggle(i),
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              title: Text('${i + 1}. ${items[i]}', style: tt.bodyMedium),
+            ),
+          Text(marked.isEmpty
+                  ? 'Puede aplicar más de uno: marca todos y revisa la corrección.'
+                  : 'Marcados ${marked.length} de ${items.length}: cada cambio se comprueba al momento.',
+              style: tt.bodySmall),
+        ]);
+  }
+}
+
+/// Compartido entre unidades (D03/D06/D07/D10): armar el comando por ranuras.
+/// Una opción entre paréntesis significa «no añadir nada» (no se concatena).
+final commandComposer = CatalogItem(
+  name: 'CommandComposer',
+  dataSchema: S.object(
+    properties: {
+      'title': S.string(description: 'Título del reto'),
+      'question': S.string(description: 'Requisitos que debe cumplir el comando'),
+      'prefix': S.string(description: 'Parte fija del comando'),
+      'slots': S.list(
+          description: 'Ranuras {label, options}',
+          items: S.object(properties: {
+            'label': S.string(),
+            'options': S.list(items: S.string()),
+          })),
+    },
+    required: ['question'],
+  ),
+  exampleData: [
+    () => '[{"id": "root", "component": "CommandComposer", '
+        '"title": "Arma el comando", "question": "Cumple todos los requisitos"}]',
+  ],
+  widgetBuilder: (ctx) => _CommandComposer(ctx),
+);
+
+const _exampleSlots = [
+  {
+    'label': 'modo',
+    'options': ['-d', '-it', '(sin esa opción)'],
+  },
+];
+
+class _CommandComposer extends StatefulWidget {
+  final CatalogItemContext ctx;
+  const _CommandComposer(this.ctx);
+  @override
+  State<_CommandComposer> createState() => _CommandComposerState();
+}
+
+class _CommandComposerState extends State<_CommandComposer> {
+  final picks = <int, int>{};
+
+  List<Map> get _slots {
+    final v = (widget.ctx.data as Map)['slots'];
+    return v is List && v.isNotEmpty
+        ? [for (final s in v) if (s is Map) s]
+        : const [..._exampleSlots];
+  }
+
+  // Sin botón: completar todas las ranuras es la entrega.
+  void _pick(int i, int j, int n) {
+    setState(() => picks[i] = j);
+    TutorEvents.send(context, 'CommandComposer',
+        picks.length == n ? 'evidenceSelected' : 'selectionChanged',
+        {'slots': [for (var k = 0; k < n; k++) picks[k]]});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = widget.ctx.data as Map;
+    final slots = _slots;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final chosen = [
+      for (var i = 0; i < slots.length; i++)
+        if (picks[i] != null) _strings(slots[i]['options'], const [])[picks[i]!],
+    ].where((o) => !o.startsWith('(')).toList();
+    return titledCard(context, '${data['title'] ?? 'Arma el comando'}',
+        '${data['question'] ?? ''}',
+        icon: Icons.terminal,
+        accent: cs.secondary,
+        children: [
+          for (var i = 0; i < slots.length; i++) ...[
+            const SizedBox(height: 8),
+            Text('${slots[i]['label']}', style: tt.labelLarge),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final (j, opt) in _strings(slots[i]['options'], const []).indexed)
+                ChoiceChip(
+                  key: ValueKey('cc_${i}_$j'),
+                  label: Text(opt,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                  selected: picks[i] == j,
+                  onSelected: (_) => _pick(i, j, slots.length),
+                ),
+            ]),
+          ],
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: cs.outlineVariant),
+              ),
+              child: Text(
+                  '\$ ${data['prefix'] ?? 'docker'}${chosen.isEmpty ? '' : ' ${chosen.join(' ')}'}',
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+            ),
+          ),
+          if (picks.length < slots.length)
+            Text('Elegidas ${picks.length} de ${slots.length} ranuras: cada elección se comprueba al momento.',
                 style: tt.bodySmall),
         ]);
   }

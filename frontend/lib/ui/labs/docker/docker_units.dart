@@ -206,17 +206,16 @@ List<String> dockerHintsFor(String? unit, String mission) {
   return _dockerUnitHints[unit] ?? const [];
 }
 
-/// La ayuda sigue el ejercicio central. DecisionScenarios representa varias
-/// unidades: sin unit explícita no se adivina cuál es.
+/// La ayuda sigue el ejercicio central. Varias unidades comparten widget
+/// (DecisionScenarios, ConfigAudit, CommandComposer…), así que la unidad la da
+/// el parámetro `unit` del servidor; sin él no se adivina cuál es.
 String? dockerInterventionUnit(Map? intervention) {
   if (intervention == null) return null;
   final spec = intervention['widget_parameters'] as Map? ?? const {};
   final params = spec['parameters'] as Map? ?? const {};
   final widget = intervention['widget_type'];
   for (final candidate in [params['unit'], spec['learning_objective']]) {
-    if (dockerUnits.any((u) => u.id == candidate && dockerUnitWidget(u.id).widget == widget)) {
-      return candidate as String;
-    }
+    if (dockerUnits.any((u) => u.id == candidate)) return candidate as String;
   }
   final matches = dockerUnits.where((u) => dockerUnitWidget(u.id).widget == widget).toList();
   return matches.length == 1 ? matches.single.id : null;
